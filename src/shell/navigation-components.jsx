@@ -17,7 +17,7 @@ import {WorkspaceExplorer,WorkspaceRow} from '../workspace-explorer';
 import {LibraryFilters} from '../conversation-library';
 import {ChatDelete} from '../chat-delete';
 import {readItems,unreadChatItems} from '../attention';
-import {useNavigation} from '../../../packages/shell-sdk/index.js';
+import {useNavigation} from '../../.build-inputs/packages/shell-sdk/index.js';
 import {waitForSnapshot} from './wait-for-snapshot';
 import {hasNavigationResource} from './navigation-demand';
 import {NavigationResourceStatus} from './navigation-resource-status';

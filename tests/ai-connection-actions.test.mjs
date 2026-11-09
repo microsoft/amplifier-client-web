@@ -162,7 +162,7 @@ test('connection detail respects per-connection local catalog testability',async
 });
 
 test('the supported service list is the same shared host catalog',async()=>{
- assert.deepEqual(aiServices,JSON.parse(await readFile(new URL('../../amplifier_web/ai_services.json',import.meta.url),'utf8')));
+ assert.deepEqual(aiServices,JSON.parse(await readFile(new URL('../.build-inputs/amplifier_web/ai_services.json',import.meta.url),'utf8')));
  assert.equal(aiServices.length,6);
 });
 

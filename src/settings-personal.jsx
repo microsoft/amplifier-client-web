@@ -2,7 +2,7 @@ import {useSettingsDraft} from './settings-drafts';
 import {DictationSettings} from './dictation-controls';
 import React from 'react';
 import {WorkingLabel} from './working-label';
-import voiceCatalog from '../../amplifier_web/voice_options.json' with {type:'json'};
+import voiceCatalog from '../.build-inputs/amplifier_web/voice_options.json' with {type:'json'};
 export function VoiceSettings({state,act}){
  const settings=state.settings||{},model=voiceCatalog.models.find(row=>row.id===settings.preferredVoice)||voiceCatalog.models[0];
  const unknownModel=!!settings.preferredVoice&&!voiceCatalog.models.some(row=>row.id===settings.preferredVoice);
