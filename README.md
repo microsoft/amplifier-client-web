@@ -30,12 +30,17 @@ compatibility fallback, SDK owner or updater.
 Use Node 22 and an owned test environment. Obtain the 15-file canonical export
 matching the committed `build-inputs.lock.json`; its producer remains
 [Unified's capsule tool](https://github.com/microsoft/amplifier-unified/blob/4854dbd9ec555690269747b7dbe273f008e9e179/frontend/scripts/client-capsule.mjs).
-Run `inputs NEW_DIRECTORY` there and supply that directory here:
+Run `npm run prepare:inputs` here to fetch only the pinned public files
+anonymously. No clone, token or private repository access is required. Each
+request has a timeout and locked byte/hash limits; failed retrieval preserves
+the previous prepared inputs. For offline use, run `inputs NEW_DIRECTORY` in
+the canonical producer and pass that directory here:
 Choose fresh, owned package-output and consumer directories for each attempt.
 
 ```sh
 npm ci
-npm run prepare:inputs -- /path/to/canonical-export
+npm run prepare:inputs
+# Offline alternative: npm run prepare:inputs -- /path/to/canonical-export
 npm run test:portable
 npm run build
 npm run package:artifact -- /tmp/client-package 4854dbd9ec555690269747b7dbe273f008e9e179
@@ -74,6 +79,37 @@ export for provenance but does not supply this component's version.
 For connected development, `npm run dev` proxies API/WebSocket requests to an
 owned actual server on port 8765. Released Unified installation and its Node-free
 asset assembly are a separate distribution responsibility.
+
+## Packaging an isolated source copy
+
+A distribution can carry a temporary source copy while this repository is
+private. Create its small source record from a clean standalone client checkout:
+
+```sh
+node scripts/client-source.mjs record /tmp/web-client.source.json
+```
+
+Copy the selected client source without `.git`, dependencies or generated output.
+In that copy, prepare inputs and build normally, then use the external record:
+
+```sh
+node scripts/client-source.mjs verify /path/to/web-client.source.json
+npm run package:artifact -- /tmp/client-package PAIRED_SERVER_COMMIT --source-record /path/to/web-client.source.json
+```
+
+The record keeps the canonical client repository/revision and one digest covering
+all selected authored packaging inputs, including these tools, the license and
+shared-input lock. The distribution may add its delivery path/type; those fields
+do not change client source identity. Normal packaging requires the client to be
+its own Git root, so a containing Unified commit cannot be mislabeled as a client
+commit. Package layout and consumer metadata are unchanged.
+
+The record is a trusted selection, not independent authentication if somebody
+replaces both record and copied source. Edited copies can develop/build locally,
+but cannot package as the previous canonical revision. Select the changed
+canonical source and create a new record first. The distribution records its own
+actual delivery commit separately; no self-referential containing commit is
+embedded in this record.
 
 ## Shared interaction surface
 
@@ -126,7 +162,7 @@ than remote URLs.
 
 `npm run test:portable` names the initial standalone checks: app reload, draft
 journal, state stream, build identity, branding synchronization, AI connection
-actions, chat rows and canonical-input preparation. `npm run test:artifact`
+actions, chat rows, canonical-input preparation and copied-source provenance. `npm run test:artifact`
 checks the installed archive. Neither command claims the entire inherited suite.
 
 The other inherited test bodies and browser commands remain pending dependency

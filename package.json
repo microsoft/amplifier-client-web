@@ -116,7 +116,7 @@
     "test:shared-work-browser": "node tests/shared-work-browser.mjs",
     "prepare:inputs": "node scripts/prepare-inputs.mjs",
     "package:artifact": "node scripts/package-client.mjs",
-    "test:portable": "node --test tests/app-reload.test.mjs tests/draft-journal.test.mjs tests/state-stream.test.mjs tests/build-identity.test.mjs tests/sync-branding.test.mjs tests/ai-connection-actions.test.mjs tests/chat-row.test.mjs tests/prepare-inputs.test.mjs",
+    "test:portable": "node --test tests/app-reload.test.mjs tests/draft-journal.test.mjs tests/state-stream.test.mjs tests/build-identity.test.mjs tests/sync-branding.test.mjs tests/ai-connection-actions.test.mjs tests/chat-row.test.mjs tests/prepare-inputs.test.mjs tests/client-source.test.mjs",
     "test:artifact": "node tests/client-artifact-browser.mjs"
   },
   "dependencies": {
