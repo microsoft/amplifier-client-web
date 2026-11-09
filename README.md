@@ -1,8 +1,19 @@
-# Amplifier client web
+# Amplifier Web Client
 
-The current HTTP/SSE/WebSocket web client, imported with its history from
-Unified v0.70.0 (`4854dbd9ec555690269747b7dbe273f008e9e179`, `LICENSE` and
-`frontend/`). This repository is private. Its independent package is
+A browser interface for [Amplifier Unified](https://github.com/microsoft/amplifier-unified):
+conversations, workspaces, tool activity and interactive work surfaces. The client
+connects to a host over the current HTTP/SSE/WebSocket interfaces; the host owns
+agent execution and durable conversation history.
+
+To run the packaged application, follow
+[Amplifier Unified's installation guide](https://github.com/microsoft/amplifier-unified#readme).
+This repository is for developing the web client as an independent component.
+
+## Status
+
+This experimental extraction preserves the client history from Unified v0.70.0
+(`4854dbd9ec555690269747b7dbe273f008e9e179`, `LICENSE` and `frontend/`).
+The repository is currently private. Its independent package is
 `@amplifier/client-web`, initially `0.1.0`; no registry release or default
 Unified adoption is claimed. Current source changes remain coordinated with
 Unified until that handoff is accepted. The retained AHP client is separate.
@@ -20,6 +31,7 @@ Use Node 22 and an owned test environment. Obtain the 15-file canonical export
 matching the committed `build-inputs.lock.json`; its producer remains
 [Unified's capsule tool](https://github.com/microsoft/amplifier-unified/blob/4854dbd9ec555690269747b7dbe273f008e9e179/frontend/scripts/client-capsule.mjs).
 Run `inputs NEW_DIRECTORY` there and supply that directory here:
+Choose fresh, owned package-output and consumer directories for each attempt.
 
 ```sh
 npm ci
@@ -27,8 +39,7 @@ npm run prepare:inputs -- /path/to/canonical-export
 npm run test:portable
 npm run build
 npm run package:artifact -- /tmp/client-package 4854dbd9ec555690269747b7dbe273f008e9e179
-cd /tmp/client-package
-npm pack --pack-destination /tmp
+(cd /tmp/client-package && npm pack --pack-destination /tmp)
 ```
 
 Commit selected client changes before packaging. Build output is ignored `dist/`;
@@ -37,8 +48,10 @@ the zero-runtime-dependency archive contains `static/`, `index.mjs` exporting
 canonical input provenance, client version/build identity, asset hashes and the
 exact declared server peer. Declaration is not compatibility qualification.
 
-Install the archive in an empty consumer with scripts disabled, then run the
-named fixture from this checkout:
+For browser checks, install Chromium in the owned environment with
+`npx playwright install chromium`, or select an existing matching Playwright
+browser cache. Install the archive in an empty consumer with scripts disabled,
+then run the named fixture from this checkout:
 
 ```sh
 npm install --prefix /tmp/client-consumer --ignore-scripts --no-audit --no-fund /tmp/amplifier-client-web-0.1.0.tgz
@@ -143,3 +156,34 @@ public, branding and prepared canonical inputs so a same-version rebuild can off
 reload. Declare actual new build dependencies there. Generated copies are excluded;
 the locked dependencies and normal build environment are assumed. This source ID
 does not replace release qualification's full-tree, toolchain and exact-asset proof.
+
+## Support and security
+
+See [SUPPORT.md](SUPPORT.md) for this experimental component's support policy.
+Follow [SECURITY.md](SECURITY.md) to report a vulnerability privately.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
+## Contributing
+
+Most contributions require you to agree to a
+Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
+the rights to use your contribution. For details, visit [Contributor License Agreements](https://cla.opensource.microsoft.com).
+
+When you submit a pull request, a CLA bot will automatically determine whether you need to provide
+a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
+provided by the bot. You will only need to do this once across all repos using our CLA.
+
+This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
+For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
+contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+
+## Trademarks
+
+This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft
+trademarks or logos is subject to and must follow
+[Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/legal/intellectualproperty/trademarks/usage/general).
+Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
+Any use of third-party trademarks or logos are subject to those third-party's policies.
