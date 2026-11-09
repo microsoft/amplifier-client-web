@@ -14,6 +14,7 @@ function commit(root){git(root,'add','.');git(root,'-c','commit.gpgsign=false','
 function fixture(t){
  const home=mkdtempSync(join(tmpdir(),'client-source-'));t.after(()=>rmSync(home,{recursive:true,force:true}));
  const root=join(home,'client');repository(root);mkdirSync(join(root,'src'));mkdirSync(join(root,'public'));
+ writeFileSync(join(root,'README.md'),'Unrelated documentation');
  writeFileSync(join(root,'src/main.js'),'client');writeFileSync(join(root,'public/page.html'),'page');
  for(const name of selectedInputs(root)){mkdirSync(dirname(join(root,name)),{recursive:true});writeFileSync(join(root,name),name)}
  commit(root);const record=createSourceRecord(root),path=join(home,'source.json');writeFileSync(path,JSON.stringify(record));
@@ -44,6 +45,15 @@ test('selected dirty Git inputs and unsupported records fail explicitly',t=>{
  for(const changed of [{...record,schema:2},{...record,source:{...record.source,repository:'https://github.com/microsoft/amplifier-unified'}},{...record,source:{...record.source,revision:'latest'}}]){
   writeFileSync(path,JSON.stringify(changed));assert.throws(()=>verifySource(root,path),/Unsupported client source record/);
  }
+});
+test('deleted browser inputs cannot claim HEAD, while unrelated tracked docs do not block packaging',t=>{
+ const {root,record}=fixture(t);
+ for(const name of ['src/main.js','public/page.html']){
+  const original=readFileSync(join(root,name));rmSync(join(root,name));
+  assert.throws(()=>createSourceRecord(root),'Tracked deletion must not disappear from the selected Git check');
+  writeFileSync(join(root,name),original);
+ }
+ writeFileSync(join(root,'README.md'),'Edited unrelated documentation');assert.deepEqual(createSourceRecord(root),record);
 });
 test('a FIFO source record is rejected before reading',{skip:process.platform==='win32'},t=>{
  const {root,path}=fixture(t);rmSync(path);execFileSync('mkfifo',[path]);

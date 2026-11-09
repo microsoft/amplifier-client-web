@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {lstatSync,mkdirSync,readFileSync,realpathSync,writeFileSync} from 'node:fs';
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {buildInputs} from './build-identity.mjs';
+import {buildInputs,generatedPublic} from './build-identity.mjs';
 
 const repository='https://github.com/microsoft/amplifier-client-web';
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
@@ -27,7 +27,9 @@ export function createSourceRecord(root){
  if(realpathSync(git(root,'rev-parse','--show-toplevel'))!==realpathSync(root))
   throw Error('Client source is nested in another Git repository; supply its trusted --source-record');
  const files=selectedInputs(root);
- git(root,'diff','--exit-code','HEAD','--',...files);
+ // Include deleted authored files, which no longer appear in the current inventory.
+ git(root,'diff','--exit-code','HEAD','--',...files,'src','public',
+  ...[...generatedPublic].map(name=>':(exclude)public/'+name));
  const tracked=new Set(git(root,'ls-files','-z','--',...files).split('\0'));
  if(files.some(name=>!tracked.has(name)))throw Error('Commit selected client inputs before recording their source');
  return {schema:1,kind:'amplifier-web-client-source',source:{repository,revision:git(root,'rev-parse','HEAD')},inputsSha256:inputsSha256(root)};

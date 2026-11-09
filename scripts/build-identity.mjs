@@ -9,7 +9,7 @@ export const brandingFiles=[
  'favicons/favicon.ico','favicons/favicon-32.png','favicons/apple-touch-icon.png',
  'pwa/pwa-192.png','pwa/pwa-512.png','icons/amplifier-icon-128.png',
 ];
-const generatedPublic=new Set(['branding','licenses','favicon.ico','sw.js']);
+export const generatedPublic=new Set(['branding','licenses','favicon.ico','sw.js']);
 const files=[
  'index.html','shell-validation.html',
  'package.json','package-lock.json','vite.config.js',
