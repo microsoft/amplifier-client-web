@@ -108,6 +108,9 @@ do not change client source identity. Normal packaging requires the client to be
 its own Git root, so a containing Unified commit cannot be mislabeled as a client
 commit. Package layout and consumer metadata are unchanged.
 
+The copied `.gitattributes` keeps text checkouts at LF, including on Windows,
+so source digests remain identical; binary files retain their original bytes.
+
 The record is a trusted selection, not independent authentication if somebody
 replaces both record and copied source. Edited copies can develop/build locally,
 but cannot package as the previous canonical revision. Select the changed
