@@ -103,8 +103,8 @@ try{
   if(scenario.touch){
    await slider.press('Escape');
    await page.waitForFunction(()=>!document.querySelector('#workspace-navigation').getClientRects().length);
-   assert.equal(await page.getByRole('button',{name:'Amplifier Home',exact:true}).isEnabled(),true);
    assert.equal(await page.getByRole('button',{name:'Home',exact:true}).isVisible(),true);
+   assert.equal(await page.getByRole('button',{name:'Home',exact:true}).evaluate(node=>!!node.closest('[inert]')),false);
    await page.getByRole('button',{name:'Home',exact:true}).click();
    await page.waitForFunction(()=>window.amplifier.getState().view.workSurface==='home');
   }
