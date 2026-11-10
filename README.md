@@ -14,7 +14,8 @@ This repository is for developing the web client as an independent component.
 This experimental extraction preserves the client history from Unified v0.70.0
 (`4854dbd9ec555690269747b7dbe273f008e9e179`, `LICENSE` and `frontend/`).
 Accepted client changes and canonical shared inputs are caught up through
-Unified v0.71.3 (`48c006c19ec36dfed6fb87d681d7d5296f99a6d9`), including
+Unified main `48c006c19ec36dfed6fb87d681d7d5296f99a6d9` (server version
+`0.71.3`, including later backend fixes), including
 workspace identification, session grouping/age views and passive delivery recovery.
 Unmerged navigation proposals are outside this selection.
 The repository is currently private. Its independent package is
