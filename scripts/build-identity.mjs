@@ -11,24 +11,24 @@ export const brandingFiles=[
 ];
 const generatedPublic=new Set(['branding','licenses','favicon.ico','sw.js']);
 const files=[
- 'frontend/index.html','frontend/shell-validation.html',
- 'frontend/package.json','frontend/package-lock.json','frontend/vite.config.js',
- 'frontend/scripts/build-identity.mjs','frontend/scripts/sync-branding.mjs',
- 'amplifier_web/provider_sources.json','amplifier_web/voice_options.json',
- 'amplifier_web/ai_services.json','packages/shell-sdk/index.js','packages/shell-sdk/package.json',
- 'assets/UPSTREAM-LICENSE',...brandingFiles.map(name=>'assets/branding/'+name),
+ 'index.html','shell-validation.html',
+ 'package.json','package-lock.json','vite.config.js',
+ 'scripts/build-identity.mjs','scripts/sync-branding.mjs',
+ '.build-inputs/amplifier_web/provider_sources.json','.build-inputs/amplifier_web/voice_options.json',
+ '.build-inputs/amplifier_web/ai_services.json','.build-inputs/packages/shell-sdk/index.js','.build-inputs/packages/shell-sdk/package.json',
+ '.build-inputs/assets/UPSTREAM-LICENSE',...brandingFiles.map(name=>'.build-inputs/assets/branding/'+name),
 ];
 
 function tree(root,directory){
  return readdirSync(join(root,directory),{withFileTypes:true}).flatMap(entry=>{
-  if(directory==='frontend/public'&&generatedPublic.has(entry.name))return [];
+  if(directory==='public'&&generatedPublic.has(entry.name))return [];
   const name=directory+'/'+entry.name;
   return entry.isDirectory()?tree(root,name):[name];
  });
 }
 
 export function buildInputs(root){
- return [...files,...tree(root,'frontend/src'),...tree(root,'frontend/public')].sort();
+ return [...files,...tree(root,'src'),...tree(root,'public')].sort();
 }
 
 export function buildIdentity(root){
@@ -39,6 +39,6 @@ export function buildIdentity(root){
   const bytes=readFileSync(join(root,name));
   hash.update(name+'\0'+bytes.length+'\0').update(bytes);
  }
- const version=readFileSync(join(root,'pyproject.toml'),'utf8').match(/^version = "([^"]+)"/m)[1];
+ const {version}=JSON.parse(readFileSync(join(root,'package.json'),'utf8'));
  return {version,id:hash.digest('hex').slice(0,16)};
 }

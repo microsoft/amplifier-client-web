@@ -1,5 +1,5 @@
-import providerSources from '../../amplifier_web/provider_sources.json' with {type:'json'};
-import services from '../../amplifier_web/ai_services.json' with {type:'json'};
+import providerSources from '../.build-inputs/amplifier_web/provider_sources.json' with {type:'json'};
+import services from '../.build-inputs/amplifier_web/ai_services.json' with {type:'json'};
 // Shared with the semantic Settings actions on the host.
 export const aiServices=services;
 // Canonical known modules in microsoft/amplifier-app-cli/provider_sources.py.
