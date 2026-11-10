@@ -116,13 +116,19 @@ together. Do not hand-edit the consumer copy or generated assets.
 
 Use [Unified's refresh and retirement workflow](https://github.com/microsoft/amplifier-unified/blob/main/components/README.md#refresh-and-retire-the-copy):
 create the record from the clean selected client commit and export the tracked
-tree with `git archive HEAD`. Preserve the selected shared-input lock and delivery
-metadata; do not generate a replacement lock in Unified. Coordinate with the
-integration/release owner to avoid duplicate parallel ports, preserve unrelated
-work and avoid reverting a later accepted client selection.
+tree with `git archive HEAD`. Pin the exact reviewed and accepted canonical
+commit, not latest `main` or a merge commit unless its entire tree was accepted.
+Verify equality of the full tracked files and modes with that commit, together
+with the source record/digest. Preserve the selected shared-input lock and
+delivery metadata; do not generate a replacement lock in Unified. Coordinate
+with the integration/release owner to avoid duplicate parallel ports, preserve
+unrelated work and avoid reverting a later accepted client selection.
 
 The responsible owner carries both updates or makes an explicit named integration
 handoff with exact client and Unified PRs/revisions and what remains pending.
+That handoff tracks pending work; it cannot waive synchronization of both
+repositories before release. Canonical-only or copy-only changes are not
+release-ready.
 Report source acceptance, copied selection, build/qualification and release as
 distinct states. Use the affected checks under the existing validation/release
 policy, not a new mandatory full suite; actual-server checks remain Unified-owned.
