@@ -15,7 +15,7 @@
 #amp-one.a-approachable-shell .a-sidebar-section{margin:16px 0 0}
 /* The age control already supplies the first module's section gap. Preserve
    normal section spacing inside and between all later shell modules. */
-#amp-one.a-approachable-shell .a-chat-age-filter+.a-shell-modules>.a-shell-instance:nth-child(1 of :not([hidden]):has(.a-sidebar-section)) .a-sidebar-section:first-child{margin-top:0}
+#amp-one.a-approachable-shell .a-chat-age-filter+.a-shell-modules>.a-shell-instance:nth-child(1 of :not([hidden]):has(.a-sidebar-section))>.a-sidebar-navigation>.a-sidebar-section:nth-child(1 of .a-sidebar-section){margin-top:0}
 #amp-one.a-approachable-shell .a-sidebar-section-heading{margin:0 0 3px;padding:0 3px}
 #amp-one.a-approachable-shell .a-sidebar-section-heading>button{font-size:var(--a-text-xs,12px);justify-content:flex-start;font-weight:550}
 #amp-one.a-approachable-shell .a-nav-chat{min-height:40px;margin:1px 0;border-radius:9px}

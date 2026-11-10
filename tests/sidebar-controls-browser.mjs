@@ -18,6 +18,7 @@ try{
  for(const scenario of [
   {name:'desktop-216',width:1280,navWidth:216},
   {name:'desktop-320',width:1280,navWidth:320},
+  {name:'pinned-216',width:1280,navWidth:216,pinned:true},
   {name:'status-216',width:1280,navWidth:216,navMode:'status'},
   {name:'mobile-320',width:320,touch:true},
   {name:'mobile-390',width:390,touch:true},
@@ -29,6 +30,7 @@ try{
    sessions:[{id:'chat',sessionKind:'root',title:'Saved synthetic chat',workspace:'/fixture',workspaceId:'project',status:'idle',historyManaged:true,historyLoaded:true,messages:[]}],
    workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:'chat',selectedWorkspaceId:'project',
    setup:{providers:[{id:'fixture',module:'provider-fixture',enabled:true,config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false}};
+  if(scenario.pinned)state.pinnedNavigation={items:[{id:'chat:chat',kind:'chat',row:state.sessions[0]}],total:1};
   const shell=createShellHttpFixture(()=>state),page=await browser.newPage({viewport:{width:scenario.width,height:900},hasTouch:!!scenario.touch,isMobile:!!scenario.touch});
   page.on('pageerror',error=>errors.push(error.message));
   await page.addInitScript(installFixtureEvents);
@@ -54,7 +56,8 @@ try{
    const filter=document.querySelector('.a-chat-age-filter'),label=filter.querySelector('label'),range=filter.querySelector('input'),first=document.querySelector('.a-sidebar-section');
    const rect=node=>{const {x,y,width,height}=node.getBoundingClientRect();return {x,y,width,height}};
    const style=node=>{const s=getComputedStyle(node);return {fontSize:s.fontSize,lineHeight:s.lineHeight,color:s.color,marginTop:s.marginTop,marginBottom:s.marginBottom,height:s.height,padding:s.padding}};
-   return {filter:rect(filter),label:rect(label),range:rect(range),first:rect(first),labelStyle:style(label),rangeStyle:style(range),firstStyle:style(first),gap:first.getBoundingClientRect().top-filter.getBoundingClientRect().bottom,sidebar:rect(document.querySelector('#workspace-navigation'))};
+   const buttons=[...document.querySelectorAll('.a-sidebar-modes button')].map(button=>({label:button.getAttribute('aria-label')||button.textContent,rect:rect(button),hit:button.contains(document.elementFromPoint(button.getBoundingClientRect().x+button.offsetWidth/2,button.getBoundingClientRect().y+button.offsetHeight/2))}));
+   return {filter:rect(filter),label:rect(label),range:rect(range),first:rect(first),labelStyle:style(label),rangeStyle:style(range),firstStyle:style(first),gap:first.getBoundingClientRect().top-filter.getBoundingClientRect().bottom,sidebar:rect(document.querySelector('#workspace-navigation')),buttons,sectionMargins:[...document.querySelectorAll('.a-sidebar-section')].map(node=>getComputedStyle(node).marginTop)};
   });
   results.push({scenario:scenario.name,baseline,...metrics});
   await page.screenshot({path:`${artifacts}/${scenario.name}.png`});
@@ -68,6 +71,12 @@ try{
    assert.ok(metrics.filter.x>=metrics.sidebar.x&&metrics.filter.x+metrics.filter.width<=metrics.sidebar.x+metrics.sidebar.width);
    assert.equal(await page.locator('.a-chat-age-filter').evaluate(node=>node.scrollWidth<=node.clientWidth),true);
    assert.ok(parseFloat(metrics.labelStyle.fontSize)<=(scenario.enlarged?24:12));
+   assert.ok(metrics.sectionMargins.slice(1).every(margin=>margin==='16px'),'Later section rhythm is unchanged');
+   assert.equal(metrics.buttons.length,3);
+   for(const button of metrics.buttons){
+    assert.ok(button.hit,JSON.stringify(button));
+    assert.ok(button.rect.x>=metrics.sidebar.x&&button.rect.x+button.rect.width<=metrics.sidebar.x+metrics.sidebar.width);
+   }
   }
   // Native keyboard semantics and meaningful values remain six-stop choices.
   await slider.focus();
@@ -100,6 +109,13 @@ try{
    await page.waitForFunction(()=>window.amplifier.getState().view.workSurface==='home');
   }
   assert.equal(await page.evaluate(()=>window.amplifier.getState().selectedSessionId),'chat');
+  const beforeDraft=calls.filter(call=>call.action==='session.draft').length;
+  // Reopen the mobile drawer after Home, then use the same keyboard action.
+  if(scenario.touch)await page.getByRole('button',{name:'Open navigation',exact:true}).click();
+  const newChat=page.locator('.a-sidebar-new');
+  const drafted=page.waitForResponse(response=>response.url().endsWith('/api/actions')&&response.request().postDataJSON()?.action==='session.draft');
+  await newChat.focus();await newChat.press('Enter');await drafted;
+  assert.equal(calls.filter(call=>call.action==='session.draft').length,beforeDraft+1,'New chat dispatches exactly once');
   await page.close();
  }
  assert.deepEqual(errors,[]);
