@@ -1,26 +1,21 @@
 // Static installation artifact: no server, updater, dependency resolver or runtime.
-import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {copyFileSync,mkdirSync,readFileSync,writeFileSync} from 'node:fs';
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {buildIdentity,buildInputs} from './build-identity.mjs';
+import {buildIdentity} from './build-identity.mjs';
 import {inventory,verifyInputs} from './prepare-inputs.mjs';
+import {clientSource} from './client-source.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const read=path=>JSON.parse(readFileSync(path,'utf8'));
 const write=(path,value)=>writeFileSync(path,JSON.stringify(value,null,2)+'\n');
-const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 
-export function packageClient(destination,pairedRevision){
+export function packageClient(destination,pairedRevision,sourceRecord){
  if(!/^[a-f0-9]{40}$/.test(pairedRevision||''))throw Error('Declare one exact paired Unified server commit');
  const shared=verifyInputs(root,join(root,'.build-inputs'));
- const authored=[...buildInputs(root).filter(name=>!name.startsWith('.build-inputs/')),'LICENSE','build-inputs.lock.json','scripts/prepare-inputs.mjs','scripts/package-client.mjs'];
- git('diff','--exit-code','HEAD','--',...authored);
- const tracked=new Set(git('ls-files','-z','--',...authored).split('\0'));
- if(authored.some(name=>!tracked.has(name)))throw Error('Commit selected client inputs before packaging');
- const source={repository:'https://github.com/microsoft/amplifier-client-web',revision:git('rev-parse','HEAD')};
+ const source=clientSource(root,sourceRecord);
  const assets=join(root,'dist'),build=read(join(assets,'build.json'));
  if(JSON.stringify(build)!==JSON.stringify(buildIdentity(root)))throw Error('Built assets do not match current source identity; rebuild');
  const pkg=read(join(root,'package.json'));
@@ -41,6 +36,8 @@ export function packageClient(destination,pairedRevision){
  return {directory:destination,source,build,pairedServer:component.pairedServer,assets:Object.keys(component.assets).length};
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
- const [output,pairedRevision]=process.argv.slice(2);if(!output)throw Error('Usage: npm run package:artifact -- NEW_DIRECTORY PAIRED_SERVER_COMMIT');
- console.log(JSON.stringify(packageClient(resolve(output),pairedRevision)));
+ const [output,pairedRevision,option,record,...extra]=process.argv.slice(2);
+ if(!output||(option&&(option!=='--source-record'||!record))||extra.length)
+  throw Error('Usage: npm run package:artifact -- NEW_DIRECTORY PAIRED_SERVER_COMMIT [--source-record RECORD]');
+ console.log(JSON.stringify(packageClient(resolve(output),pairedRevision,record&&resolve(record))));
 }

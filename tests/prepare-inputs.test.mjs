@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import fs from 'node:fs';
 import {syncBuiltinESMExports} from 'node:module';
-import {prepareInputs,verifyInputs} from '../scripts/prepare-inputs.mjs';
+import {fetchInputs,prepareInputs,verifyInputs} from '../scripts/prepare-inputs.mjs';
 
 function fixture(t){
  const root=mkdtempSync(join(tmpdir(),'client-inputs-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
@@ -56,4 +56,33 @@ for(const location of ['build-inputs.lock.json','catalog/data.json'])test('nonre
  const module=new URL('../scripts/prepare-inputs.mjs',import.meta.url).href;
  const result=spawnSync(process.execPath,['--input-type=module','-e',`import {prepareInputs} from ${JSON.stringify(module)};prepareInputs(process.argv[1],process.argv[2]);`,root,source],{encoding:'utf8',timeout:2000,killSignal:'SIGKILL'});
  assert.equal(result.error,undefined,'Must reject the FIFO before reading it');assert.equal(result.status,1);assert.match(result.stderr,/regular build input/);
+});
+test('anonymous retrieval requests only the pinned public source and verifies it before replacement',async t=>{
+ const {root,source}=fixture(t),calls=[];
+ await fetchInputs(root,{fetch:async(url,options)=>{
+  calls.push({url,options});return new Response(readFileSync(join(source,'catalog/data.json')));
+ }});
+ assert.equal(calls.length,1);assert.equal(calls[0].url,'https://raw.githubusercontent.com/microsoft/amplifier-unified/'+'a'.repeat(40)+'/catalog/data.json');
+ assert.equal(calls[0].options.redirect,'error');assert.equal(calls[0].options.headers,undefined);assert.ok(calls[0].options.signal instanceof AbortSignal);
+ verifyInputs(root,join(root,'.build-inputs'));assert.equal(readdirSync(root).some(name=>name.startsWith('.build-inputs-stage-')),false);
+});
+for(const failure of ['http','oversize','short','hash','timeout'])test('download '+failure+' leaves prior prepared inputs and cleans staging',async t=>{
+ const {root,source}=fixture(t);prepareInputs(root,source);const bytes=readFileSync(join(source,'catalog/data.json'));
+ const hold=setTimeout(()=>{},1000);
+ try{await assert.rejects(fetchInputs(root,{timeoutMs:15,fetch:async(_url,{signal})=>{
+  if(failure==='http')return new Response('missing',{status:404});
+  if(failure==='oversize')return new Response(Buffer.concat([bytes,bytes]));
+  if(failure==='short')return new Response(bytes.subarray(1));
+  if(failure==='hash')return new Response(Buffer.alloc(bytes.length));
+  return await new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));
+ }}))}finally{clearTimeout(hold)}
+ assert.equal(readFileSync(join(root,'.build-inputs/catalog/data.json'),'utf8'),bytes.toString());
+ assert.equal(readdirSync(root).some(name=>name.startsWith('.build-inputs-stage-')),false);
+});
+for(const name of ['../escape','/absolute','catalog/../../escape','C:/outside','catalog\\escape'])test('unsafe locked path is rejected before network or file writes: '+name,async t=>{
+ const {root,source}=fixture(t);prepareInputs(root,source);const path=join(root,'build-inputs.lock.json'),lock=JSON.parse(readFileSync(path));
+ lock.inputs[name]=lock.inputs['catalog/data.json'];writeFileSync(path,JSON.stringify(lock));let requests=0;
+ await assert.rejects(fetchInputs(root,{fetch:async()=>{requests++;throw Error('Must not fetch')}}),/Unsupported build input path/);
+ assert.equal(requests,0);assert.equal(readFileSync(join(root,'.build-inputs/catalog/data.json'),'utf8'),'{"value":1}');
+ assert.equal(readdirSync(root).some(name=>name.startsWith('.build-inputs-stage-')),false);
 });
