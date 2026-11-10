@@ -239,7 +239,7 @@ async function runCase(fault){
      drafts.set(id,{draft:patch.draft,draftDocument:patch.draftDocument??null});
     }
     state.view={...state.view,...patch};state.revision++;
-   }else if(!['shell.report','attention.read','bundles.list','configuration.defaults','providers.list'].includes(body.action)&&
+   }else if(!['shell.report','attention.read','bundles.list','configuration.defaults','providers.list','theme.list'].includes(body.action)&&
             !(body.action==='runtime.control'&&body.args.operation==='configuration.catalog')){
     result.blockedRequests.push(body.action);
     return route.fulfill({status:409,json:{accepted:false,error:'This fixture refuses unexpected actions.'}});
