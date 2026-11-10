@@ -138,6 +138,23 @@ test('earlier pages remain a snapshot while new publications and live status con
  }finally{await act(async()=>root?.unmount());globalThis.fetch=original}
 });
 
+test('frozen earlier history receives exact status correction without unfreezing its text',async()=>{
+ let detail,root,value={...source('window'),messageWindow:{mode:'cursor',hasEarlier:true,before:'first'},executionWindow:null};
+ const working={version:1,inputId:'one',phase:'working',basis:'execution_observed',startedAt:10,updatedAt:12};
+ value.messages=[{id:'input',role:'user',inputId:'one',text:'Original text',inputStatus:working}];
+ const original=globalThis.fetch;globalThis.fetch=async()=>response({mode:'cursor',items:[{id:'prior'}],hasEarlier:false,before:null});
+ function Probe(){detail=useConversationDetail(value);return detail.controls}
+ try{
+  await act(async()=>{root=create(React.createElement(Probe))});await act(async()=>detail.earlier());
+  assert.equal(detail.focused,true);
+  value={...value,messages:[{...value.messages[0],text:'New text',inputStatus:{...working,phase:'done',endedAt:20,updatedAt:20}}]};
+  await act(async()=>root.update(React.createElement(Probe)));
+  const row=detail.session.messages.find(row=>row.id==='input');
+  assert.equal(row.text,'Original text');assert.equal(row.inputStatus.phase,'done');
+  assert.equal(detail.focused,true);
+ }finally{await act(async()=>root?.unmount());globalThis.fetch=original}
+});
+
 test('runtime history is explicit, separately paged, and never merged with saved web messages',async()=>{
  let detail,root,calls=[];const original=globalThis.fetch;
  const value={...source('window'),nativeContinuation:{status:'available'},executionWindow:null};
