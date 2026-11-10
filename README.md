@@ -24,11 +24,16 @@ not by standalone client fixtures.
 The 14 canonical shared inputs are selected from accepted Unified main
 `816c7a67dbafc20bfb28723dd317c71d3bd2bb28`; their bytes still match the current
 accepted server. Shared-input provenance and actual server qualification are distinct.
-The repository is currently private. Its independent package is
-`@amplifier/client-web`, currently `0.3.2`; this candidate's private GitHub artifact publication
-and Unified release adoption remain separate. Client source and tests are authored here. Unified owns selection, host integration
-checks and distribution assembly; its temporary delivery copy and disposable
-prepared tree are consumers of this source. The retained AHP client is separate.
+The repository is currently private; preserve its visibility. Its independent
+package is `@amplifier/client-web`, currently `0.3.2`; this candidate's private
+GitHub artifact publication and Unified release adoption remain separate.
+Client source and tests are authored here. Unified owns selection, host integration
+checks and distribution assembly. While this repository cannot yet be made public,
+Unified ships a committed full source snapshot: **changes must be maintained in
+both repositories**, not just merged here. Follow the
+[temporary dual-repository workflow](#temporary-dual-repository-maintenance).
+The delivery copy and disposable prepared tree are consumers, not alternative
+source owners. The retained AHP client is separate.
 
 The [family vision](https://github.com/microsoft/amplifier-unified/blob/816c7a67dbafc20bfb28723dd317c71d3bd2bb28/docs/architecture/VISION.md),
 [component boundaries](https://github.com/microsoft/amplifier-unified/blob/816c7a67dbafc20bfb28723dd317c71d3bd2bb28/contracts/component-boundaries.v1.md) and
@@ -100,8 +105,34 @@ asset assembly are a separate distribution responsibility.
 
 ## Packaging an isolated source copy
 
-A distribution can carry a temporary source copy while this repository is
-private. Create its small source record from a clean standalone client checkout:
+### Temporary dual-repository maintenance
+
+While this repository remains private, Unified carries its selected full tracked
+tree in `components/web-client/` with `components/web-client.source.json`.
+A client-only merge does not complete app delivery. For work begun here or in a
+Unified copied/prepared tree, author or port desired client changes here first,
+then commit them before refreshing the whole verified snapshot and source record
+together. Do not hand-edit the consumer copy or generated assets.
+
+Use [Unified's refresh and retirement workflow](https://github.com/microsoft/amplifier-unified/blob/main/components/README.md#refresh-and-retire-the-copy):
+create the record from the clean selected client commit and export the tracked
+tree with `git archive HEAD`. Preserve the selected shared-input lock and delivery
+metadata; do not generate a replacement lock in Unified. Coordinate with the
+integration/release owner to avoid duplicate parallel ports, preserve unrelated
+work and avoid reverting a later accepted client selection.
+
+The responsible owner carries both updates or makes an explicit named integration
+handoff with exact client and Unified PRs/revisions and what remains pending.
+Report source acceptance, copied selection, build/qualification and release as
+distinct states. Use the affected checks under the existing validation/release
+policy, not a new mandatory full suite; actual-server checks remain Unified-owned.
+
+Retire this temporary obligation only through an explicitly approved public/
+repository-delivery cutover that removes the copy and updates guidance in both
+repositories. Public availability alone does not retire it; this workflow does
+not authorize publishing the private repository or changing its visibility.
+
+Create the small source record from a clean standalone client checkout:
 
 ```sh
 node scripts/client-source.mjs record /tmp/web-client.source.json
@@ -245,6 +276,12 @@ Follow [SECURITY.md](SECURITY.md) to report a vulnerability privately.
 This project is licensed under the [MIT License](LICENSE).
 
 ## Contributing
+
+Read [AGENTS.md](AGENTS.md) and the
+[temporary dual-repository maintenance rule](#temporary-dual-repository-maintenance)
+before changing the client. A contribution intended for Unified must include
+snapshot synchronization or an explicit named integration handoff, not just a
+client PR.
 
 Most contributions require you to agree to a
 Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
