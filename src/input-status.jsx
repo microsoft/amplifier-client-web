@@ -1,14 +1,15 @@
 import React,{useEffect,useState} from 'react';
 import {inputStatus,statusLabel,workingDuration} from './input-status.js';
 import {messageTime} from './message-time';
+import {hostNow} from './api';
 
 export function InputStatus({message,connected=true,current=true}){
  const status=inputStatus(message),live=status?.phase==='working'&&connected&&current;
- const [now,setNow]=useState(()=>Date.now()/1000);
+ const [now,setNow]=useState(hostNow);
  useEffect(()=>{
   if(!live)return;
-  setNow(Date.now()/1000);
-  const timer=setInterval(()=>setNow(Date.now()/1000),1000);
+  setNow(hostNow());
+  const timer=setInterval(()=>setNow(hostNow()),1000);
   return()=>clearInterval(timer);
  },[live,status?.inputId,status?.startedAt]);
  if(!status)return null;
