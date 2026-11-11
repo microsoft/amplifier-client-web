@@ -146,10 +146,25 @@ async function menuRegression({page,scenario,readState,emit}){
  assert.deepEqual(readState().sessions[0],original);
  assert.deepEqual(readState().view.draft,originalView.draft);
  const actionEvidence=JSON.stringify({scenario:scenario.name,actionTrace:proof.actionTrace});
- assert.deepEqual(calls.slice(copyStart),[],'Chat menu disclosure/copy never dispatches an action or changes selection/model/draft: '+actionEvidence);
- // Retain the original failing oracle until an actual offending payload is
- // observed. Source close paths alone do not justify widening this allowlist.
- assert.ok(calls.slice(start).every(call=>call.action==='view.update'&&Object.keys(call.args.patch).every(key=>key==='navExpanded')),
+ // The diagnostic run observed shell/runtime.jsx's debounced render report
+ // settling during disclosure. It is not an interactive menu action. Keep it
+ // visible and validate its exact fixture identity rather than timing it away.
+ const clientId=await page.evaluate(()=>window.amplifier.getState().client.id);
+ for(const call of calls.slice(start).filter(call=>call.action==='shell.report')){
+  assert.equal(call.args.clientId,clientId);
+  assert.equal(call.args.revision,0);
+  assert.equal(call.args.previewId,null);
+  assert.equal(call.args.message,'');
+  assert.deepEqual(call.args.instances,{
+   workspaces:'ready',chats:'ready','core.app.actions':'ready','core.app.status':'ready',
+   'core.conversation.header':'ready','core.composer.actions':'ready',
+   'core.canvas.toolbar':'inactive','core.settings.appearance':'inactive',
+  });
+ }
+ const interactive=rows=>rows.filter(call=>call.action!=='shell.report').map(({action,args})=>({action,args}));
+ assert.deepEqual(interactive(calls.slice(copyStart)),[],
+  'Chat menu disclosure/copy never dispatches an interactive action or changes selection/model/draft: '+actionEvidence);
+ assert.deepEqual(interactive(calls.slice(start)),scenario.touch?[{action:'view.update',args:{patch:{navExpanded:false}}}]:[],
   'Only the explicit mobile drawer close may dispatch a view update: '+actionEvidence);
  if(scenario.touch){
   menuPhase='mobile-drawer-reopen';
