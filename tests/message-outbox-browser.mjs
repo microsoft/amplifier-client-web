@@ -199,12 +199,25 @@ try{
  await page.getByRole('button',{name:'Checking…',exact:true}).waitFor();
  deferredDelivery.delete(lostRejection.body.id);await deliveryReply(rejectionCheck,'not_saved',{message:'No saved evidence; the original submission remains uncertain.'});
  assert.equal(calls.filter(c=>c.action==='conversation.send'&&c.id===lostRejection.body.id).length,1,'Automatic passive check never resends');
+ const originalUnknown=(await outbox()).find(row=>row.commandId===lostRejection.body.id);
+ assert.equal(originalUnknown.status,'unknown');
  await page.getByRole('button',{name:'Retry original submission',exact:true}).click();
  await page.getByText(/Sending again could repeat that work/).waitFor();
  assert.equal(calls.filter(c=>c.action==='conversation.send'&&c.id===lostRejection.body.id).length,1,'Opening uncertain-retry confirmation is not admission');
  await page.getByRole('button',{name:'Send this message again',exact:true}).click();
  const rejectionReceipt=await next();assert.equal(rejectionReceipt.body.action,'conversation.send');assert.equal(rejectionReceipt.body.id,lostRejection.body.id,'Original-submission retry keeps its deduplication identity');assert.equal(calls.filter(c=>c.action==='conversation.send'&&c.id===lostRejection.body.id).length,2,'Only the explicit click retries the original submission');await rejectionReceipt.route.fulfill({json:{accepted:false,duplicate:true,status:409,error:'Saved rejection',state:shell.state()}});
- await page.getByRole('button',{name:'Retry',exact:true}).click();const rejectedRetry=await next();assert.notEqual(rejectedRetry.body.id,lostRejection.body.id);await received(rejectedRetry);
+ await page.waitForFunction(id=>JSON.parse(sessionStorage.getItem('amplifier.messageOutbox.v1')).find(row=>row.commandId===id)?.status==='unknown',lostRejection.body.id);
+ const stillUnknown=(await outbox()).find(row=>row.commandId===lostRejection.body.id),unknownBubble=page.locator(`[data-input-id="${lostRejection.body.id}"]`);
+ for(const key of ['id','commandId','sessionId','scope','expectedSource','text'])assert.deepEqual(stillUnknown[key],originalUnknown[key],'A refused retry cannot change the uncertain original '+key);
+ assert.equal((await outbox()).length,1);assert.equal(await unknownBubble.getByRole('button',{name:'Retry',exact:true}).count(),0,'A refused original-identity retry is not proof that the first POST failed');
+ assert.equal(waiting.length,0);assert.equal(calls.filter(c=>c.action==='conversation.send'&&c.args.text===lostRejection.body.args.text).length,2,'No fresh identity is admitted after the refused retry');
+ // Continue only after exact passive evidence settles the original submission.
+ // The retry refusal itself cannot justify manufacturing a new command identity.
+ deferredDelivery.add(lostRejection.body.id);await unknownBubble.getByRole('button',{name:'Check delivery',exact:true}).click();
+ const settledOriginal=await nextDelivery(lostRejection.body.id);deferredDelivery.delete(lostRejection.body.id);
+ await deliveryReply(settledOriginal,'accepted');
+ await page.waitForFunction(()=>JSON.parse(sessionStorage.getItem('amplifier.messageOutbox.v1')).length===0);
+ assert.equal(calls.filter(c=>c.action==='conversation.send'&&c.args.text===lostRejection.body.args.text).length,2,'Passive acceptance never resends the original');
  const delayed=await send('Acknowledgement delayed');chat().status='working';chat().messages.push({id:'delayed',inputId:delayed.body.id,role:'user',text:delayed.body.args.text,delivery:{status:'sending'}});await emit();
  await composer().fill('Keep this next draft');await until(()=>state.view.draft==='Keep this next draft','Draft saves while acknowledgement waits');
  await delayed.route.fulfill({status:504,json:{error:'The runtime operation has not returned yet. It may still be running; do not automatically repeat it.',code:'runtime_pending',delivery:'unknown'}});

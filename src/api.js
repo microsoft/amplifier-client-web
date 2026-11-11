@@ -86,12 +86,13 @@ async function measuredRequest(path, options, timing) {
   let data;
   const invalidResponse=()=>Object.assign(new Error(`The server returned an unexpected response (${res.status}).`),{code:'invalid_response',status:res.status,unconfirmed:mutation});
   try { data=content?JSON.parse(content):{}; } catch { throw invalidResponse(); }
-  // An unreadable action acknowledgement proves neither acceptance nor refusal.
-  // Preserve structured server errors; don't infer nonexecution from proxy bytes.
+  // A readable proxy error still proves neither acceptance nor refusal. Only an
+  // explicit, coherent action refusal can settle a mutation as rejected.
   const actionAck=mutation&&path.split('?')[0]==='/api/actions';
   if(actionAck&&(!data||typeof data!=='object'||Array.isArray(data)))throw invalidResponse();
-  const readableError=[data?.error,data?.error?.message,data?.message].some(value=>typeof value==='string'&&value.trim());
-  if(actionAck&&!res.ok&&data.accepted!==false&&!readableError)throw invalidResponse();
+  if(actionAck&&!res.ok&&data.accepted!==false)throw invalidResponse();
+  if(actionAck&&data.accepted===false&&data.status!==undefined&&
+    (!Number.isInteger(data.status)||data.status<400||data.status>=600))throw invalidResponse();
   // A repeated command can return its original rejection inside an HTTP 200 receipt.
   const rejectionStatus=res.ok&&data.accepted===false?(Number.isInteger(data.status)&&data.status>=400&&data.status<600?data.status:400):res.status;
   if(!res.ok || data.accepted===false) throw Object.assign(new Error(typeof data.error==='string'?data.error:data.error?.message||data.message||`Request failed (${rejectionStatus})`),{code:data.code,state:data.state,receipt:data.receipt,status:rejectionStatus});

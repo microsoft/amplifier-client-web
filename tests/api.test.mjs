@@ -40,6 +40,46 @@ test('unreadable acknowledgements keep mutations unconfirmed and never replay',a
   }
  }finally{globalThis.fetch=original}
 });
+test('readable but missing or contradictory action refusals stay unconfirmed without replay',async()=>{
+ const original=globalThis.fetch;let calls=0;
+ const bodies=[
+  {message:'upstream unavailable'},
+  {error:'upstream unavailable'},
+  {error:{message:'upstream unavailable'},code:'upstream_unavailable'},
+  {accepted:true,message:'upstream unavailable'},
+  {accepted:'false',error:'upstream unavailable'},
+  {accepted:null,error:'upstream unavailable'},
+  {accepted:false,status:200,error:'Contradictory refusal'},
+  {accepted:false,status:'409',error:'Malformed refusal'},
+ ];
+ try{
+  for(const body of bodies){
+   globalThis.fetch=async()=>{calls++;return new Response(JSON.stringify(body),{status:409})};
+   await assert.rejects(request('/api/actions?clientId=fixture',{method:'POST',body:{action:'conversation.send',id:'original-input'}}),error=>{
+    assert.equal(error.code,'invalid_response');assert.equal(error.status,409);assert.equal(error.unconfirmed,true);
+    assert.equal(error.requestPath,'/api/actions');return true;
+   });
+  }
+  assert.equal(calls,bodies.length,'No malformed action receipt causes a replay');
+ }finally{globalThis.fetch=original}
+});
+test('explicit action refusals preserve server error details and recorded duplicate rejection status',async()=>{
+ const original=globalThis.fetch,state={revision:4},receipt={delivery:'failed'};
+ try{
+  for(const status of [200,400,409]){
+   for(const errorBody of [{error:'Source changed'},{error:{message:'Source changed'}},{message:'Source changed'}]){
+    globalThis.fetch=async()=>new Response(JSON.stringify({accepted:false,...errorBody,code:'source_changed',state,receipt,...(status===200?{status:409,duplicate:true}:{})}),{status});
+    await assert.rejects(request('/api/actions',{method:'POST',body:{action:'conversation.send'}}),error=>{
+     assert.equal(error.message,'Source changed');assert.equal(error.status,status===200?409:status);
+     assert.equal(error.code,'source_changed');assert.equal(error.unconfirmed,undefined);
+     assert.deepEqual(error.state,state);assert.deepEqual(error.receipt,receipt);return true;
+    });
+   }
+  }
+  globalThis.fetch=async()=>new Response(JSON.stringify({error:{message:'Upstream unavailable'},code:'upstream_unavailable'}),{status:409});
+  await assert.rejects(request('/api/state'),error=>error.message==='Upstream unavailable'&&error.code==='upstream_unavailable'&&!error.unconfirmed,'Read-only errors keep their existing structured meaning');
+ }finally{globalThis.fetch=original}
+});
 test('live timers anchor to the host response clock instead of a skewed device clock',async()=>{
  const {hostNow}=await import('../src/api.js'),original=globalThis.fetch;
  try{
@@ -106,8 +146,8 @@ test('intentional aborts and server rejections retain their original meaning',as
  try{
   globalThis.fetch=async()=>{throw abort};
   await assert.rejects(request('/api/state'),error=>error===abort);
-  globalThis.fetch=async()=>new Response(JSON.stringify({error:'Permission denied'}),{status:403});
-  await assert.rejects(request('/api/actions',{method:'POST'}),error=>error.status===403&&error.code!=='transport_unavailable');
+  globalThis.fetch=async()=>new Response(JSON.stringify({accepted:false,error:'Permission denied'}),{status:403});
+  await assert.rejects(request('/api/actions',{method:'POST'}),error=>error.status===403&&error.message==='Permission denied'&&!error.unconfirmed);
  }finally{globalThis.fetch=original}
 });
 
