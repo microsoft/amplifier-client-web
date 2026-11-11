@@ -9,8 +9,110 @@ import './composer-test-helpers.mjs';
 
 const artifacts=process.env.AMPLIFIER_TEST_ARTIFACTS||'output/sidebar-controls';
 const baseline=process.env.AMPLIFIER_SIDEBAR_BASELINE==='1';
-const results=[],errors=[],calls=[],regressions=[],explicitStops=[],attachmentRequests=[],cleanupErrors=[];
+const results=[],errors=[],calls=[],regressions=[],menuRegressions=[],explicitStops=[],attachmentRequests=[],cleanupErrors=[];
 let browser,vite,page,failure;
+
+async function menuRegression({page,scenario,readState,emit}){
+ const proof={scenario:scenario.name,passed:false,clipboard:'real browser grant; synthetic records'};
+ menuRegressions.push(proof);
+ const start=calls.length,original={...readState().sessions[0]},originalView={...readState().view};
+ const footer=page.locator('.a-work-footer'),app=footer.getByRole('button',{name:'App options',exact:true});
+ const appItems=footer.getByRole('group',{name:'App options',exact:true});
+ const labels=locator=>locator.evaluateAll(nodes=>nodes.map(node=>{
+  const copy=node.cloneNode(true);copy.querySelectorAll('svg,.a-attention-badge').forEach(node=>node.remove());return copy.textContent.trim();
+ }));
+ const capture=label=>page.screenshot({path:`${artifacts}/${scenario.name}-${label}.png`});
+ await expect(app.locator('.a-attention-badge')).toHaveText('3');
+ await app.focus();await app.press('Enter');
+ await expect(appItems.getByRole('button').first()).toBeFocused();
+ assert.deepEqual(await labels(appItems.getByRole('button')),['Activity','Send feedback','Automations','What the agents see','Settings']);
+ await expect(appItems.locator('hr,[role="separator"]')).toHaveCount(0);
+ await expect(appItems.getByRole('button',{name:/^Activity/}).locator('.a-attention-badge')).toHaveText('2');
+ await expect(appItems.getByRole('button',{name:/^Settings/}).locator('.a-attention-badge')).toHaveText('3');
+ for(const button of await appItems.getByRole('button').all()){
+  const box=await button.boundingBox();assert.ok(box&&box.x>=0&&box.x+box.width<=scenario.width);
+ }
+ await capture('app-options');
+ await page.keyboard.press('Escape');await expect(app).toBeFocused();await expect(appItems).toHaveCount(0);
+ await expect(app.locator('.a-attention-badge')).toHaveText('3');
+ // The mobile drawer owns focus/inertness until explicitly closed.
+ if(scenario.touch){
+  await page.getByRole('slider',{name:'Filter conversations by age'}).focus();await page.keyboard.press('Escape');
+  await expect(page.locator('#workspace-navigation')).toBeHidden();
+  await expect.poll(()=>readState().view.navExpanded).toBe(false);
+ }
+ const copyStart=calls.length;
+ const trigger=page.getByRole('button',{name:'Chat',exact:true});
+ const items=page.getByRole('group',{name:'Chat',exact:true});
+ const copy=()=>items.getByRole('button',{name:'Copy session ID',exact:true});
+ const notice=page.locator('.a-session-copy-notice');
+ await expect(trigger.locator('.lucide-message-circle')).toHaveCount(1);
+ await trigger.focus();await trigger.press('Enter');await expect(copy()).toBeFocused();
+ assert.deepEqual(await labels(items.getByRole('button')),['Copy session ID','Rename','Pin','Share or save','Chat info','Help & diagnostics','Advanced','Archive']);
+ await capture('chat-options');
+ await page.keyboard.press('Escape');await expect(trigger).toBeFocused();
+ await trigger.press('Enter');await expect(copy()).toBeFocused();
+ await page.context().grantPermissions(['clipboard-read','clipboard-write'],{origin:new URL(page.url()).origin});
+ await copy().press('Enter');
+ await expect(items).toHaveCount(0);await expect(trigger).toBeFocused();
+ await expect(notice).toHaveText('Session ID copied.');await expect(notice).toBeVisible();
+ assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),original.nativeIdentity);
+ await expect(notice).toHaveAttribute('role','status');await expect(notice).toHaveAttribute('aria-live','polite');
+ await expect(notice).toHaveAttribute('aria-atomic','true');
+ const box=await notice.boundingBox();assert.ok(box&&box.x>=0&&box.x+box.width<=scenario.width);
+ await capture('session-id-copied');
+ if(['desktop-320','mobile-390'].includes(scenario.name)){
+  // Deterministic pending/errors supplement the real granted write above.
+  // The stub is client-local and records exact bytes; it is not host acceptance.
+  await page.evaluate(()=>{
+   window.fixtureClipboard={writes:[],pending:[],mode:'pending'};
+   Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:text=>{
+    const fixture=window.fixtureClipboard;fixture.writes.push(text);
+    if(fixture.mode==='denied')return Promise.reject(new DOMException('Fixture denial','NotAllowedError'));
+    if(fixture.mode==='failed')return Promise.reject(Error('Fixture failure'));
+    return new Promise((resolve,reject)=>fixture.pending.push({resolve,reject}));
+   }}});
+  });
+  await trigger.click();await copy().press('Space');
+  await expect(items).toHaveCount(0);await expect(notice).toHaveText('Copying session ID…');
+  await capture('session-id-pending');
+  await trigger.click();await expect(copy()).toBeDisabled();await page.keyboard.press('Escape');
+  readState().sessions[0]={...original,runtimeSessionId:'runtime-'+scenario.name,location:{kind:'managed'}};
+  await emit();await expect(notice).toBeEmpty();
+  await page.evaluate(()=>window.fixtureClipboard.pending[0].reject(new DOMException('Old denial','NotAllowedError')));
+  await expect(notice).toBeEmpty();
+  await trigger.click();
+  assert.deepEqual(await labels(items.getByRole('button')),['Copy session ID','Rename','Pin','Share or save','Chat info','Help & diagnostics','Advanced','Archive','Delete']);
+  await copy().press('Enter');await expect(notice).toHaveText('Copying session ID…');
+  await page.evaluate(()=>window.fixtureClipboard.pending[1].resolve());
+  await expect(notice).toHaveText('Session ID copied.');
+  assert.deepEqual(await page.evaluate(()=>window.fixtureClipboard.writes),[original.nativeIdentity,'runtime-'+scenario.name]);
+  for(const [mode,message] of [
+   ['denied','Clipboard access was denied. Session ID was not copied.'],
+   ['failed','Session ID could not be copied.'],
+   ['unavailable','Clipboard is unavailable in this browser. Session ID was not copied.'],
+  ]){
+   await page.evaluate(mode=>{window.fixtureClipboard.mode=mode;if(mode==='unavailable')Object.defineProperty(navigator,'clipboard',{configurable:true,value:undefined})},mode);
+   await trigger.click();await copy().press('Enter');
+   await expect(items).toHaveCount(0);await expect(notice).toHaveText(message);await expect(notice).toBeVisible();
+   const box=await notice.boundingBox();assert.ok(box&&box.x>=0&&box.x+box.width<=scenario.width);
+   if(mode==='denied')await capture('session-id-denied');
+  }
+  await page.evaluate(()=>delete navigator.clipboard);
+  readState().sessions[0]=original;await emit();await expect(notice).toBeEmpty();
+  readState().selectedSessionId=null;await emit();await expect(trigger).toHaveCount(0);
+  readState().selectedSessionId=original.id;await emit();await expect(trigger).toHaveCount(1);
+  proof.syntheticClipboard=['pending','stale rejection','managed runtime ID','denied','failed','unavailable','new draft'];
+ }
+ assert.equal(readState().selectedSessionId,original.id);
+ assert.deepEqual(readState().sessions[0],original);
+ assert.deepEqual(readState().view.draft,originalView.draft);
+ assert.deepEqual(calls.slice(copyStart),[],'Chat menu disclosure/copy never dispatches an action or changes selection/model/draft');
+ assert.ok(calls.slice(start).every(call=>call.action==='view.update'&&Object.keys(call.args.patch).every(key=>key==='navExpanded')),
+  'Only the explicit mobile drawer close may dispatch a view update');
+ if(scenario.touch)await page.getByRole('button',{name:'Open navigation',exact:true}).click();
+ proof.passed=true;
+}
 
 // Two existing viewport cells exercise the real shell/skin, not a CSS-only
 // specimen. All records are synthetic, inline and bounded; no saved detail,
@@ -273,9 +375,9 @@ try{
  ]){
   let state={revision:1,settings:{workspace:'/fixture',bundle:'anchors'},runtime:{available:true},
    view:{navPinned:true,navExpanded:true,navWidth:scenario.navWidth||216,navAge:'all',navMode:scenario.navMode||'browse'},
-   sessions:[{id:'chat',sessionKind:'root',title:'Saved synthetic chat',workspace:'/fixture',workspaceId:'project',status:'idle',historyManaged:true,historyLoaded:true,messages:[]}],
+   sessions:[{id:'chat',nativeIdentity:'native-'+scenario.name,sessionKind:'root',title:'Saved synthetic chat',workspace:'/fixture',workspaceId:'project',status:'idle',historyManaged:true,historyLoaded:true,messages:[]}],
    workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:'chat',selectedWorkspaceId:'project',
-   setup:{providers:[{id:'fixture',module:'provider-fixture',enabled:true,config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false}};
+   setup:{providers:[{id:'fixture',module:'provider-fixture',enabled:true,config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false},attention:{badgeUnread:2,settingsUnread:3}};
   if(scenario.pinned)state.pinnedNavigation={items:[{id:'chat:chat',kind:'chat',row:state.sessions[0]}],total:1};
   const shell=createShellHttpFixture(()=>state),stopGuard={armed:false};
   page=await browser.newPage({viewport:{width:scenario.width,height:900},hasTouch:!!scenario.touch,isMobile:!!scenario.touch});
@@ -323,6 +425,7 @@ try{
    return {filter:rect(filter),label:rect(label),range:rect(range),first:rect(first),labelStyle:style(label),rangeStyle:style(range),firstStyle:style(first),gap:first.getBoundingClientRect().top-filter.getBoundingClientRect().bottom,sidebar:rect(document.querySelector('#workspace-navigation')),buttons,sectionMargins:[...document.querySelectorAll('.a-sidebar-section')].map(node=>getComputedStyle(node).marginTop)};
   });
   results.push({scenario:scenario.name,baseline,...metrics});
+  const emit=async()=>{const revision=++state.revision;await page.evaluate(value=>window.emitFixtureState(value),shell.state());await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().revision)).toBeGreaterThanOrEqual(revision)};
   await page.screenshot({path:`${artifacts}/${scenario.name}.png`});
   assert.equal(await slider.getAttribute('aria-valuetext'),'All activity dates');
   assert.equal(await page.locator('.a-chat-age-stops>span').count(),6);
@@ -341,6 +444,7 @@ try{
     assert.ok(button.rect.x>=metrics.sidebar.x&&button.rect.x+button.rect.width<=metrics.sidebar.x+metrics.sidebar.width);
    }
   }
+  if(!baseline)await menuRegression({page,scenario,readState:()=>state,emit});
   // Native keyboard semantics and meaningful values remain six-stop choices.
   await slider.focus();
   await slider.press('Home');
@@ -380,7 +484,6 @@ try{
   await newChat.focus();await newChat.press('Enter');await drafted;
   assert.equal(calls.filter(call=>call.action==='session.draft').length,beforeDraft+1,'New chat dispatches exactly once');
   if(['desktop-320','mobile-390'].includes(scenario.name)){
-   const emit=async()=>{const revision=++state.revision;await page.evaluate(value=>window.emitFixtureState(value),shell.state());await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().revision)).toBeGreaterThanOrEqual(revision)};
    await appearanceRegression({page,scenario,readState:()=>state,emit,stopGuard});
   }
   await page.close();page=null;
@@ -389,7 +492,8 @@ try{
  assert.ok(calls.every(call=>!['session.select','conversation.send','session.history','session.create'].includes(call.action)),'Passive controls never execute or reload history');
  assert.equal(explicitStops.length,1);assert.deepEqual(attachmentRequests,[]);
  assert.ok(regressions.length===2&&regressions.every(row=>row.passed));
- console.log(JSON.stringify({scope:'synthetic client browser',baseline,scenarios:results,regressions,errors},null,2));
+ if(!baseline)assert.ok(menuRegressions.length===8&&menuRegressions.every(row=>row.passed));
+ console.log(JSON.stringify({scope:'synthetic client browser',baseline,scenarios:results,regressions,menuRegressions,errors},null,2));
 }catch(error){
  failure=error;
  if(page&&!page.isClosed()){
@@ -405,7 +509,7 @@ try{
   try{await close()}catch(error){cleanupErrors.push({name,error:String(error)});}
  }
  try{await writeFile(`${artifacts}/metrics.json`,JSON.stringify({
-  passed:!failure&&!errors.length&&!cleanupErrors.length,baseline,results,regressions,errors,cleanupErrors,
+  passed:!failure&&!errors.length&&!cleanupErrors.length,baseline,results,regressions,menuRegressions,errors,cleanupErrors,
   explicitStops:explicitStops.map(row=>({action:row.action,args:row.args})),attachmentRequests,
   scope:'Real client and stylesheet; synthetic HTTP/SSE only, no actual host/runtime or installed-package qualification.',
   ...(failure?{failure:String(failure.stack||failure)}:{}),
