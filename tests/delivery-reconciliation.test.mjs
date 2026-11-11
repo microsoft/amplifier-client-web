@@ -8,7 +8,7 @@ import {createServer} from 'vite';
 const server=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
 const {MessageDelivery}=await server.ssrLoadModule('/src/message-delivery.jsx');
 const {readOutbox,outboxMessages,useMessageOutbox}=await server.ssrLoadModule('/src/message-outbox.jsx');
-const {deliveryScope,deliveryRecovery,deliveryTargetMatches,deliveryFailureStatus}=await server.ssrLoadModule('/src/pending-delivery-checks.js');
+const {deliveryScope,deliveryRecovery,deliverySource,deliveryTargetMatches,deliveryFailureStatus}=await server.ssrLoadModule('/src/pending-delivery-checks.js');
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 test.after(()=>server.close());
 
@@ -358,6 +358,13 @@ test('captured target survives bounded navigation, but not an actual source cont
  assert.equal(deliveryTargetMatches({},'chat',target),false,'Missing host/source is not permission');
  assert.equal(deliveryTargetMatches(frame,'chat',null),false,'No captured target is not permission');
  assert.equal(deliveryTargetMatches({...frame,client:{hostInstanceId:'instance-1'}},'chat',target),false,'A missing account namespace cannot adopt a retained command');
+});
+
+test('send witness reuses the exact captured native source, never the selected conversation',()=>{
+ assert.deepEqual(deliverySource(origin()),{workspace:'/fixture',nativeIdentity:'native-chat'});
+ assert.deepEqual(deliverySource(origin('account-one','chat',null)),{workspace:null,nativeIdentity:'chat'});
+ for(const scope of [undefined,null,'invalid','"abc"','{}','[]','["account",null,null]','["account","", "native"]','["account",null,"native","extra"]'])
+  assert.equal(deliverySource(scope),null);
 });
 
 test('only structured pre-POST evidence makes an otherwise uncertain failure definitively unsent',()=>{

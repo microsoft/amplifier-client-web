@@ -20,7 +20,9 @@ export function deliveryRecovery(state,session){
 
 export function deliverySource(scope){
  try{
-  const [origin,workspace,nativeIdentity]=JSON.parse(scope);
+  const parts=JSON.parse(scope);
+  if(!Array.isArray(parts)||parts.length!==3)return null;
+  const [origin,workspace,nativeIdentity]=parts;
   if(typeof origin==='string'&&origin&&typeof nativeIdentity==='string'&&nativeIdentity&&
    (workspace===null||typeof workspace==='string'&&workspace))return {workspace,nativeIdentity};
  }catch{}
