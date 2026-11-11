@@ -67,3 +67,20 @@ test('multiple targets stay expandable, bounded references and unavailable names
   assert.equal(html.includes('More references are not shown.'),hasMore);
  }
 });
+
+test('aggregate evidence survives a different target outcome and closed disclosures',()=>{
+ for(const phase of ['unknown','decision','failed','cancelled','returned','reported']){
+  for(const targets of [
+   [{sessionId:'release',title:'Release',phase:'returned',label:'Result ready'}],
+   [{sessionId:'release',title:'Release',status:'failed'}],
+   [{sessionId:'release',title:'Release',phase:'returned',label:'Result ready'},waiting.targets[0]],
+  ]){
+   const html=render({sessionId:'manager',activity:{sessionId:'manager',kind:'attention',label:'Host '+phase,waiting:{phase,targets}}});
+   assert.match(html,new RegExp('Host '+phase));
+   if(targets.length>1)assert.match(html,new RegExp('<summary>[^<]*Host '+phase+'[^<]*Result ready[^<]*</summary>'));
+  }
+ }
+ const html=render({sessionId:'manager',activity:{sessionId:'manager',kind:'waiting',label:'Dependency pending',waiting:{...waiting,targets:[{sessionId:'release',title:'Release',phase:'returned',label:'Result ready'},waiting.targets[0]]}}});
+ assert.match(html,/<summary>[^<]*Result ready[^<]*<\/summary>/);
+ assert.doesNotMatch(html,/Waiting on/);
+});

@@ -17,6 +17,9 @@ export function DependencyWaitingContent({activity,act}){
  const waiting=activity?.waiting;
  if(!waiting?.targets?.length)return null;
  const pending=pendingDependency(activity);
+ const aggregate=!pending&&(waiting.label||activity.label||waiting.phase);
+ const targetLabels=row=>[!neutral(row.phase)&&(row.label||row.phase),interrupted(row.status)&&`chat ${row.status}`].filter(Boolean);
+ const visibleLabels=[...new Set([aggregate,...waiting.targets.flatMap(targetLabels)].filter(Boolean))];
  const Icon=activity.kind==='attention'?(waiting.phase==='decision'?CircleHelp:AlertCircle):Clock3;
  const link=row=><span className="a-dependency-target">
   {row.available===false?<span className="a-dependency-name" title={row.title}>{row.title}</span>:<button type="button" className="a-link a-dependency-name" title={row.title} aria-label={row.title} data-action="session.select" onClick={()=>act('session.select',{id:row.sessionId})}>{row.title}</button>}
@@ -26,9 +29,8 @@ export function DependencyWaitingContent({activity,act}){
  </span>;
  return <div className="a-dependency-content">
   <Icon aria-hidden="true"/>
-  {waiting.targets.length===1&&!waiting.hasMore?<div className="a-dependency-single">{pending&&<span className="a-dependency-prefix">Waiting on </span>}{link(waiting.targets[0])}{!pending&&neutral(waiting.targets[0].phase)&&!interrupted(waiting.targets[0].status)&&<span> — {waiting.label||activity.label||waiting.phase}</span>}</div>:<details>
-   <summary>{pending?`Waiting on ${waiting.targets.length}${waiting.hasMore?'+':''} chats`:(waiting.hasMore?'Chat dependencies':`${waiting.targets.length} chat dependencies`)}</summary>
-   {!pending&&!neutral(waiting.phase)&&<p>{waiting.label||activity.label||waiting.phase}</p>}
+  {waiting.targets.length===1&&!waiting.hasMore?<div className="a-dependency-single">{pending&&<span className="a-dependency-prefix">Waiting on </span>}{link(waiting.targets[0])}{aggregate&&!targetLabels(waiting.targets[0]).includes(aggregate)&&<span> — {aggregate}</span>}</div>:<details>
+   <summary>{pending?`Waiting on ${waiting.targets.length}${waiting.hasMore?'+':''} chats`:<>{visibleLabels.join(' · ')}{visibleLabels.length>0?' — ':''}{waiting.hasMore?'Chat dependencies':`${waiting.targets.length} chat dependencies`}</>}</summary>
    <ul>{waiting.targets.map(row=><li key={row.sessionId}>{link(row)}</li>)}</ul>
    {waiting.hasMore&&<p>Showing the first saved dependency references. More references are not shown.</p>}
   </details>}

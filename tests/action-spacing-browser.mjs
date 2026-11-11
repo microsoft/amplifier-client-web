@@ -13,6 +13,8 @@ import {createRoot} from 'react-dom/client';
 import {DependencyWaiting} from '/src/dependency-waiting.jsx';
 import {LiveActivity} from '/src/live-activity.jsx';
 import {ChatDetails} from '/src/shell/navigation-components.jsx';
+import {NavigationRow} from '/src/navigation-details.jsx';
+import {NavigationOpen} from '/src/responsive-navigation.jsx';
 import {UpdateRestart} from '/src/update-restart.jsx';
 import {MessageDelivery} from '/src/message-delivery.jsx';
 import {FeedbackReconcile} from '/src/feedback-lifecycle.jsx';
@@ -57,6 +59,7 @@ function Dependencies(){
   <div className="a-navigation-flyout" style={{position:'static',width:'100%',maxWidth:370,boxSizing:'border-box',marginTop:20}}>
    <ChatDetails chat={chat} model={model} now={Date.now()/1000} close={()=>{}}/>
   </div>
+  <NavigationOpen.Provider value={true}><NavigationRow label="Portal manager" details={({close})=><ChatDetails chat={chat} model={model} now={Date.now()/1000} close={close}/>}>Portal manager</NavigationRow></NavigationOpen.Provider>
  </section>;
 }
 createRoot(document.getElementById('fixture')).render(<>
@@ -174,6 +177,16 @@ try{
     await setDependency(phase,[{sessionId:'release',title:longName,phase,label:'Host '+phase}]);
     await expect(mainDependency).toContainText('Host '+phase);
     await expect(mainDependency).not.toContainText('Waiting on');
+    await setDependency(phase,[{sessionId:'release',title:longName,phase:'returned',label:'Result ready'},{sessionId:'second',title:'Other',status:'failed'}]);
+    for(const surface of [mainDependency,flyout.locator('.a-dependency-content')]){
+     await expect(surface.locator('details')).not.toHaveAttribute('open');
+     await expect(surface.locator('summary')).toBeVisible();
+     await expect(surface.locator('summary')).toContainText('Host '+phase);
+     await expect(surface.locator('summary')).toContainText('Result ready');
+     await expect(surface.locator('summary')).toContainText('chat failed');
+    }
+    await setDependency(phase,[{sessionId:'release',title:longName,phase:'returned',label:'Result ready'}]);
+    await expect(mainDependency.getByText('— Host '+phase,{exact:true})).toBeVisible();
    }
    await setDependency('pending',[{sessionId:'release',title:longName,status:'failed'}]);
    await expect(mainDependency).toContainText('chat failed');await expect(mainDependency).not.toContainText('Waiting on');
@@ -190,6 +203,16 @@ try{
    await mainDependency.getByRole('button',{name:longName+' second',exact:true}).click();
    assert.deepEqual(await page.evaluate(()=>window.calls.at(-1)),{action:'session.select',args:{id:'second'}});
    await setDependency('pending');
+   const beforePortal=await page.evaluate(()=>window.calls.length);
+   const portalTrigger=dependencies.getByRole('button',{name:'Details and actions for Portal manager',exact:true});
+   await portalTrigger.click();
+   const portal=page.getByRole('dialog',{name:'Details for Portal manager',exact:true});
+   const portalLink=portal.getByRole('button',{name:longName,exact:true});
+   await expect(portalLink).toBeFocused();await expect(portalLink).toHaveAttribute('title',longName);
+   assert.equal(await page.evaluate(()=>window.calls.length),beforePortal,'Opening real portal is passive');
+   await portalLink.press('Enter');
+   assert.deepEqual(await page.evaluate(start=>window.calls.slice(start),beforePortal),[{action:'session.select',args:{id:'release'}}]);
+   await portalLink.press('Escape');await expect(portal).toHaveCount(0);await expect(portalTrigger).toBeFocused();
    const updates=page.getByRole('region',{name:'Update restart',exact:true});
    const restart=updates.getByRole('button',{name:'Interrupt work and restart',exact:true});
    await expect(restart).toBeVisible();
