@@ -80,7 +80,7 @@ async function menuRegression({page,scenario,readState,emit}){
   assert.ok(geometry.top>=geometry.header.bottom,'Copy feedback sits below the complete wrapped header');
   return geometry;
  };
- await expect(trigger.locator('.lucide-message-circle')).toHaveCount(1);
+ await expect(trigger.locator('.lucide-info')).toHaveCount(1);
  await trigger.focus();await trigger.press('Enter');await expect(copy()).toBeFocused();
  assert.deepEqual(await labels(items.getByRole('button')),['Copy session ID','Rename','Pin','Share or save','Chat info','Help & diagnostics','Advanced','Archive']);
  await capture('chat-options');

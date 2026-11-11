@@ -81,7 +81,7 @@ function SessionActionMenu({session,children}){
   }finally{if(operation.current===current){operation.current=null;setPending(false)}}
  }
  return <div className="a-session-action-menu">
-  <ActionMenu label="Chat" icon={<MessageCircle/>}>
+  <ActionMenu label="Chat" icon={<Info/>}>
    <button type="button" onClick={copy} disabled={pending} aria-busy={pending}><Copy/>Copy session ID</button>
    {children}
   </ActionMenu>
