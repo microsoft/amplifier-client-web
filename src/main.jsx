@@ -480,7 +480,10 @@ function App(){
   for(const entry of outbox.entries){
    if(entry.sessionId||!entry.creation?.id||!outboxMatches(entry,deliveryScope(state,null)))continue;
    const created=state?.sessions?.find(row=>row.creationCommandId===entry.creation.id);
-   if(created)outbox.update(entry.id,{sessionId:created.id,scope:deliveryScope(state,created)});
+   if(created){
+    const scope=deliveryScope(state,created);
+    outbox.update(entry.id,{sessionId:created.id,scope,expectedSource:deliverySource(scope)});
+   }
   }
  },[state?.sessions,outbox.entries]);
  // Shell snapshots are server-scoped. An optimistic browse patch can arrive
