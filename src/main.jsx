@@ -41,7 +41,7 @@ import {SettingsExperience} from './settings-experience';
 import {useGuardedSettingsPanel,useGuardedSettingsSession} from './settings-drafts';
 import {useMessageOutbox,outboxMessages,outboxMatches} from './message-outbox';
 import {LegacyOutboxNotice} from './legacy-outbox-notice';
-import {checkedDelivery,deliveryRecovery,deliveryScope,deliveryTargetMatches,deliveryFailureStatus} from './pending-delivery-checks';
+import {checkedDelivery,deliveryRecovery,deliveryScope,deliverySource,deliveryTargetMatches,deliveryFailureStatus} from './pending-delivery-checks';
 import {clientId,clientUrl,attachClient,draftJournal} from './api';
 import {checkpointSurfaces} from './surface-checkpoint';
 import {useConversationDetail} from './conversation-detail';
@@ -231,7 +231,8 @@ function App(){
   const deliveryAction=creatingConversation||['conversation.delivery','conversation.send'].includes(action);
   const deliveryTarget=deliveryAction?(Object.hasOwn(meta,'deliveryTarget')?meta.deliveryTarget:creatingConversation?{scope:deliveryScope(latest.current,null),connection:latest.current?.client?.hostInstanceId}:deliveryRecovery(latest.current,latest.current?.sessions?.find(row=>row.id===args.sessionId))):null;
   const deliveryAuthenticationAtStart=meta.deliveryAuthentication??deliveryAuthentication.current;
-  const sameDeliveryTarget=()=>deliveryAuthenticationAtStart===deliveryAuthentication.current&&deliveryTargetMatches(latest.current,creatingConversation?null:args.sessionId,deliveryTarget);
+  if(action==='conversation.send'&&!meta.outboxScope&&args.expectedSource===undefined)args={...args,expectedSource:deliverySource(deliveryTarget?.scope)};
+  const sameDeliveryTarget=()=>deliveryAuthenticationAtStart===deliveryAuthentication.current&&deliveryTargetMatches(serverState.current,creatingConversation?null:args.sessionId,deliveryTarget);
   const validDeliveryState=frame=>!deliveryAction||(sameDeliveryTarget()&&(!frame||deliveryTargetMatches(frame,creatingConversation?null:args.sessionId,deliveryTarget)));
   const capabilityCard=isCapabilityCardAction(action,args,meta);
   const capabilityRead=capabilityCard&&action==='capability.read'?capabilityStopFence.current.beginRead(args):null;
@@ -411,6 +412,7 @@ function App(){
      // Keep the exact receipt; the Canvas owner offers a read, never a replay.
      if(action==='canvas.views.loadVersion'&&result.accepted===true)
       return {...result,stateConfirmation:{status:'unconfirmed',message:error.message}};
+     if(action==='conversation.send'||creatingConversation)error.unconfirmed=true;
      throw error;
     }
     if(historyVisit){
@@ -758,25 +760,26 @@ function App(){
   uploadQueue.current=uploadQueue.current.then(run,run);
  }
  const chatDrop=useChatFileDrop({ownerKey:JSON.stringify([session?.id??null,state?.attachmentDraftId,state?.selectedWorkspaceId]),enabled:!!state&&workSurface(state)==='chat'&&!executionUnavailable&&!historyPending&&!referencingDraft,onFiles:addFiles,onError:setError});
- async function deliver(entry,target=entry.sessionId?deliveryRecovery(latest.current,latest.current?.sessions?.find(row=>row.id===entry.sessionId)):{scope:deliveryScope(latest.current,null),connection:latest.current?.client?.hostInstanceId},authentication=deliveryAuthentication.current){
+ async function deliver(entry,target=entry.sessionId?deliveryRecovery(latest.current,latest.current?.sessions?.find(row=>row.id===entry.sessionId)):{scope:deliveryScope(latest.current,null),connection:latest.current?.client?.hostInstanceId},authentication=deliveryAuthentication.current,previouslyUnknown=entry.status==='unknown'){
   if(deliveries.current.has(entry.id))return;
   deliveries.current.add(entry.id);outbox.update(entry.id,{status:'sending',error:''});
   try{
-   if(!outboxMatches(entry,target?.scope)||authentication!==deliveryAuthentication.current||!deliveryTargetMatches(latest.current,entry.sessionId,target))
+   if(!outboxMatches(entry,target?.scope)||authentication!==deliveryAuthentication.current||!deliveryTargetMatches(serverState.current,entry.sessionId,target))
     throw Object.assign(Error('The delivery target changed. The original submission remains saved.'),{deliveryAttempt:'not_posted'});
    if(!entry.sessionId){
     const current=await ensureSession(entry.creation);
-    if(authentication!==deliveryAuthentication.current||!deliveryTargetMatches(latest.current,null,target))throw Error('The delivery target changed. The original submission remains saved.');
-    entry=outbox.update(entry.id,{sessionId:current.id,scope:deliveryScope(latest.current,current)});
+    if(authentication!==deliveryAuthentication.current||!deliveryTargetMatches(serverState.current,null,target))throw Error('The delivery target changed. The original submission remains saved.');
+    const scope=deliveryScope(latest.current,current);
+    entry=outbox.update(entry.id,{sessionId:current.id,scope,expectedSource:deliverySource(scope)});
     target={...target,scope:entry.scope};
    }
-   const result=await dispatch('conversation.send',{sessionId:entry.sessionId,text:entry.text,...(entry.document?{document:entry.document}:{}),...(entry.allowNextTurn?{allowNextTurn:true}:{}),...(entry.expectedGenerationId?{expectedGenerationId:entry.expectedGenerationId}:{}),...(Number.isInteger(entry.expectedConfigurationRevision)?{expectedConfigurationRevision:entry.expectedConfigurationRevision}:{}),...(entry.replyTo?.id?{replyId:entry.replyTo.id}:{}),attachmentIds:entry.attachmentIds,via:entry.via,preserveDraft:true},{id:entry.commandId,feedback:false,outboxScope:entry.scope,deliveryTarget:target,deliveryAuthentication:authentication});
-   if(authentication!==deliveryAuthentication.current||!deliveryTargetMatches(latest.current,entry.sessionId,target)){outbox.update(entry.id,{status:'unknown',error:'The source changed before acknowledgement. The original submission remains saved.'});return;}
+   const result=await dispatch('conversation.send',{sessionId:entry.sessionId,text:entry.text,...(entry.expectedSource?{expectedSource:entry.expectedSource}:{}),...(entry.document?{document:entry.document}:{}),...(entry.allowNextTurn?{allowNextTurn:true}:{}),...(entry.expectedGenerationId?{expectedGenerationId:entry.expectedGenerationId}:{}),...(Number.isInteger(entry.expectedConfigurationRevision)?{expectedConfigurationRevision:entry.expectedConfigurationRevision}:{}),...(entry.replyTo?.id?{replyId:entry.replyTo.id}:{}),attachmentIds:entry.attachmentIds,via:entry.via,preserveDraft:true},{id:entry.commandId,feedback:false,outboxScope:entry.scope,deliveryTarget:target,deliveryAuthentication:authentication});
+   if(authentication!==deliveryAuthentication.current||!deliveryTargetMatches(serverState.current,entry.sessionId,target)){outbox.update(entry.id,{status:'unknown',error:'The source changed before acknowledgement. The original submission remains saved.'});return;}
    outbox.update(entry.id,['sending','unknown'].includes(result.delivery)?{status:'unknown',error:'Delivery has not been confirmed. Checking again will not run it twice.'}:null);
   }catch(error){
-   const received=authentication===deliveryAuthentication.current&&deliveryTargetMatches(latest.current,entry.sessionId,target)&&latest.current?.sessions?.find(row=>row.id===entry.sessionId)?.messages?.some(row=>row.inputId===entry.commandId&&['accepted','queued_for_update','held'].includes(row.delivery?.status));
+   const received=authentication===deliveryAuthentication.current&&deliveryTargetMatches(serverState.current,entry.sessionId,target)&&serverState.current?.sessions?.find(row=>row.id===entry.sessionId)?.messages?.some(row=>row.inputId===entry.commandId&&['accepted','queued_for_update','held'].includes(row.delivery?.status));
    if(received&&error.code!=='session_busy')outbox.update(entry.id,null);
-   else outbox.update(entry.id,{status:deliveryFailureStatus(error),error:actionErrorMessage(error)});
+   else outbox.update(entry.id,{status:deliveryFailureStatus(error,previouslyUnknown),error:actionErrorMessage(error)});
   }finally{deliveries.current.delete(entry.id)}
  }
  function discardMessage(message){
@@ -793,9 +796,9 @@ function App(){
   if(previous.status==='unknown'&&text!==undefined)return;
   const creation=previous.status==='failed'&&!previous.sessionId?{id:crypto.randomUUID(),setup:creationSetup()}:previous.creation;
   const currentSession=latest.current?.sessions?.find(row=>row.id===previous.sessionId),currentGeneration=currentSession?.collaborationGeneration;
-  const next=outbox.update(previous.id,{creation,...(previous.status==='failed'?{commandId:crypto.randomUUID(),allowNextTurn:true,expectedGenerationId:currentGeneration&&!currentGeneration.terminal?currentGeneration.id:null,expectedConfigurationRevision:currentSession?.nextMessageRevision??0,...(text!==undefined?{text}:{})}:{}),status:'sending',error:''});
+  const next=outbox.update(previous.id,{creation,...(previous.status==='failed'?{commandId:crypto.randomUUID(),expectedSource:deliverySource(previous.scope),allowNextTurn:true,expectedGenerationId:currentGeneration&&!currentGeneration.terminal?currentGeneration.id:null,expectedConfigurationRevision:currentSession?.nextMessageRevision??0,...(text!==undefined?{text}:{})}:{}),status:'sending',error:''});
   if(text!==undefined)act('view.update',{patch:{messageEdit:null}});
-  await deliver(next);
+  await deliver(next,undefined,undefined,previous.status==='unknown');
  }
  async function send(e){
   dictationControl.current?.cancel();
@@ -810,6 +813,7 @@ function App(){
   chatScroll.current?.submitted(id);setError('');setQuoteNotice(notice=>quoteNoticeAfterSend(notice,session?.id));editDraft('');clearTimeout(draftTimer.current);
   const blankToken=stagedDraft.current;
   let entry=outbox.update(id,{commandId:id,sessionId:session?.id??null,scope:deliveryScope(latest.current,session),allowNextTurn:true,...(expectedGenerationId?{expectedGenerationId}:{}),...(session?{expectedConfigurationRevision:session.nextMessageRevision??0}:{}),...(!session?{creation:{id:crypto.randomUUID(),setup:creationSetup()}}:{}),text:submittedText,...(submittedDocument?{document:submittedDocument,replyTo:{version:2,segments:submittedDocument.segments}}:state.view?.messageReply?{replyTo:state.view.messageReply}:{}),via:mode==='text'?'text':'chat',attachmentIds:attachments.map(file=>file.id),attachments,status:'sending',createdAt:Date.now()/1000});
+  entry=outbox.update(id,{expectedSource:deliverySource(entry.scope)});
   const authentication=deliveryAuthentication.current,target={scope:entry.scope,connection:latest.current?.client?.hostInstanceId};
   try{
    const clearingDraft=saveDraft(stagedDraftPayload.current,blankToken);
@@ -818,10 +822,11 @@ function App(){
    // their own ordered queue; the send preserves any newer server draft.
    if(session)clearingDraft.catch(error=>reportError(error));
    else await clearingDraft;
-   if(authentication!==deliveryAuthentication.current||!deliveryTargetMatches(latest.current,session?.id??null,target))throw Error('The delivery target changed. The original submission remains saved.');
+   if(authentication!==deliveryAuthentication.current||!deliveryTargetMatches(serverState.current,session?.id??null,target))throw Error('The delivery target changed. The original submission remains saved.');
    const current=session||await ensureSession(entry.creation);
-   if(authentication!==deliveryAuthentication.current||!deliveryTargetMatches(latest.current,session?.id??null,target))throw Error('The delivery target changed. The original submission remains saved.');
-   entry=outbox.update(id,{sessionId:current.id,scope:deliveryScope(latest.current,current)});
+   if(authentication!==deliveryAuthentication.current||!deliveryTargetMatches(serverState.current,session?.id??null,target))throw Error('The delivery target changed. The original submission remains saved.');
+   const scope=deliveryScope(latest.current,current);
+   entry=outbox.update(id,{sessionId:current.id,scope,expectedSource:deliverySource(scope)});
    await deliver(entry,{...target,scope:entry.scope},authentication);
   }catch(error){
    // No conversation.send was dispatched on this path. A new conversation's

@@ -366,6 +366,9 @@ test('only structured pre-POST evidence makes an otherwise uncertain failure def
  assert.equal(deliveryFailureStatus({status:408}),'unknown');
  assert.equal(deliveryFailureStatus({status:503}),'unknown');
  assert.equal(deliveryFailureStatus({status:409}),'failed');
+ assert.equal(deliveryFailureStatus({status:409,code:'invalid_response',unconfirmed:true}),'unknown');
+ assert.equal(deliveryFailureStatus({status:404,unconfirmed:true}),'unknown','A failed following read is not refusal of the send');
+ assert.equal(deliveryFailureStatus({deliveryAttempt:'not_posted'},true),'unknown','A stopped retry cannot disprove an earlier uncertain attempt');
 });
 
 test('persisted outbox projects only exact source/workspace/native identity; legacy payload stays unbound',()=>{

@@ -18,6 +18,15 @@ export function deliveryRecovery(state,session){
   connection:state.client.hostInstanceId};
 }
 
+export function deliverySource(scope){
+ try{
+  const [origin,workspace,nativeIdentity]=JSON.parse(scope);
+  if(typeof origin==='string'&&origin&&typeof nativeIdentity==='string'&&nativeIdentity&&
+   (workspace===null||typeof workspace==='string'&&workspace))return {workspace,nativeIdentity};
+ }catch{}
+ return null;
+}
+
 // A bounded browser frame contains only its selected conversation. Keep the
 // admitted command's native scope when its row is absent; any actual returned
 // row still has to agree. The host/account boundary must remain observable.
@@ -31,7 +40,8 @@ export function deliveryTargetMatches(state,sessionId,target){
  return !session||deliveryScope(state,session)===target.scope;
 }
 
-export function deliveryFailureStatus(error){
+export function deliveryFailureStatus(error,previouslyUnknown=false){
+ if(previouslyUnknown||error.unconfirmed)return 'unknown';
  return error.deliveryAttempt==='not_posted'||error.receipt?.delivery==='failed'||
   error.status>=400&&error.status<500&&error.status!==408?'failed':'unknown';
 }
