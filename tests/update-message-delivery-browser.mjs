@@ -17,6 +17,16 @@ const state={revision:1,settings:{workspace:'/fixture'},runtime:{available:true}
  setup:{providers:[{id:'fixture',module:'provider-fixture',config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false}};
 const shell=createShellHttpFixture(()=>state),waiting=[],calls=[],errors=[],cases=[];
 const evidence=process.env.AMPLIFIER_TEST_ARTIFACTS;
+const args=process.argv.slice(2);
+assert.ok(!args.length||args.length===1&&args[0]==='--retained-recovery-only',
+ 'Usage: node tests/update-message-delivery-browser.mjs [--retained-recovery-only]');
+const retainedOnly=args[0]==='--retained-recovery-only';
+const mode=retainedOnly?'retained-recovery-only':'full-update-message-delivery';
+const historicalDelivery={status:retainedOnly?'not-covered':'pending',
+ reason:retainedOnly?'Explicit focused selection: historical message/lost-ack delivery is not covered. Its earlier failed run remains failed.':null};
+const routeErrors=[],evidenceErrors=[];
+let phase='setup',rejectRouteFailure;
+const routeFailure=new Promise((_resolve,reject)=>{rejectRouteFailure=reject});
 const recovery={scope:'synthetic client HTTP/state fixture; host eligibility and actual installation not covered',
  checkpoints:[],screenshots:[],passed:false};
 let installAttempts=0,passed=false,failure=null;
@@ -26,6 +36,16 @@ const outbox=()=>page.evaluate(()=>JSON.parse(sessionStorage.getItem('amplifier.
 const bubble=id=>page.locator(`[data-input-id="${id}"]`);
 const composer=()=>page.getByRole('textbox',{name:'Message Amplifier'});
 async function publish(){state.revision++;await page.evaluate(value=>window.emitState(value),shell.state())}
+async function persistReceipt(){
+ if(!evidence)return;
+ await mkdir(evidence,{recursive:true});
+ await writeFile(evidence+'/receipt.json',JSON.stringify({mode,phase,passed,failure,historicalDelivery,cases,
+  sendPosts:calls.filter(call=>call.action==='conversation.send').length,
+  distinctSavedInputs:new Set(chat().messages.map(message=>message.inputId)).size,
+  pageErrors:errors,routeErrors,evidenceErrors,retainedRecovery:recovery,
+  actions:calls,updateActions:updateCalls(),syntheticInstallAttempts:installAttempts,
+  backendExecution:'synthetic HTTP/state fixture; no actual updater, model, install or restart'},null,2)+'\n');
+}
 async function capture(name,target=page){
  if(!evidence)return;
  await mkdir(evidence,{recursive:true});
@@ -53,6 +73,7 @@ async function retainedRecovery(){
  const check=controls.getByRole('button',{name:'Check for updates',exact:true});
  const install=updates.locator('button[data-action="updates.install"]');
  async function project(value){
+  phase='retained: project '+(value.currentStatus?.detail||'missing current status');
   state.updates=structuredClone(value);await publish();
   // Fence each negative assertion to this exact injected frame, not an older
   // DOM that also happens to have no install button.
@@ -63,6 +84,7 @@ async function retainedRecovery(){
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
  }
  async function unchanged(label,expectedCalls){
+  phase='retained: '+label;
   // Bounded idle observation supplements the maintained unit fake-timer checks.
   await page.waitForTimeout(250);
   assert.deepEqual(updateCalls().map(call=>call.action),expectedCalls,label);
@@ -142,6 +164,7 @@ async function retainedRecovery(){
   if(label==='replacement outcome unknown')await capture('retained-replacement-guard',controls);
  }
  await project(eligible);await expect(retry).toBeEnabled();
+ phase='retained: explicit Retry installation';
  await retry.click();
  await expect.poll(()=>updateCalls().map(call=>call.action)).toEqual(['updates.check','updates.check','updates.install']);
  await expect.poll(()=>installAttempts).toBe(1);
@@ -159,6 +182,7 @@ async function retainedRecovery(){
  recovery.passed=true;
 }
 async function send(text){
+ phase='historical: '+text;
  await composer().fill(text);await page.getByRole('button',{name:'Send message',exact:true}).click();
  await expect.poll(()=>waiting.length).toBe(1);
  const item=waiting.shift();assert.equal(item.body.args.text,text);
@@ -180,7 +204,7 @@ async function saved(item,label){
  assert.equal(calls.filter(call=>call.id===item.body.id).length,1,'The original submission is not replayed');
  cases.push({case:label,inputId:item.body.id,renderedCopies:1,posts:1,outboxEntries:0});
 }
-try{
+async function runJourney(){
  vite=await createServer({configFile:false,root:fileURLToPath(new URL('../',import.meta.url)),
   cacheDir:fileURLToPath(new URL('../.vite-update-message-fixture',import.meta.url)),
   server:{host:'127.0.0.1',port:0,hmr:false},optimizeDeps:{include:['react','react-dom/client','react/jsx-dev-runtime']}});
@@ -188,14 +212,20 @@ try{
  page=await browser.newPage({viewport:{width:1280,height:900}});page.on('pageerror',error=>errors.push(error.message));
  await page.addInitScript(installFixtureEvents);
  await page.route('**/api/**',async route=>{
-  const request=route.request(),path=new URL(request.url()).pathname,response=shell.response(request);
-  if(response!==undefined)return route.fulfill({json:response});
-  if(path==='/api/state')return route.fulfill({json:shell.state()});
-  if(path==='/api/actions'&&request.method()==='GET')return route.fulfill({json:[]});
-  if(path!=='/api/actions')return route.fulfill({json:{ok:true}});
-  const body=request.postDataJSON();calls.push(body);
+  const request=route.request();
+  let body;
+  try{
+  const path=new URL(request.url()).pathname,response=shell.response(request);
+  if(response!==undefined)return await route.fulfill({json:response});
+  if(path==='/api/state')return await route.fulfill({json:shell.state()});
+  if(path==='/api/actions'&&request.method()==='GET')return await route.fulfill({json:[]});
+  if(path!=='/api/actions')return await route.fulfill({json:{ok:true}});
+  body=request.postDataJSON();calls.push(body);
+  if(retainedOnly)assert.ok(!body.action.startsWith('conversation.'),
+   'Retained-recovery-only must not send, retry or inspect message delivery: '+JSON.stringify(body));
   if(body.action==='conversation.send'){waiting.push({route,body});return}
-  assert.ok(!['conversation.retry','conversation.delivery'].includes(body.action),'Saved update input must not request retry or delivery recovery');
+  assert.ok(!['conversation.retry','conversation.delivery'].includes(body.action),
+   'Saved update input must not request retry or delivery recovery: '+JSON.stringify(body));
   if(body.action==='view.update')state.view={...state.view,...body.args.patch};
   if(body.action.startsWith('updates.'))assert.ok(['updates.check','updates.install'].includes(body.action),
    'The recovery fixture must not request a restart, rollback or other updater action');
@@ -206,10 +236,27 @@ try{
     currentStatus:{status:'working',actionRequired:false,action:null,title:'Updating retained fixture components',
      detail:'A synthetic installation request was recorded. No actual installation runs.'}};
   }
-  state.revision++;return route.fulfill({json:{accepted:true,state:shell.state()}});
+  state.revision++;return await route.fulfill({json:{accepted:true,state:shell.state()}});
+  }catch(error){
+   // Playwright route callbacks run outside the awaited journey. Never throw
+   // here: retain the exact request first, then fail the main awaited owner so
+   // screenshots, final receipt and cleanup still execute.
+   routeErrors.push({phase,method:request.method(),url:request.url(),
+    postData:request.postData(),body,error:String(error.stack||error),
+    revision:state.revision,selectedSessionId:state.selectedSessionId,
+    messageDeliveries:chat().messages.map(({inputId,delivery})=>({inputId,delivery}))});
+   failure=String(error.stack||error);passed=false;
+   if(historicalDelivery.status==='running')historicalDelivery.status='failed';
+   console.error(JSON.stringify({fixtureRouteFailure:routeErrors.at(-1)}));
+   try{await persistReceipt()}catch(writeError){evidenceErrors.push('route receipt: '+writeError.message)}
+   try{await route.abort('failed')}catch(abortError){evidenceErrors.push('route abort: '+abortError.message)}
+   rejectRouteFailure(error);
+  }
  });
  await page.goto(vite.resolvedUrls.local[0]);await composer().waitFor();
 
+ if(!retainedOnly){
+ historicalDelivery.status='running';
  const acknowledged=await send('Keep this message through the update.');retain(acknowledged);state.revision++;
  await acknowledged.route.fulfill({json:{accepted:true,delivery:'queued_for_update',state:shell.state()}});
  await saved(acknowledged,'known queued acknowledgment');
@@ -262,24 +309,25 @@ try{
  assert.equal(calls.filter(call=>call.action==='conversation.send').length,5);
  assert.equal(new Set(chat().messages.map(message=>message.inputId)).size,5);
  await capture('held-mobile');
+ historicalDelivery.status='passed';
+ }
+ phase='retained recovery';
  await retainedRecovery();
- assert.equal(calls.filter(call=>call.action==='conversation.send').length,5);
- assert.deepEqual(errors,[]);passed=true;
- console.log('PASS (synthetic client fixture only): update-time saved delivery and Stop-held mobile status; retained-only Check never installs, host-projected explicit Retry records one installation request, non-install projections and busy guards prevent retry, no replay on reload. Actual host eligibility/installation not covered.');
+ assert.equal(calls.filter(call=>call.action==='conversation.send').length,retainedOnly?0:5);
+ assert.deepEqual(routeErrors,[]);assert.deepEqual(errors,[]);passed=true;phase='complete';
+ console.log(retainedOnly?
+  'PASS (retained-recovery-only synthetic client fixture): explicit Retry, Check-only, revoked projections and guards; no automatic install or replay. Historical message/lost-ack delivery NOT COVERED; earlier failure remains failed. Actual host eligibility/installation not covered.':
+  'PASS (full synthetic client fixture): update-time saved delivery and Stop-held mobile status; retained-only Check never installs, explicit Retry records one installation request, non-install projections and guards prevent retry, no replay. Actual host eligibility/installation not covered.');
+}
+try{
+ await Promise.race([runJourney(),routeFailure]);
 }catch(error){
- failure=String(error.stack||error);
+ failure=String(error.stack||error);passed=false;
+ if(historicalDelivery.status==='running')historicalDelivery.status='failed';
  if(page)await capture('failure').catch(error=>recovery.screenshots.push('failure capture unavailable: '+error.message));
  throw error;
 }finally{
  try{
-  if(evidence){
-   await mkdir(evidence,{recursive:true});
-   await writeFile(evidence+'/receipt.json',JSON.stringify({passed,failure,cases,
-    sendPosts:calls.filter(call=>call.action==='conversation.send').length,
-    distinctSavedInputs:new Set(chat().messages.map(message=>message.inputId)).size,
-    pageErrors:errors,retainedRecovery:recovery,
-    updateActions:updateCalls(),syntheticInstallAttempts:installAttempts,
-    backendExecution:'synthetic HTTP/state fixture; no actual updater, model, install or restart'},null,2)+'\n');
-  }
+  await persistReceipt();
  }finally{try{if(browser)await browser.close()}finally{if(vite)await vite.close()}}
 }
