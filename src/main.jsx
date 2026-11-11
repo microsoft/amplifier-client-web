@@ -41,7 +41,7 @@ import {SettingsExperience} from './settings-experience';
 import {useGuardedSettingsPanel,useGuardedSettingsSession} from './settings-drafts';
 import {useMessageOutbox,outboxMessages,outboxMatches} from './message-outbox';
 import {LegacyOutboxNotice} from './legacy-outbox-notice';
-import {checkedDelivery,deliveryRecovery,deliveryScope} from './pending-delivery-checks';
+import {checkedDelivery,deliveryRecovery,deliveryScope,deliveryTargetMatches,deliveryFailureStatus} from './pending-delivery-checks';
 import {clientId,clientUrl,attachClient,draftJournal} from './api';
 import {checkpointSurfaces} from './surface-checkpoint';
 import {useConversationDetail} from './conversation-detail';
@@ -227,13 +227,12 @@ function App(){
  },[acceptState]);
  const dispatch=useCallback((action,args={},meta={})=>{
   const creatingConversation=action==='session.create'&&args.fromDraft;
-  const readDeliveryTarget=(frame=latest.current)=>creatingConversation?{scope:deliveryScope(frame,null),connection:frame?.client?.hostInstanceId}:deliveryRecovery(frame,frame?.sessions?.find(row=>row.id===args.sessionId));
-  const deliveryTarget=creatingConversation||['conversation.delivery','conversation.send'].includes(action)?readDeliveryTarget():null,deliveryAuthenticationAtStart=deliveryAuthentication.current;
-  const sameDeliveryTarget=()=>deliveryAuthenticationAtStart===deliveryAuthentication.current&&(!deliveryTarget||JSON.stringify(deliveryTarget)===JSON.stringify(readDeliveryTarget()));
-  const validDeliveryState=frame=>!deliveryTarget||(sameDeliveryTarget()&&
-   (!frame?.client?.hostInstanceId||frame.client.hostInstanceId===deliveryTarget.connection)&&
-   (!frame?.client?.historyScope||!latest.current?.client?.historyScope||frame.client.historyScope===latest.current.client.historyScope)&&
-   (!frame||creatingConversation||JSON.stringify(readDeliveryTarget(frame))===JSON.stringify(deliveryTarget)));
+  if(action==='conversation.send')args={sessionId:latest.current?.selectedSessionId,...args};
+  const deliveryAction=creatingConversation||['conversation.delivery','conversation.send'].includes(action);
+  const deliveryTarget=deliveryAction?(Object.hasOwn(meta,'deliveryTarget')?meta.deliveryTarget:creatingConversation?{scope:deliveryScope(latest.current,null),connection:latest.current?.client?.hostInstanceId}:deliveryRecovery(latest.current,latest.current?.sessions?.find(row=>row.id===args.sessionId))):null;
+  const deliveryAuthenticationAtStart=meta.deliveryAuthentication??deliveryAuthentication.current;
+  const sameDeliveryTarget=()=>deliveryAuthenticationAtStart===deliveryAuthentication.current&&deliveryTargetMatches(latest.current,creatingConversation?null:args.sessionId,deliveryTarget);
+  const validDeliveryState=frame=>!deliveryAction||(sameDeliveryTarget()&&(!frame||deliveryTargetMatches(frame,creatingConversation?null:args.sessionId,deliveryTarget)));
   const capabilityCard=isCapabilityCardAction(action,args,meta);
   const capabilityRead=capabilityCard&&action==='capability.read'?capabilityStopFence.current.beginRead(args):null;
   // Capture eligibility BEFORE passive recovery: this preflight cannot become
@@ -318,8 +317,7 @@ function App(){
   if(stop)meta={...meta,id:stop.commandId};
   let stopPostStarted=false;
   if(action==='conversation.send'&&args.expectedConfigurationRevision===undefined){const target=latest.current?.sessions?.find(row=>row.id===args.sessionId);args={...args,expectedConfigurationRevision:target?.nextMessageRevision||0}}
-  if(action==='conversation.send'&&meta.outboxScope&&meta.outboxAuthentication===undefined)meta={...meta,outboxAuthentication:deliveryAuthentication.current};
-  if(action==='conversation.send'&&!meta.checkpointed)return checkpointSurfaces(args.sessionId).then(()=>dispatch(action,args,{...meta,checkpointed:true}));
+  if(action==='conversation.send'&&!meta.checkpointed)return checkpointSurfaces(args.sessionId).then(()=>dispatch(action,args,{...meta,deliveryTarget,deliveryAuthentication:deliveryAuthenticationAtStart,checkpointed:true}),error=>{error.deliveryAttempt='not_posted';throw error});
   if(action==='view.update'&&Object.keys(args.patch||{}).some(key=>key==='draft'||key.startsWith('canvas')))args={sessionId:latest.current?.selectedSessionId,...args};
   const selectedId=action==='session.select'?args.id:action==='shell.command'&&args.action==='session.select'?args.args?.id:null;
   const openingDraft=action==='session.draft'||action==='shell.command'&&args.action==='session.draft';
@@ -335,10 +333,11 @@ function App(){
   // its own ending state as soon as local media has been silenced.
   const settleTracking=trackAction(),settleFeedback=meta.feedback===false||localVoiceControl?()=>{}:actionFeedback.current.begin(action==='shell.command'?args.action:action);
   const dirtyBarrier=canvasDirtyBarrier.current;
+  let deliveryPostStarted=false;
   const execute=async()=>{
    if(meta.before)await meta.before;
-   if(deliveryTarget&&!sameDeliveryTarget())throw Error('The delivery target changed. The original submission remains saved.');
-   if(action==='conversation.send'&&meta.outboxScope&&(meta.outboxAuthentication!==deliveryAuthentication.current||!outboxMatches({scope:meta.outboxScope},deliveryScope(latest.current,latest.current?.sessions?.find(row=>row.id===args.sessionId)))))
+   if(deliveryAction&&!sameDeliveryTarget())throw Error('The delivery target changed. The original submission remains saved.');
+   if(action==='conversation.send'&&meta.outboxScope&&!outboxMatches({scope:meta.outboxScope},deliveryTarget?.scope))
     throw Error('The original message belongs to a different source. Nothing was sent again.');
    if(action==='conversation.delivery'&&(!sameDeliveryTarget()||meta.deliveryRecovery&&JSON.stringify(meta.deliveryRecovery)!==JSON.stringify(deliveryTarget)))
     throw Error('The delivery target changed. Nothing was sent again.');
@@ -368,6 +367,7 @@ function App(){
     let result;
     try{
      if(stop)stopPostStarted=true;
+     if(action==='conversation.send')deliveryPostStarted=true;
      result=await request('/api/actions',{signal:meta.signal,method:'POST',body:{action,args,id:meta.id||crypto.randomUUID(),...(meta.expectedRevision!==undefined?{expectedRevision:meta.expectedRevision}:{})}});
     }catch(error){
      if(stop){
@@ -382,7 +382,7 @@ function App(){
     }
     // An exact positive delivery receipt is independent of the bounded message
     // window and of a following state read. Never treat generic acceptance as delivery.
-    if(deliveryTarget&&!validDeliveryState(result.state))throw Error('The delivery target changed. The original submission remains saved.');
+    if(deliveryAction&&(!validDeliveryState(result.state)||result.hostInstanceId&&result.hostInstanceId!==deliveryTarget?.connection))throw Error('The delivery target changed. The original submission remains saved.');
     if(action==='conversation.delivery'&&result.accepted===true){
      const returnedHost=result.hostInstanceId||result.state?.client?.hostInstanceId;
      const returnedSource=result.state?.client?.historyScope,currentSource=latest.current?.client?.historyScope;
@@ -442,7 +442,7 @@ function App(){
   // decision. Keep those individual calls ordered, independent of Canvas work.
   const queue=capabilityCard?capabilityCardQueue:usesNavigationQueue(action,args)?navigationQueue:action==='call.mute'?voiceControlQueue:action==='conversation.delivery'||localVoiceControl||action.startsWith('coordination.')||meta.presentation||defaultsRead||choiceRead||planRead||appearanceRead?{current:Promise.resolve()}:action==='canvas.visibility'?canvasVisibilityQueue:exactReview?reviewQueue:['conversation.send','message.edit','question.answer'].includes(action)?sendQueue:catalogRead?providerReadQueue:commandQueue;
   const queuedAt=performance.now();
-  const timedExecute=()=>{const startedAt=performance.now();return Promise.resolve().then(execute).finally(()=>recordActionTiming(action,queuedAt,startedAt))};
+  const timedExecute=()=>{const startedAt=performance.now();return Promise.resolve().then(execute).catch(error=>{if(action==='conversation.send'&&!deliveryPostStarted)error.deliveryAttempt='not_posted';throw error}).finally(()=>recordActionTiming(action,queuedAt,startedAt))};
   const promise=enqueueSettings.current(queue,timedExecute,settingsDraftKey(action,args,meta),after).then(result=>{
    // Each caller owns an optimistic token even when several waiting editor
    // snapshots share the final request. Settle all callers after its receipt.
@@ -758,19 +758,25 @@ function App(){
   uploadQueue.current=uploadQueue.current.then(run,run);
  }
  const chatDrop=useChatFileDrop({ownerKey:JSON.stringify([session?.id??null,state?.attachmentDraftId,state?.selectedWorkspaceId]),enabled:!!state&&workSurface(state)==='chat'&&!executionUnavailable&&!historyPending&&!referencingDraft,onFiles:addFiles,onError:setError});
- async function deliver(entry){
-  if(!outboxMatches(entry,deliveryScope(latest.current,latest.current?.sessions?.find(row=>row.id===entry.sessionId))))return;
+ async function deliver(entry,target=entry.sessionId?deliveryRecovery(latest.current,latest.current?.sessions?.find(row=>row.id===entry.sessionId)):{scope:deliveryScope(latest.current,null),connection:latest.current?.client?.hostInstanceId},authentication=deliveryAuthentication.current){
   if(deliveries.current.has(entry.id))return;
   deliveries.current.add(entry.id);outbox.update(entry.id,{status:'sending',error:''});
   try{
-   if(!entry.sessionId){const current=await ensureSession(entry.creation);if(!outboxMatches(entry,deliveryScope(latest.current,null)))return;entry=outbox.update(entry.id,{sessionId:current.id,scope:deliveryScope(latest.current,current)});}
-   const result=await dispatch('conversation.send',{sessionId:entry.sessionId,text:entry.text,...(entry.document?{document:entry.document}:{}),...(entry.allowNextTurn?{allowNextTurn:true}:{}),...(entry.expectedGenerationId?{expectedGenerationId:entry.expectedGenerationId}:{}),...(Number.isInteger(entry.expectedConfigurationRevision)?{expectedConfigurationRevision:entry.expectedConfigurationRevision}:{}),...(entry.replyTo?.id?{replyId:entry.replyTo.id}:{}),attachmentIds:entry.attachmentIds,via:entry.via,preserveDraft:true},{id:entry.commandId,feedback:false,outboxScope:entry.scope});
-   if(!outboxMatches(entry,deliveryScope(latest.current,latest.current?.sessions?.find(row=>row.id===entry.sessionId)))){outbox.update(entry.id,{status:'unknown',error:'The source changed before acknowledgement. The original submission remains saved.'});return;}
+   if(!outboxMatches(entry,target?.scope)||authentication!==deliveryAuthentication.current||!deliveryTargetMatches(latest.current,entry.sessionId,target))
+    throw Object.assign(Error('The delivery target changed. The original submission remains saved.'),{deliveryAttempt:'not_posted'});
+   if(!entry.sessionId){
+    const current=await ensureSession(entry.creation);
+    if(authentication!==deliveryAuthentication.current||!deliveryTargetMatches(latest.current,null,target))throw Error('The delivery target changed. The original submission remains saved.');
+    entry=outbox.update(entry.id,{sessionId:current.id,scope:deliveryScope(latest.current,current)});
+    target={...target,scope:entry.scope};
+   }
+   const result=await dispatch('conversation.send',{sessionId:entry.sessionId,text:entry.text,...(entry.document?{document:entry.document}:{}),...(entry.allowNextTurn?{allowNextTurn:true}:{}),...(entry.expectedGenerationId?{expectedGenerationId:entry.expectedGenerationId}:{}),...(Number.isInteger(entry.expectedConfigurationRevision)?{expectedConfigurationRevision:entry.expectedConfigurationRevision}:{}),...(entry.replyTo?.id?{replyId:entry.replyTo.id}:{}),attachmentIds:entry.attachmentIds,via:entry.via,preserveDraft:true},{id:entry.commandId,feedback:false,outboxScope:entry.scope,deliveryTarget:target,deliveryAuthentication:authentication});
+   if(authentication!==deliveryAuthentication.current||!deliveryTargetMatches(latest.current,entry.sessionId,target)){outbox.update(entry.id,{status:'unknown',error:'The source changed before acknowledgement. The original submission remains saved.'});return;}
    outbox.update(entry.id,['sending','unknown'].includes(result.delivery)?{status:'unknown',error:'Delivery has not been confirmed. Checking again will not run it twice.'}:null);
   }catch(error){
-   const received=outboxMatches(entry,deliveryScope(latest.current,latest.current?.sessions?.find(row=>row.id===entry.sessionId)))&&latest.current?.sessions?.find(row=>row.id===entry.sessionId)?.messages?.some(row=>row.inputId===entry.commandId&&['accepted','queued_for_update','held'].includes(row.delivery?.status));
+   const received=authentication===deliveryAuthentication.current&&deliveryTargetMatches(latest.current,entry.sessionId,target)&&latest.current?.sessions?.find(row=>row.id===entry.sessionId)?.messages?.some(row=>row.inputId===entry.commandId&&['accepted','queued_for_update','held'].includes(row.delivery?.status));
    if(received&&error.code!=='session_busy')outbox.update(entry.id,null);
-   else outbox.update(entry.id,{status:error.receipt?.delivery==='failed'||error.status>=400&&error.status<500&&error.status!==408?'failed':'unknown',error:actionErrorMessage(error)});
+   else outbox.update(entry.id,{status:deliveryFailureStatus(error),error:actionErrorMessage(error)});
   }finally{deliveries.current.delete(entry.id)}
  }
  function discardMessage(message){
@@ -804,6 +810,7 @@ function App(){
   chatScroll.current?.submitted(id);setError('');setQuoteNotice(notice=>quoteNoticeAfterSend(notice,session?.id));editDraft('');clearTimeout(draftTimer.current);
   const blankToken=stagedDraft.current;
   let entry=outbox.update(id,{commandId:id,sessionId:session?.id??null,scope:deliveryScope(latest.current,session),allowNextTurn:true,...(expectedGenerationId?{expectedGenerationId}:{}),...(session?{expectedConfigurationRevision:session.nextMessageRevision??0}:{}),...(!session?{creation:{id:crypto.randomUUID(),setup:creationSetup()}}:{}),text:submittedText,...(submittedDocument?{document:submittedDocument,replyTo:{version:2,segments:submittedDocument.segments}}:state.view?.messageReply?{replyTo:state.view.messageReply}:{}),via:mode==='text'?'text':'chat',attachmentIds:attachments.map(file=>file.id),attachments,status:'sending',createdAt:Date.now()/1000});
+  const authentication=deliveryAuthentication.current,target={scope:entry.scope,connection:latest.current?.client?.hostInstanceId};
   try{
    const clearingDraft=saveDraft(stagedDraftPayload.current,blankToken);
    // The outbox already owns this exact submitted text. A slow/ lost draft
@@ -811,10 +818,17 @@ function App(){
    // their own ordered queue; the send preserves any newer server draft.
    if(session)clearingDraft.catch(error=>reportError(error));
    else await clearingDraft;
-   if(!outboxMatches(entry,deliveryScope(latest.current,session)))throw Error('The delivery target changed. The original submission remains saved.');
-   const current=session||await ensureSession(entry.creation);if(!outboxMatches(entry,deliveryScope(latest.current,session)))throw Error('The delivery target changed. The original submission remains saved.');entry=outbox.update(id,{sessionId:current.id,scope:deliveryScope(latest.current,current)});
-   await deliver(entry);
-  }catch(error){outbox.update(id,{status:error.receipt?.delivery==='failed'||error.status>=400&&error.status<500&&error.status!==408?'failed':'unknown',error:actionErrorMessage(error)});}
+   if(authentication!==deliveryAuthentication.current||!deliveryTargetMatches(latest.current,session?.id??null,target))throw Error('The delivery target changed. The original submission remains saved.');
+   const current=session||await ensureSession(entry.creation);
+   if(authentication!==deliveryAuthentication.current||!deliveryTargetMatches(latest.current,session?.id??null,target))throw Error('The delivery target changed. The original submission remains saved.');
+   entry=outbox.update(id,{sessionId:current.id,scope:deliveryScope(latest.current,current)});
+   await deliver(entry,{...target,scope:entry.scope},authentication);
+  }catch(error){
+   // No conversation.send was dispatched on this path. A new conversation's
+   // creation can itself be uncertain; don't turn that into a fresh creation.
+   // deliver owns every post-send outcome, including transport uncertainty.
+   outbox.update(id,{status:session?'failed':deliveryFailureStatus(error),error:actionErrorMessage(error)});
+  }
  }
 
  async function submitWorker(event){

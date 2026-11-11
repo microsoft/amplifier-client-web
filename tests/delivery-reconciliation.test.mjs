@@ -8,7 +8,7 @@ import {createServer} from 'vite';
 const server=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
 const {MessageDelivery}=await server.ssrLoadModule('/src/message-delivery.jsx');
 const {readOutbox,outboxMessages,useMessageOutbox}=await server.ssrLoadModule('/src/message-outbox.jsx');
-const {deliveryScope}=await server.ssrLoadModule('/src/pending-delivery-checks.js');
+const {deliveryScope,deliveryRecovery,deliveryTargetMatches,deliveryFailureStatus}=await server.ssrLoadModule('/src/pending-delivery-checks.js');
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 test.after(()=>server.close());
 
@@ -343,6 +343,29 @@ test('outbox origin identifies history source, workspace and canonical native ch
  assert.equal(deliveryScope(state,{id:'chat'}),origin('account-one','chat',null));
  assert.equal(deliveryScope(state,null),origin('account-one',null,null));
  assert.equal(deliveryScope({},session),null);
+});
+
+test('captured target survives bounded navigation, but not an actual source contradiction',()=>{
+ const a={id:'chat',workspace:'/fixture',runtimeSessionId:'native-chat'};
+ const frame={client:{historyScope:'account-one',hostInstanceId:'instance-1'},selectedSessionId:'chat',sessions:[a]};
+ const target=deliveryRecovery(frame,a);
+ const elsewhere={...frame,selectedSessionId:'other',sessions:[{id:'other',workspace:'/other',runtimeSessionId:'native-other'}]};
+ assert.equal(deliveryTargetMatches(elsewhere,'chat',target),true,'An omitted row is not a changed native identity');
+ assert.equal(deliveryTargetMatches({...elsewhere,client:{...frame.client,hostInstanceId:'instance-2'}},'chat',target),false);
+ assert.equal(deliveryTargetMatches({...elsewhere,client:{...frame.client,historyScope:'account-two'}},'chat',target),false);
+ for(const changed of [{...a,runtimeSessionId:'other-native'},{...a,workspace:'/elsewhere'}])
+  assert.equal(deliveryTargetMatches({...frame,sessions:[changed]},'chat',target),false);
+ assert.equal(deliveryTargetMatches({},'chat',target),false,'Missing host/source is not permission');
+ assert.equal(deliveryTargetMatches(frame,'chat',null),false,'No captured target is not permission');
+ assert.equal(deliveryTargetMatches({...frame,client:{hostInstanceId:'instance-1'}},'chat',target),false,'A missing account namespace cannot adopt a retained command');
+});
+
+test('only structured pre-POST evidence makes an otherwise uncertain failure definitively unsent',()=>{
+ assert.equal(deliveryFailureStatus({deliveryAttempt:'not_posted'}),'failed');
+ assert.equal(deliveryFailureStatus(Error('The delivery target changed.')),'unknown','Error text alone is not zero-POST evidence');
+ assert.equal(deliveryFailureStatus({status:408}),'unknown');
+ assert.equal(deliveryFailureStatus({status:503}),'unknown');
+ assert.equal(deliveryFailureStatus({status:409}),'failed');
 });
 
 test('persisted outbox projects only exact source/workspace/native identity; legacy payload stays unbound',()=>{

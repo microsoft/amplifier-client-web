@@ -18,6 +18,24 @@ export function deliveryRecovery(state,session){
   connection:state.client.hostInstanceId};
 }
 
+// A bounded browser frame contains only its selected conversation. Keep the
+// admitted command's native scope when its row is absent; any actual returned
+// row still has to agree. The host/account boundary must remain observable.
+export function deliveryTargetMatches(state,sessionId,target){
+ if(!target?.scope||!target.connection||state?.client?.hostInstanceId!==target.connection)return false;
+ let scope;
+ try{scope=JSON.parse(target.scope)}catch{return false}
+ const origin=state.client.historyScope||state.client.hostInstanceId;
+ if(!Array.isArray(scope)||scope.length!==3||scope[0]!==origin)return false;
+ const session=state.sessions?.find(row=>row.id===sessionId);
+ return !session||deliveryScope(state,session)===target.scope;
+}
+
+export function deliveryFailureStatus(error){
+ return error.deliveryAttempt==='not_posted'||error.receipt?.delivery==='failed'||
+  error.status>=400&&error.status<500&&error.status!==408?'failed':'unknown';
+}
+
 export function checkedDelivery(result,sessionId,inputId){
  const report=result?.result;
  if(result?.accepted!==true||!report||Array.isArray(report)||
