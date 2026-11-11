@@ -91,7 +91,11 @@ try{
    for(const enlarged of [false,...(viewport.width===320?[true]:[])]){
    await page.emulateMedia({colorScheme:scheme});
    await page.goto(vite.resolvedUrls.local[0]+'action-spacing');
-   await page.locator('#amp-one').evaluate((node,value)=>node.style.colorScheme=value,scheme);
+   // The fixture stacks independent production surfaces instead of mounting the
+   // viewport-locked app shell; component rules and control geometry stay real.
+   await page.locator('#amp-one').evaluate((node,value)=>Object.assign(node.style,{
+    colorScheme:value,height:'auto',minHeight:'100vh',overflow:'visible',display:'block',padding:'16px',
+   }),scheme);
    if(enlarged)await page.locator('#amp-one').evaluate(node=>node.style.setProperty('--a-text-base','24px'));
    const label=`${viewport.width}-${scheme}${enlarged?'-large-text':''}`;
    const updates=page.getByRole('region',{name:'Update restart',exact:true});
