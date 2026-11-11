@@ -73,8 +73,13 @@ async function menuRegression({page,scenario,readState,emit}){
  const items=page.getByRole('group',{name:'Chat',exact:true});
  const copy=()=>items.getByRole('button',{name:'Copy session ID',exact:true});
  const notice=page.locator('.a-session-copy-notice');
- const visibleNotice=checkpoint=>visibleGeometry(notice,{tolerance:0,header:true,
-  record:geometry=>proof.notices.push({checkpoint,...geometry})});
+ const visibleNotice=async checkpoint=>{
+  const geometry=await visibleGeometry(notice,{tolerance:0,header:true,
+   record:geometry=>proof.notices.push({checkpoint,...geometry})});
+  assert.deepEqual(geometry.headerContentOverlaps,[],'Copy feedback does not cover header controls or the chat title');
+  assert.ok(geometry.top>=geometry.header.bottom,'Copy feedback sits below the complete wrapped header');
+  return geometry;
+ };
  await expect(trigger.locator('.lucide-message-circle')).toHaveCount(1);
  await trigger.focus();await trigger.press('Enter');await expect(copy()).toBeFocused();
  assert.deepEqual(await labels(items.getByRole('button')),['Copy session ID','Rename','Pin','Share or save','Chat info','Help & diagnostics','Advanced','Archive']);
