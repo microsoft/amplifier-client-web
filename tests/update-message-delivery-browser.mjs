@@ -1,5 +1,6 @@
 import './composer-test-helpers.mjs';
 import {createShellHttpFixture,installFixtureEvents} from './shell-http-fixture.mjs';
+import {openSettingsPage} from './browser-settings.mjs';
 import {createServer} from 'vite';
 import {chromium,expect} from '@playwright/test';
 import {fileURLToPath} from 'node:url';
@@ -7,19 +8,156 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
 
 // Mounted client with controlled HTTP/state ordering. Backend checkpoint/release
-// behavior has separate native coverage; this fixture never executes a message.
+// behavior has separate native coverage; this fixture never executes a message
+// or installs anything. Retained-update projections below are authored fixture
+// inputs, NOT evidence that a real host qualified a receipt, selection or target.
 const state={revision:1,settings:{workspace:'/fixture'},runtime:{available:true},view:{navPinned:true},
  sessions:[{id:'chat',title:'Update delivery',sessionKind:'root',workspace:'/fixture',workspaceId:'project',status:'idle',historyManaged:true,historyLoaded:true,messages:[],workers:[]}],
  workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:'chat',selectedWorkspaceId:'project',
  setup:{providers:[{id:'fixture',module:'provider-fixture',config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false}};
 const shell=createShellHttpFixture(()=>state),waiting=[],calls=[],errors=[],cases=[];
 const evidence=process.env.AMPLIFIER_TEST_ARTIFACTS;
+const recovery={scope:'synthetic client HTTP/state fixture; host eligibility and actual installation not covered',
+ checkpoints:[],screenshots:[],passed:false};
+let installAttempts=0,passed=false,failure=null;
 let browser,vite,page;
 const chat=()=>state.sessions[0];
 const outbox=()=>page.evaluate(()=>JSON.parse(sessionStorage.getItem('amplifier.messageOutbox.v1')||'[]'));
 const bubble=id=>page.locator(`[data-input-id="${id}"]`);
 const composer=()=>page.getByRole('textbox',{name:'Message Amplifier'});
 async function publish(){state.revision++;await page.evaluate(value=>window.emitState(value),shell.state())}
+async function capture(name,target=page){
+ if(!evidence)return;
+ await mkdir(evidence,{recursive:true});
+ await target.screenshot({path:evidence+'/'+name+'.png',animations:'disabled'});
+ recovery.screenshots.push(name+'.png');
+}
+const updateCalls=()=>calls.filter(call=>['updates.check','updates.install'].includes(call.action));
+async function retainedRecovery(){
+ const application={id:'application',kind:'app',label:'Amplifier Unified',status:'current',
+  current:'0.0.0',latest:'0.0.0',releaseNotes:[]};
+ const retained={phase:'checked',available:0,lastAttempt:100,application,
+  items:[{id:'retained',label:'Retained fixture component',kind:'bundle / module',usage:'configured',updateTier:'other',
+   status:'check_failed',sourceUpdate:'failed',current:'a'.repeat(40),
+   detail:'The source download failed. Its working version was retained.'}],
+  componentResults:[{id:'retained',status:'failed',revision:'a'.repeat(40)}],
+  sequence:{stage:'complete',included:{status:'current',available:0},other:{status:'failed',available:0,issues:1}},
+  currentStatus:{status:'action-required',actionRequired:true,action:'sources',
+   title:'Some components kept their working versions',
+   detail:'Review the failed source. Its working version is kept.'}};
+ const eligible={...retained,currentStatus:{...retained.currentStatus,action:'install',
+  detail:'The working version is kept. Choose Retry installation to try the retained component again.'}};
+ const updates=page.locator('[data-part="updates"]');
+ const controls=updates.locator('[data-part="update-controls"]');
+ const retry=controls.getByRole('button',{name:'Retry installation',exact:true});
+ const check=controls.getByRole('button',{name:'Check for updates',exact:true});
+ const install=updates.locator('button[data-action="updates.install"]');
+ async function project(value){
+  state.updates=structuredClone(value);await publish();
+  // Fence each negative assertion to this exact injected frame, not an older
+  // DOM that also happens to have no install button.
+  await page.waitForFunction(({revision,updates})=>{
+   const observed=window.amplifier.getState();
+   return observed.revision>=revision&&JSON.stringify(observed.updates)===JSON.stringify(updates);
+  },{revision:state.revision,updates:state.updates});
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ }
+ async function unchanged(label,expectedCalls){
+  // Bounded idle observation supplements the maintained unit fake-timer checks.
+  await page.waitForTimeout(250);
+  assert.deepEqual(updateCalls().map(call=>call.action),expectedCalls,label);
+  assert.equal(installAttempts,0,label);
+  const observed=await page.evaluate(()=>window.amplifier.getState().updates);
+  assert.equal(observed.lastAttempt,100,label);assert.equal(observed.available,0,label);
+  assert.equal(observed.items[0].status,'check_failed',label);
+  assert.equal(observed.items[0].sourceUpdate,'failed',label);
+  recovery.checkpoints.push({case:label,actions:[...expectedCalls],syntheticInstallAttempts:0,lastAttempt:100,available:0});
+ }
+ await page.setViewportSize({width:1280,height:900});
+ await project(retained);
+ // Reuse maintained Settings navigation and real clicks; no dispatch fallback.
+ await openSettingsPage(page,'updates',{activate:(_label,control,options)=>control.click(options)});
+ await expect(updates).toBeVisible();await expect(check).toBeEnabled();
+ await expect(install).toHaveCount(0);
+ await unchanged('retained-only mount does not install',[]);
+ await check.click();
+ await expect.poll(()=>updateCalls().map(call=>call.action)).toEqual(['updates.check']);
+ await expect(check).toBeEnabled();
+ await unchanged('Check is read-only with respect to installation',['updates.check']);
+ await capture('retained-check-only',controls);
+
+ // The synthetic peer explicitly publishes the proposed eligible host action.
+ // There is deliberately no eligibility algorithm in this fixture or client.
+ await project(eligible);
+ await expect(install).toHaveCount(1);await expect(retry).toBeVisible();await expect(retry).toBeEnabled();
+ await expect(updates.locator('.a-update-current-action button')).toHaveCount(0);
+ await expect(updates.locator('.a-update-current-action')).toContainText('Checking for updates does not install them.');
+ await expect(updates.locator('[data-part="component-update-results"]')).toContainText('Failed — working version retained');
+ await expect(updates.locator('[data-part="available-updates"] .a-update-count')).toHaveCount(0);
+ await unchanged('eligible projection alone does not install',['updates.check']);
+ await capture('retained-retry-desktop',controls);
+ await capture('retained-retry-explanation',updates.locator('.a-update-current-action'));
+ // A reload with the same projection is also not an install gesture.
+ await page.reload();await expect(retry).toBeVisible();await expect(retry).toBeEnabled();
+ await unchanged('reload does not consume the explicit retry',['updates.check']);
+ await page.setViewportSize({width:390,height:844});
+ await expect(retry).toBeVisible();await expect(retry).toBeEnabled();
+ await capture('retained-retry-mobile',controls);
+ await check.click();
+ await expect.poll(()=>updateCalls().map(call=>call.action)).toEqual(['updates.check','updates.check']);
+ await expect(check).toBeEnabled();
+ await unchanged('Check with Retry visible still does not install',['updates.check','updates.check']);
+
+ for(const [label,action] of [
+  ['unknown outcome','diagnostics'],['stale receipt','sources'],['missing target','sources'],
+  ['check required','check'],['null action',null],['missing action',undefined],['unsupported action','retry'],
+ ]){
+  // These are the host's NON-install projections for guarded negative cases,
+  // not client judgments about a stale receipt or a missing/private target.
+  await project({...retained,currentStatus:{...retained.currentStatus,action,detail:label}});
+  await expect(install).toHaveCount(0);
+  await unchanged(label+' revokes Retry',['updates.check','updates.check']);
+  if(label==='missing target')await capture('retained-missing-target',controls);
+  await project(eligible);await expect(retry).toBeEnabled();
+ }
+ for(const currentStatus of [null,undefined]){
+  await project({...retained,currentStatus});await expect(install).toHaveCount(0);
+  await unchanged(currentStatus===null?'null projection':'missing projection',['updates.check','updates.check']);
+ }
+ const guards=[
+  ['checking',{phase:'checking'}],['staging',{phase:'staging'}],['validating',{phase:'validating'}],['activating',{phase:'activating'}],
+  ['pending application',{pendingApp:{latest:'0.0.1'}}],['pending components',{pendingRelease:'candidate'}],
+  ['pending tool',{pendingSmartTools:[{previous:'fixture-tool'}]}],
+  ['replacement outcome unknown',{pendingReplacement:{}}],
+  ['restart uncertain',{pendingRestart:{requestStatus:'uncertain'}}],
+  ['restart rejected',{pendingRestart:{requestStatus:'rejected'},phase:'error',error:'Synthetic restart failed'}],
+  ['next stage queued',{sequence:{stage:'other',nextStage:'other'}}],
+  ['included proceed guard',{sequence:{stage:'included',included:{issues:1}},includedCanProceed:false}],
+  ['development app guard',{application:{...application,status:'update',canInstall:false}}],
+ ];
+ for(const [label,patch] of guards){
+  await project({...eligible,...patch});
+  await expect(updates.locator('button[data-action="updates.install"]:enabled')).toHaveCount(0);
+  await unchanged(label+' guards explicit retry',['updates.check','updates.check']);
+  if(label==='replacement outcome unknown')await capture('retained-replacement-guard',controls);
+ }
+ await project(eligible);await expect(retry).toBeEnabled();
+ await retry.click();
+ await expect.poll(()=>updateCalls().map(call=>call.action)).toEqual(['updates.check','updates.check','updates.install']);
+ await expect.poll(()=>installAttempts).toBe(1);
+ await expect(updates.locator('[data-part="application-update"]')).toContainText('Updating retained fixture components');
+ await expect(updates.locator('button[data-action="updates.install"]:enabled')).toHaveCount(0);
+ await capture('retained-explicit-attempt',controls);
+ await page.reload();
+ await expect(updates.locator('[data-part="application-update"]')).toContainText('Updating retained fixture components');
+ await page.waitForTimeout(250);
+ assert.deepEqual(updateCalls().map(call=>call.action),['updates.check','updates.check','updates.install']);
+ assert.equal(installAttempts,1,'Rerender and reload must not replay explicit installation');
+ assert.equal(state.updates.available,0);
+ recovery.checkpoints.push({case:'one explicit Retry produces one synthetic install; reload does not replay',
+  actions:updateCalls().map(call=>call.action),syntheticInstallAttempts:installAttempts,available:0});
+ recovery.passed=true;
+}
 async function send(text){
  await composer().fill(text);await page.getByRole('button',{name:'Send message',exact:true}).click();
  await expect.poll(()=>waiting.length).toBe(1);
@@ -59,6 +197,15 @@ try{
   if(body.action==='conversation.send'){waiting.push({route,body});return}
   assert.ok(!['conversation.retry','conversation.delivery'].includes(body.action),'Saved update input must not request retry or delivery recovery');
   if(body.action==='view.update')state.view={...state.view,...body.args.patch};
+  if(body.action.startsWith('updates.'))assert.ok(['updates.check','updates.install'].includes(body.action),
+   'The recovery fixture must not request a restart, rollback or other updater action');
+  if(body.action==='updates.install'){
+   // Record only a synthetic attempt; never invoke an updater, host or model.
+   installAttempts++;
+   state.updates={...state.updates,phase:'staging',lastAttempt:101,
+    currentStatus:{status:'working',actionRequired:false,action:null,title:'Updating retained fixture components',
+     detail:'A synthetic installation request was recorded. No actual installation runs.'}};
+  }
   state.revision++;return route.fulfill({json:{accepted:true,state:shell.state()}});
  });
  await page.goto(vite.resolvedUrls.local[0]);await composer().waitFor();
@@ -114,8 +261,25 @@ try{
  cases.push({case:'lost acknowledgment then Stop reconciles retained outbox on refresh',inputId:stoppedWhileDisconnected.body.id,status:'held'});
  assert.equal(calls.filter(call=>call.action==='conversation.send').length,5);
  assert.equal(new Set(chat().messages.map(message=>message.inputId)).size,5);
- assert.deepEqual(errors,[]);
- if(evidence){await mkdir(evidence,{recursive:true});await page.screenshot({path:evidence+'/held-mobile.png'});
-  await writeFile(evidence+'/receipt.json',JSON.stringify({cases,sendPosts:5,distinctSavedInputs:5,pageErrors:errors,backendExecution:'synthetic HTTP/state fixture; separately qualified'},null,2)+'\n')}
- console.log('PASS: update-time saved status, both lost-ack orders, refresh with original identities and draft, no replay, and Stop-held mobile explanation.');
-}finally{if(browser)await browser.close();if(vite)await vite.close()}
+ await capture('held-mobile');
+ await retainedRecovery();
+ assert.equal(calls.filter(call=>call.action==='conversation.send').length,5);
+ assert.deepEqual(errors,[]);passed=true;
+ console.log('PASS (synthetic client fixture only): update-time saved delivery and Stop-held mobile status; retained-only Check never installs, host-projected explicit Retry records one installation request, non-install projections and busy guards prevent retry, no replay on reload. Actual host eligibility/installation not covered.');
+}catch(error){
+ failure=String(error.stack||error);
+ if(page)await capture('failure').catch(error=>recovery.screenshots.push('failure capture unavailable: '+error.message));
+ throw error;
+}finally{
+ try{
+  if(evidence){
+   await mkdir(evidence,{recursive:true});
+   await writeFile(evidence+'/receipt.json',JSON.stringify({passed,failure,cases,
+    sendPosts:calls.filter(call=>call.action==='conversation.send').length,
+    distinctSavedInputs:new Set(chat().messages.map(message=>message.inputId)).size,
+    pageErrors:errors,retainedRecovery:recovery,
+    updateActions:updateCalls(),syntheticInstallAttempts:installAttempts,
+    backendExecution:'synthetic HTTP/state fixture; no actual updater, model, install or restart'},null,2)+'\n');
+  }
+ }finally{try{if(browser)await browser.close()}finally{if(vite)await vite.close()}}
+}
