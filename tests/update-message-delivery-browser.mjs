@@ -168,11 +168,14 @@ async function retainedRecovery(){
  await retry.click();
  await expect.poll(()=>updateCalls().map(call=>call.action)).toEqual(['updates.check','updates.check','updates.install']);
  await expect.poll(()=>installAttempts).toBe(1);
- await expect(updates.locator('[data-part="application-update"]')).toContainText('Updating retained fixture components');
+ // During staging the existing sequence overview owns the visible title,
+ // rather than the idle currentStatus title supplied by this synthetic peer.
+ await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().updates.phase)).toBe('staging');
+ await expect(updates.locator('[data-part="application-update"]')).toContainText('Updating other components');
  await expect(updates.locator('button[data-action="updates.install"]:enabled')).toHaveCount(0);
  await capture('retained-explicit-attempt',controls);
  await page.reload();
- await expect(updates.locator('[data-part="application-update"]')).toContainText('Updating retained fixture components');
+ await expect(updates.locator('[data-part="application-update"]')).toContainText('Updating other components');
  await page.waitForTimeout(250);
  assert.deepEqual(updateCalls().map(call=>call.action),['updates.check','updates.check','updates.install']);
  assert.equal(installAttempts,1,'Rerender and reload must not replay explicit installation');
