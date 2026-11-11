@@ -17,6 +17,7 @@ const sourceA={historyScope:'synthetic-host/account-a',hostInstanceId:'fixture-h
 const sourceB={historyScope:'synthetic-host/account-b',hostInstanceId:'fixture-host-b'};
 const workspace='/fixture',createdId='created',nativeId='native-created';
 const createdScope=JSON.stringify([sourceA.historyScope,workspace,nativeId]);
+const createdSource={workspace,nativeIdentity:nativeId};
 const newScope=JSON.stringify([sourceA.historyScope,null,null]);
 const allCases=['accepted','late-success','late-session-busy','unconfirmed-creation','late-creation','pending-next-draft'];
 const selectedCases=process.env.AMPLIFIER_DELIVERY_NEW_CHAT_CASE?[process.env.AMPLIFIER_DELIVERY_NEW_CHAT_CASE]:allCases;
@@ -61,7 +62,7 @@ async function runCase(kind){
  reports.push(report);
  const context=await browser.newContext({viewport:{width:1280,height:900}});
  const page=await context.newPage();
- let state=initialState(),source=sourceA,creation,send,nextDraftSave,nextDraftText,nextDraftEvidence;
+ let state=initialState(),source=sourceA,creation,send,nextDraftSave,nextDraftText,nextDraftEvidence,originalRetryConfirmed=false;
  const actions=[],seenSends=new Set(),shell=createShellHttpFixture(()=>state);
  const wire=()=>identify(shell.state(),source);
  const current=()=>page.evaluate(()=>window.amplifier.getState());
@@ -94,7 +95,7 @@ async function runCase(kind){
  };
  const assertNoReplay=()=>{
   assert.equal(count('session.create'),1);
-  assert.equal(count('conversation.send'),['unconfirmed-creation','late-creation'].includes(kind)?0:1);
+  assert.equal(count('conversation.send'),['unconfirmed-creation','late-creation'].includes(kind)?Number(originalRetryConfirmed):1);
   assert.equal(count('conversation.retry'),0);
   assert.equal(report.duplicateExecution,0);
   assert.deepEqual(report.providerExecution,[]);
@@ -191,6 +192,7 @@ async function runCase(kind){
   assert.equal(original.text,submitted);
   assert.equal(original.sessionId,null);
   assert.equal(original.scope,newScope);
+  assert.equal(original.expectedSource,null,'No canonical native source exists before creation binds');
   assert.equal(original.creation.id,creation.body.id);
   assert.equal(creation.body.args.workspace,workspace);
   assert.equal(count('conversation.send'),0,'Send waits for a canonical created chat');
@@ -339,6 +341,59 @@ async function runCase(kind){
    assertNoReplay();
    await screenshot('honest-no-canonical-chat');
    report.checkpoints.push('missing canonical created record retains payload and reports refusal; zero sends');
+
+   // Creation can become canonical in a later stream frame, after the first
+   // creation/send chain has already settled as unknown. This uses the recovery
+   // binding effect, not the successful ensureSession path exercised below.
+   state.sessions.unshift({
+    id:createdId,title:'Late-confirmed source A conversation',runtimeSessionId:nativeId,
+    nativeIdentity:'fallback-not-the-owner',workspace,workspaceId:'project',sessionKind:'root',
+    status:'idle',historyManaged:true,historyLoaded:true,messages:[],workers:[],
+    creationCommandId:creation.body.id,
+   });
+   state.selectedSessionId=createdId;delete state.view.newSessionDraft;
+   await emit();
+   await expect.poll(async()=>(await outbox())[0]?.sessionId).toBe(createdId);
+   const bound=await outbox();
+   assert.deepEqual(bound,[{...retained[0],sessionId:createdId,scope:createdScope,expectedSource:createdSource}],
+    'Late binding must atomically retain the canonical witness with the original unknown payload');
+   const row=page.locator(`[data-input-id="${original.commandId}"]`);
+   await expect(row).toHaveCount(1);
+   const retry=row.getByRole('button',{name:'Retry original submission',exact:true});
+   await expect(retry).toBeEnabled(); // The real passive check has returned unknown.
+   for(let i=0;i<2;i++)await emit();
+   assert.deepEqual(await outbox(),bound);
+   assertNoReplay();
+   report.checkpoints.push('late canonical frame binds unknown entry and exact workspace/runtime witness; passive checks and later frames never resend');
+
+   // The retained unknown command cannot become a fresh-id send or bypass the
+   // uncertainty warning. Use both existing rendered buttons, not dispatch().
+   await retry.click();
+   await expect(row.getByText(/Sending again could repeat that work/)).toBeVisible();
+   assert.deepEqual(await outbox(),bound);
+   assertNoReplay();
+   originalRetryConfirmed=true;
+   await row.getByRole('button',{name:'Send this message again',exact:true}).click();
+   await expect.poll(()=>!!send).toBe(true);
+   assert.equal(send.body.id,original.commandId);
+   assert.equal(send.body.args.sessionId,createdId);
+   assert.equal(send.body.args.text,original.text);
+   assert.deepEqual(send.body.args.attachmentIds,original.attachmentIds);
+   assert.deepEqual(send.body.args.expectedSource,createdSource,
+    'The explicit original retry must send the witness captured by late creation binding');
+   // Synthetic refusal only: actual canonical host admission has a separate
+   // server-owned check. Refusal cannot erase the earlier delivery uncertainty.
+   await send.route.fulfill({status:409,json:{accepted:false,code:'delivery_source_changed',
+    error:'Synthetic source refusal. Nothing was sent again.'}});
+   await expect.poll(async()=>(await outbox())[0]?.status).toBe('unknown');
+   const refused=await outbox();
+   assert.deepEqual(refused,[{...bound[0],error:refused[0].error}]);
+   assert.match(refused[0].error,/Synthetic source refusal/);
+   for(let i=0;i<2;i++)await emit();
+   assert.deepEqual(await outbox(),refused);
+   assertNoReplay();
+   await screenshot('late-bound-original-retry');
+   report.checkpoints.push('explicit two-step original retry posts once with identical command/text/attachments and captured source; refusal retains unknown payload without replay');
   }else{
    const created={
     id:createdId,title:'Source A created conversation',runtimeSessionId:nativeId,nativeIdentity:'fallback-not-the-owner',
@@ -353,11 +408,13 @@ async function runCase(kind){
    assert.equal(send.body.args.sessionId,createdId);
    assert.equal(send.body.args.text,submitted);
    assert.equal(send.body.id,original.commandId);
+   assert.deepEqual(send.body.args.expectedSource,createdSource);
    await expect.poll(async()=>(await outbox())[0]?.scope).toBe(createdScope);
    const pending=await outbox();
    assert.equal(pending.length,1);
    assert.equal(pending[0].sessionId,createdId);
    assert.equal(pending[0].scope,createdScope);
+   assert.deepEqual(pending[0].expectedSource,createdSource);
    assert.equal(pending[0].status,'sending');
    assert.equal(pending[0].text,submitted);
    await expect(page.locator(`[data-input-id="${send.body.id}"]`)).toHaveCount(1);
