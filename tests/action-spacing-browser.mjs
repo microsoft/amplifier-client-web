@@ -96,6 +96,12 @@ try{
    await page.locator('#amp-one').evaluate((node,value)=>Object.assign(node.style,{
     colorScheme:value,height:'auto',minHeight:'100vh',overflow:'visible',display:'block',padding:'16px',
    }),scheme);
+   await page.evaluate(()=>{
+    // Undo only the document viewport lock for this stacked fixture, so a
+    // full-page screenshot shows every surface rather than the last scroll.
+    for(const node of [document.documentElement,document.body])Object.assign(node.style,{height:'auto',overflow:'visible'});
+    document.querySelector('#fixture>.a-dialog').style.maxHeight='none';
+   });
    if(enlarged)await page.locator('#amp-one').evaluate(node=>node.style.setProperty('--a-text-base','24px'));
    const label=`${viewport.width}-${scheme}${enlarged?'-large-text':''}`;
    const updates=page.getByRole('region',{name:'Update restart',exact:true});
@@ -134,6 +140,7 @@ try{
     const smallTargets=await page.locator('#fixture button:visible').evaluateAll(nodes=>nodes.filter(node=>node.getBoundingClientRect().height<44).map(node=>node.textContent));
     if(smallTargets.length)failures.push(label+' touch targets below 44px: '+smallTargets.join(', '));
    }
+   await page.evaluate(()=>window.scrollTo(0,0));
    await page.screenshot({path:`${artifacts}/${label}.png`,fullPage:true});
    assert.ok((await page.evaluate(()=>window.calls)).every(call=>call.action==='conversation.delivery'),'No send, retry, discard or restart effect');
    }
