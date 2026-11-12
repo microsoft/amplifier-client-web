@@ -99,6 +99,9 @@ async function observeQuiet(page){
 }
 async function seedAndObserve(page){
  await page.addInitScript(({retained,cacheKey})=>{
+  // Playwright also invokes init scripts in opaque sandboxed thumbnail frames.
+  // Only the top-level test document owns these storage canaries and probes.
+  if(window.top!==window)return;
   // Seed once, not on reload: deletion or mutation of a canary must be observable.
   if(!sessionStorage.getItem('appearance-lifecycle-seeded')){
    for(const [key,value] of Object.entries(retained.local))localStorage.setItem(key,value);
@@ -192,6 +195,16 @@ try{
   assert.ok(!Object.hasOwn(initial.effective,'accent'));
   assert.equal(initial.local.values,null);
   await openSettingsPage(page,'appearance');await observeQuiet(page);
+  const thumbnail=page.locator('.a-appearance-thumbnail iframe').first();
+  await expect(thumbnail).toBeVisible();await expect(thumbnail).toHaveAttribute('sandbox','');
+  const thumbnailFrame=await (await thumbnail.elementHandle()).contentFrame();
+  await thumbnailFrame.waitForLoadState('domcontentloaded');
+  assert.deepEqual(await thumbnailFrame.evaluate(()=>({
+   child:window.top!==window,probe:typeof window.stopAppearanceBootProbe,
+   frames:typeof window.appearanceBootFrames,
+  })),{child:true,probe:'undefined',frames:'undefined'},
+  'An actual opaque thumbnail frame is mounted, but the top-document storage/paint probe never runs there');
+  evidence.checks.push('opaque thumbnail mounted with no top-document init probe; all page errors remain fatal');
   await expect(page.locator('[data-appearance-card="builtin:default"] input')).toBeChecked();
   await expect(page.locator('.a-appearance-saved-row')).toHaveCount(0);
   await canaries(page);

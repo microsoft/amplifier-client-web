@@ -10,6 +10,28 @@ const source=path=>readFileSync(new URL(path,import.meta.url),'utf8');
 const cacheKey='amplifier.appearance-composition.v4';
 const namespace='amplifier.appearance.v2:'+'a'.repeat(32);
 
+test('lifecycle init probe excludes sandboxed child frames before any storage or DOM access',()=>{
+ const journey=source('./appearance-lifecycle-browser.mjs');
+ const start=journey.indexOf(' await page.addInitScript(');
+ const end=journey.indexOf(' },{retained,cacheKey});',start);
+ assert.ok(start>=0&&end>start);
+ const callback=runInNewContext('('+journey.slice(start+' await page.addInitScript('.length,end)+' })');
+ let accessed=false;
+ const denied=()=>{accessed=true;throw Error('Opaque sandbox storage must not be accessed')};
+ const storage=new Proxy({},{get:denied});
+ const sandbox={top:{}};
+ // Compile the actual callback in a context with throwing browser APIs.
+ const script='('+journey.slice(start+' await page.addInitScript('.length,end)+' })({retained:{},cacheKey:"probe"})';
+ runInNewContext(script,{window:sandbox,sessionStorage:storage,localStorage:storage,
+  document:new Proxy({},{get:denied}),requestAnimationFrame:denied});
+ assert.equal(typeof callback,'function');assert.equal(accessed,false);
+ // The main frame must still run its seeding path; errors are not swallowed.
+ const top={};top.top=top;
+ assert.throws(()=>runInNewContext(script,{window:top,sessionStorage:storage}),/Opaque sandbox/);
+ assert.equal(accessed,true);
+ assert.match(journey,/assert\.deepEqual\(evidence\.pageErrors,\[\]\)/,'All actual page errors remain fatal');
+});
+
 function boot(records){
  const reads=[],writes=[],deletes=[],styles={},root={style:{setProperty:(key,value)=>{styles[key]=value}},dataset:{}};
  runInNewContext(source('../public/appearance-bootstrap.js'),{
