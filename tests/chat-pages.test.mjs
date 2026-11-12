@@ -7,6 +7,20 @@ const server=await createServer({server:{middlewareMode:true,hmr:false},appType:
 const {ChatPages}=await server.ssrLoadModule('/src/chat-pages.jsx');
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 test.after(()=>server.close());
+test('external chat info retains distinct identities and never inspects native history',async()=>{
+ const calls=[],session={id:'host-chat',status:'idle',workspace:'/project',externalAgent:{id:'remote',label:'Project assistant',sessionId:'remote-session'}};
+ let root;
+ try{
+  for(const page of ['session-details','chat-models','chat-context','chat-advanced']){
+   const element=React.createElement(ChatPages,{page,state:{view:{}},session,act:async(name,args)=>{calls.push({name,args});return {accepted:true}},open:()=>{}});
+   await renderAct(async()=>{if(root)root.update(element);else root=create(element)});
+   const text=JSON.stringify(root.toJSON());
+   assert.match(text,/Project assistant/);assert.match(text,/host-chat/);assert.match(text,/remote-session/);
+   assert.equal(root.root.findAllByProps({'data-external-agent-info':true}).length,1);
+  }
+  assert.deepEqual(calls,[],'No native history, model or context request is made');
+ }finally{await renderAct(async()=>root?.unmount())}
+});
 test('chat info discards old locations and errors immediately and ignores late inspections',async()=>{
  const pending=new Map();
  const act=(name,args)=>name==='session.inspect'?new Promise((resolve,reject)=>pending.set(args.id,{resolve,reject})):Promise.resolve({accepted:true});
