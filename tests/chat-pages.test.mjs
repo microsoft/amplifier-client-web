@@ -55,3 +55,16 @@ test('external chat retains explicit Full access without mounting native file se
   assert.doesNotMatch(JSON.stringify(root.toJSON()),/File restrictions/);
  }finally{await renderAct(async()=>root?.unmount())}
 });
+
+test('external navigation never mounts previously visited native pages in the background',async()=>{
+ const calls=[],session={id:'external-chat',title:'Project assistant',externalAgent:{id:'remote'}};
+ let root;
+ const act=async(name,args)=>{calls.push({name,args});return {accepted:true,result:{revision:'r1',mode:'ask',source:'default',overrides:{session:{mode:'inherit'},workspace:{mode:'inherit'},app:{mode:'inherit'}}}}};
+ try{
+  for(const page of ['session-details','chat-models','chat-rename','chat-write-files','chat-help']){
+   await renderAct(async()=>{const element=React.createElement(ChatPages,{page,state:{view:{}},session,act,open:()=>{}});if(root)root.update(element);else root=create(element)});
+  }
+  assert.deepEqual(calls.filter(call=>call.name!=='diagnostics.report'),[{name:'access.get',args:{sessionId:'external-chat'}}]);
+  assert.equal(root.root.findAllByProps({'aria-label':'Access and approvals'}).length,0);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
