@@ -219,7 +219,11 @@ Temporary previews are browser-scoped and never commit a profile; leaving
 Appearance cancels its preview without discarding the private editor draft.
 Library save/import/update/export and selection remain separate operations.
 The library accepts host-validated format-2 Reference ZIP packages; importing
-does not execute code or apply the look.
+does not execute code or apply the look. Updating an existing entry changes the
+look of profiles that select it, without changing their other preferences.
+Deleting it retains those profiles' selected ID, visibly marks it unavailable,
+and shows Reference until the user chooses another appearance or explicitly
+restores neutral appearance.
 
 ### Production initialization and retained data
 

@@ -323,7 +323,7 @@ export function AppearanceSettings({
    if(receipt?.accepted!==true||!receipt.result?.id)throw Error(receipt?.error||'Updating this appearance was not confirmed. Check the library before trying again.');
    catalog.invalidate();
    const adopted=compareAndSetDraft(savedDraft,{...savedDraft,entry:receipt.result,dirty:false});
-   await refresh();if(isCurrent()&&adopted)setNotice('Library entry updated. The active appearance is unchanged.');
+   await refresh();if(isCurrent()&&adopted)setNotice('Library entry updated. Profiles selecting this entry use its updated appearance; other preferences are unchanged.');
    return receipt.result;
   });
  }
@@ -346,7 +346,7 @@ export function AppearanceSettings({
    if(receipt?.accepted!==true)throw Error(receipt?.error||'Deleting this appearance was not confirmed. Check the library before trying again.');
    catalog.invalidate();
    if(draft?.entry?.id===target.id&&draft?.entry?.fingerprint===target.expectedFingerprint)compareAndSetDraft(draft,{...draft,entry:null,dirty:true});
-   if(isCurrent()){setDeleteTarget(null);await refresh();if(isCurrent())setNotice('Deleted from your library. The active appearance is unchanged.');}
+   if(isCurrent()){setDeleteTarget(null);await refresh();if(isCurrent())setNotice('Deleted from your library. Profiles selecting this entry now show Reference until another appearance is chosen.');}
   });
  }
  function exportItem(item){if(!item?.id)return null;return runOperation('export',()=>api.current('theme.export',{id:item.id}))}
@@ -443,6 +443,9 @@ export function AppearanceSettings({
    {profileFeedback.status==='failed'&&profileFeedback.retryable!==false&&<button type="button" className="a-link" onClick={retryProfile}>Retry</button>}
   </p>}
   {preferenceStatus?.status==='failed'&&<p role="alert" className="a-danger">{preferenceStatus.error||'This browser could not confirm its appearance preferences. Shared settings were not changed.'}</p>}
+  {appearance.theme?.available===false&&appearance.theme.id===displayCurrentId&&<p role="alert" className="a-danger" data-appearance-unavailable={appearance.theme.id}>
+   The selected appearance {appearance.theme.name||appearance.theme.id}{appearance.theme.name&&` (${appearance.theme.id})`} is unavailable. Your selection and other preferences are retained. {confirmedPreview?'A preview is active; Reference will be shown when it ends.':'Reference is shown instead.'} Choose another appearance or use Restore neutral appearance below.
+  </p>}
   {storageError&&<p role="alert" className="a-danger">{storageError}</p>}
   {visibleError&&<p role="alert" className="a-danger">{visibleError}</p>}{libraryError&&<p role="alert" className="a-danger">{libraryError}</p>}
   {notice&&<p role="status" className="a-appearance-notice"><Check size={15}/>{notice}</p>}
@@ -460,7 +463,7 @@ export function AppearanceSettings({
    </div>)}
    {!savedItems.length&&<p>No saved appearances yet.</p>}
   </section>}
-  {deleteTarget&&<div role="group" aria-label="Delete appearance confirmation"><p>Delete “{deleteTarget.name}” from your library? The active appearance is unchanged.</p><div className="a-dialog-actions"><button type="button" className="a-soft" onClick={()=>setDeleteTarget(null)}>Cancel deletion</button><button type="button" className="a-primary" aria-disabled={busyFor('delete')} data-action="theme.delete" onClick={()=>{if(!busyFor('delete'))void remove()}}><WorkingLabel active={busyFor('delete')} working="Deleting…">Confirm delete</WorkingLabel></button></div></div>}
+  {deleteTarget&&<div role="group" aria-label="Delete appearance confirmation"><p>Delete “{deleteTarget.name}” from your library? Profiles selecting this entry will show Reference until another appearance is chosen. Other preferences are retained.</p><div className="a-dialog-actions"><button type="button" className="a-soft" onClick={()=>setDeleteTarget(null)}>Cancel deletion</button><button type="button" className="a-primary" aria-disabled={busyFor('delete')} data-action="theme.delete" onClick={()=>{if(!busyFor('delete'))void remove()}}><WorkingLabel active={busyFor('delete')} working="Deleting…">Confirm delete</WorkingLabel></button></div></div>}
   {<section className="a-appearance-import"><div><h3><Upload/>Your appearance library</h3><p>Import a version-2 ZIP package based on Reference. CSS files are not imported as standalone skins.</p></div>
    <FileDrop id="theme-import" disabled={busyFor('import')} accept=".zip,application/zip" action="theme.import" label="Upload ZIP package" workingLabel="Importing appearance…" hint="Reference-based version-2 ZIP package" onFile={upload}/>
    {library.errors.map((item,index)=><p className="a-danger" key={item.path||index}>{item.message}</p>)}
@@ -468,7 +471,7 @@ export function AppearanceSettings({
   </section>}
   {<details ref={editor} className="a-appearance-advanced">
    <summary>Advanced customization</summary>
-   <p>Edit a Reference CSS delta, preview it locally, then save a library entry. Drafts stay private to this browser tab; saving never changes the active appearance.</p>
+   <p>Edit a Reference CSS delta and preview it locally. Drafts stay private to this browser tab. Save as copy adds an unselected library entry; updating an entry changes its appearance in profiles that select it.</p>
    {editing&&<p>Editing: <strong>{editing.name}</strong>. {editing.source==='saved'?'Updates preserve this library entry’s identity.':'Included appearances are read-only; save edits as a copy.'}</p>}
    <label htmlFor="theme-name">Appearance name</label><input id="theme-name" maxLength={100} value={name||''} disabled={mutationBusy} onChange={event=>changeDraft({name:event.target.value})}/>
    <label htmlFor="theme-description">Description</label><input id="theme-description" maxLength={240} value={description||''} disabled={mutationBusy} onChange={event=>changeDraft({description:event.target.value})}/>

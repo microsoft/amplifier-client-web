@@ -808,6 +808,204 @@ for(const failed of [false,true])test(`neutral recovery remains available while 
  }finally{await act(async()=>renderer.unmount())}
 });
 
+const libraryNotice=renderer=>textContent(renderer.root.findByProps({className:'a-appearance-notice'}));
+const unavailableAlerts=renderer=>renderer.root.findAllByProps({role:'alert'})
+ .filter(node=>/selected appearance.*unavailable/i.test(textContent(node)));
+const assertNoFalseLibraryAssurance=text=>assert.doesNotMatch(text,
+ /active appearance (?:is|remains|stays) unchanged|saving never changes the active appearance/i);
+
+for(const scope of ['shared','client'])for(const selected of [true,false])for(const operation of ['update','delete']){
+ test(`${scope} ${operation} of a ${selected?'selected':'nonselected'} library entry reports profile consequences without a preference write`,async()=>{
+  const selectedId=selected?entryA.id:entryB.id;
+  const appearance=preferenceSnapshot({
+   activeScope:scope,
+   shared:{appearanceId:scope==='shared'?selectedId:entryA.id,scheme:'dark',density:'compact',accent:'#112233'},
+   localValues:{appearanceId:scope==='client'?selectedId:entryA.id,scheme:'light',density:'comfortable',layout:'work',accent:'#445566'},
+  });
+  appearance.theme={...(selected?entryA:entryB),available:true};
+  const state={client:{hostInstanceId:`library-${scope}-${selected}-${operation}`},appearance};
+  const before=structuredClone(state),shared=appearance.shared,local=appearance.local;
+  const sharedValues=shared.values,localValues=local.values,theme=appearance.theme,effective=appearance.effective;
+  const saved=memoryStorage(),calls=[],changes=[],selections=[],items=new Map([entryA,entryB].map(item=>[item.id,item]));
+  const fields={'theme-name':'Updated Ocean','theme-description':'Updated library description','theme-css':'#amp-one{color:purple}'};
+  const dispatch=async(action,args)=>{
+   calls.push({action,args});
+   if(action==='theme.list')return {accepted:true,result:{items:[...items.values()],errors:[]}};
+   if(action==='theme.read')return {accepted:true,result:items.get(args.id)};
+   if(action==='theme.update'){
+    const result={...entryA,name:args.name,description:args.description,css:args.css,fingerprint:'c'.repeat(64)};
+    items.set(entryA.id,result);return {accepted:true,result};
+   }
+   if(action==='theme.delete'){items.delete(args.id);return {accepted:true}}
+   return {accepted:true};
+  };
+  const props={state,act:dispatch,storage:()=>saved,referenceCss:'',
+   onPreferenceChange:(...args)=>{changes.push(args);return false},
+   onPreferenceSelect:(...args)=>{selections.push(args);return false},
+  };
+  let renderer;
+  try{
+   await act(async()=>{renderer=create(React.createElement(EditorHost,props))});
+   const initialSelection=galleryCards(renderer).find(node=>node.props['data-selected']);
+   assert.equal(initialSelection.props['data-appearance-card'],selectedId);
+   if(operation==='update'){
+    await act(async()=>{button(renderer.root,'Edit Ocean').props.onClick();await new Promise(resolve=>setImmediate(resolve))});
+    await setFields(renderer.root,fields);
+   }else{
+    await act(async()=>button(renderer.root,'Delete Ocean').props.onClick());
+    const confirmation=textContent(renderer.root.findByProps({'aria-label':'Delete appearance confirmation'}));
+    assert.match(confirmation,/Ocean/);
+    assert.match(confirmation,/profiles selecting this entry.*Reference.*(?:another|different) appearance/i);
+    assertNoFalseLibraryAssurance(confirmation);
+   }
+   await act(async()=>{actionButton(renderer.root,'theme.'+operation).props.onClick();await new Promise(resolve=>setImmediate(resolve))});
+   assert.deepEqual(calls.filter(call=>call.action==='theme.'+operation),[{
+    action:'theme.'+operation,args:{id:entryA.id,expectedFingerprint:entryA.fingerprint,...(operation==='update'?{
+     name:fields['theme-name'],description:fields['theme-description'],css:fields['theme-css'],
+    }:{})},
+   }],'A library mutation uses the exact read/list fingerprint, never a profile or whole-preference payload.');
+   const notice=libraryNotice(renderer);
+   if(operation==='update'){
+    assert.match(notice,/Library entry updated/);
+    assert.match(notice,/profiles selecting this entry.*updated appearance/i);
+    assert.match(notice,/other preferences.*unchanged/i);
+    assert.equal(items.get(entryA.id).fingerprint,'c'.repeat(64));
+   }else{
+    assert.match(notice,/Deleted from your library/);
+    assert.match(notice,/profiles selecting this entry.*Reference.*(?:another|different) appearance/i);
+    assert.equal(items.has(entryA.id),false);
+   }
+   assertNoFalseLibraryAssurance(textContent(renderer.root));
+   assert.deepEqual(changes,[]);assert.deepEqual(selections,[],'Library operations never select a profile.');
+   assert.equal(calls.some(call=>call.action.startsWith('appearance.preferences.')),false,
+    'No appearance.preferences.update, selection or reset is dispatched as a side effect.');
+   assert.deepEqual(state,before,'Library receipts cannot mutate the selected id, revisions, scheme, density or any other preference.');
+   const renderedState=renderer.root.findByType(AppearanceSettings).props.state;
+   assert.equal(renderedState,state);assert.equal(renderedState.appearance,appearance);
+   assert.equal(appearance.shared,shared);assert.equal(appearance.local,local);
+   assert.equal(shared.values,sharedValues);assert.equal(local.values,localValues);
+   assert.equal(appearance.theme,theme);assert.equal(appearance.effective,effective);
+   assert.equal(neutralControl(renderer).props['aria-pressed'],false,'Deletion does not automatically select Reference.');
+  }finally{if(renderer)await act(async()=>renderer.unmount())}
+ });
+}
+
+test('Advanced customization distinguishes saving a copy from updating profiles that select a library entry',async()=>{
+ const renderer=await renderPreferencePage({dispatch:galleryDispatch});
+ try{
+  const help=renderer.root.findByProps({className:'a-appearance-advanced'}).findAllByType('p').map(textContent).join(' ');
+  assert.match(help,/save as (?:a )?copy.*(?:unselected|(?:does not|doesn.t|never).*(?:select|active appearance))/i);
+  assert.match(help,/updat(?:e|es|ing).*entry.*profiles.*select/i);
+  assertNoFalseLibraryAssurance(help);
+ }finally{await act(async()=>renderer.unmount())}
+});
+
+for(const scope of ['shared','client'])for(const catalogState of ['present','missing','loading','failed']){
+ test(`${scope} unavailable selected appearance is visible with a ${catalogState} catalog and never resets a profile`,async()=>{
+  const appearance=preferenceSnapshot({
+   activeScope:scope,shared:{appearanceId:entryA.id,scheme:'dark',density:'compact'},
+   localValues:{appearanceId:entryA.id,scheme:'light',density:'comfortable',layout:'work'},
+  });
+  appearance.theme={id:entryA.id,name:entryA.name,available:false,css:''};
+  const before=structuredClone(appearance),calls=[],changes=[],selections=[],loading=deferred();
+  const dispatch=async(action,args)=>{
+   calls.push({action,args});
+   if(action==='theme.list'){
+    if(catalogState==='failed')throw Error('Library connection failed');
+    if(catalogState==='loading')return loading.promise;
+    return {accepted:true,result:{items:catalogState==='present'?[entryA,entryB]:[entryB],errors:[]}};
+   }
+   return {accepted:true};
+  };
+  const renderer=await renderPreferencePage({appearance,dispatch,
+   onPreferenceChange:(...args)=>{changes.push(args);return false},
+   onPreferenceSelect:(...args)=>{selections.push(args);return false},
+  });
+  try{
+   const alerts=unavailableAlerts(renderer);assert.equal(alerts.length,1);
+   const warning=textContent(alerts[0]);
+   assert.match(warning,/Ocean/,'The warning identifies the unavailable selected appearance, even if its catalog row remains.');
+   assert.match(warning,/selection.*retain/i);assert.match(warning,/Reference.*(?:shown|instead)|(?:shown|showing).*Reference/i);
+   assert.match(warning,/choose another appearance/i);assert.match(warning,/Restore neutral appearance/);
+   assert.equal(neutralControl(renderer).props.disabled,false);
+   assert.equal(neutralControl(renderer).props['aria-pressed'],false,'Reference rendering is not a changed selected id.');
+   if(catalogState==='failed')assert.ok(renderer.root.findAllByProps({role:'alert'}).some(node=>/Library connection failed/.test(textContent(node))),
+    'The independent library error must remain visible alongside the selection warning.');
+   assert.deepEqual(changes,[]);assert.deepEqual(selections,[]);
+   assert.equal(calls.some(call=>call.action.startsWith('appearance.preferences.')),false);
+   assert.deepEqual(appearance,before,'Unavailable package state is never an automatic reset or whole-profile rewrite.');
+  }finally{
+   await act(async()=>renderer.unmount());
+   if(catalogState==='loading')await act(async()=>{
+    loading.resolve({accepted:true,result:{items:[],errors:[]}});await loading.promise;
+   });
+  }
+ });
+}
+
+for(const scope of ['shared','client'])test(`${scope} unavailable warning falls back to the retained id and neutral recovery writes only its captured field`,async()=>{
+ const appearance=preferenceSnapshot({
+  activeScope:scope,shared:{appearanceId:entryA.id,scheme:'dark',density:'compact',layout:'conversation'},
+  localValues:{appearanceId:entryA.id,scheme:'light',density:'compact',layout:'work'},
+ });
+ appearance.theme={id:entryA.id,available:false,css:''};
+ const before=structuredClone(appearance),calls=[],changes=[],selections=[],held=deferred(),other=scope==='shared'?'client':'shared';
+ const options={appearance,dispatch:async(action,args)=>{calls.push({action,args});return galleryDispatch(action,args)},
+  onPreferenceChange:(...args)=>{changes.push(args);return held.promise},
+  onPreferenceSelect:(...args)=>{selections.push(args);return false},
+ };
+ const renderer=await renderPreferencePage(options);
+ try{
+  assert.equal(unavailableAlerts(renderer).length,1);
+  assert.ok(textContent(unavailableAlerts(renderer)[0]).includes(entryA.id),'A missing display name cannot hide the retained selection identity.');
+  assert.deepEqual(changes,[],'Rendering a fallback does not select Reference.');
+  await act(async()=>neutralControl(renderer).props.onClick());
+  assert.deepEqual(changes,[['appearanceId','reference',preferenceTarget(scope)]]);
+  assert.equal(renderer.root.findByProps({name:'appearance-scheme',value:scope==='shared'?'dark':'light'}).props.checked,true);
+  assert.equal(renderer.root.findByProps({'aria-label':'Density'}).props.value,'compact');
+  assert.equal(unavailableAlerts(renderer).length,0,'A pending explicit Reference selection must not retain the old selected-id warning.');
+  const switched={...appearance,activeScope:other,writeScope:other};
+  await setPreferenceAppearance(renderer,options,switched);
+  assert.equal(unavailableAlerts(renderer).length,1,'The other profile still retains the unavailable entry.');
+  await act(async()=>{held.resolve({status:'stored',revision:2});await held.promise});
+  assert.deepEqual(changes,[['appearanceId','reference',preferenceTarget(scope)]],
+   'A late neutral receipt stays bound to the captured profile and never resets scheme or density.');
+  assert.equal(renderer.root.findByProps({name:'appearance-scheme',value:other==='shared'?'dark':'light'}).props.checked,true);
+  assert.equal(renderer.root.findByProps({'aria-label':'Density'}).props.value,'compact');
+  assert.deepEqual(selections,[]);
+  assert.deepEqual(appearance,before);
+  assert.equal(calls.some(call=>call.action.startsWith('appearance.preferences.')),false);
+  assertSilentPreferenceSuccess(renderer);
+ }finally{await act(async()=>renderer.unmount())}
+});
+
+test('unavailable selection warning follows explicit committed availability, not catalog absence or a preview theme',async()=>{
+ const initial=preferenceSnapshot({rendered:{appearanceId:entryA.id}});
+ const calls=[],options={appearance:initial,dispatch:async(action,args)=>{
+  calls.push({action,args});return {accepted:true,result:{items:[entryB],errors:[]}};
+ }};
+ const renderer=await renderPreferencePage(options);
+ try{
+  for(const available of [undefined,true,null]){
+   await setPreferenceAppearance(renderer,options,{...initial,theme:{id:entryA.id,name:entryA.name,available}});
+   assert.equal(unavailableAlerts(renderer).length,0,'A missing catalog row is not authoritative unavailability.');
+  }
+  await setPreferenceAppearance(renderer,options,{...initial,theme:{id:entryA.id,available:true},
+   preview:{theme:{id:entryB.id,name:'Unavailable preview',available:false}}});
+  assert.equal(unavailableAlerts(renderer).length,0,'Temporary preview metadata cannot declare the committed selection unavailable.');
+  await setPreferenceAppearance(renderer,options,{...initial,theme:{id:entryA.id,name:entryA.name,available:false},
+   preview:{theme:{id:entryB.id,name:'Working preview',available:true}}});
+  assert.equal(unavailableAlerts(renderer).length,1,'An available preview does not repair the retained unavailable selection.');
+  const reference=preferenceSnapshot();
+  await setPreferenceAppearance(renderer,options,{...reference,theme:{id:entryA.id,name:entryA.name,available:false}});
+  assert.equal(unavailableAlerts(renderer).length,0,'An old unavailable theme frame cannot warn that the current Reference selection is missing.');
+  const changed=preferenceSnapshot({rendered:{appearanceId:entryB.id}});
+  await setPreferenceAppearance(renderer,options,{...changed,theme:{id:entryA.id,name:entryA.name,available:false}});
+  assert.equal(unavailableAlerts(renderer).length,0,'Unavailability from the previous selection cannot be attributed to a different selected id.');
+  assert.equal(calls.some(call=>call.action.startsWith('appearance.preferences.')),false);
+ }finally{await act(async()=>renderer.unmount())}
+});
+
 test('first browser selection captures the shared CAS and later scope switches retain the local profile',async()=>{
  const selections=[];
  const initial=preferenceSnapshot({activeScope:'shared',localValues:null,localRevision:4,sharedRevision:9,storageVersion:'missing'});
