@@ -95,7 +95,10 @@ try{
     res.setHeader('Content-Type','text/html');res.end('<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><main id="amp-one" class="a-approachable-shell"><div id="fixture"></div></main><script type="module" src="/shared-notices-motion.jsx"></script>');
    })},
   }]});
- await vite.listen();browser=await chromium.launch({headless:true});
+ await vite.listen();browser=await chromium.launch({headless:true,
+  ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}:{}),
+  ...(process.env.CHROMIUM_SINGLE_PROCESS==='1'?{args:['--single-process','--no-zygote','--no-sandbox']}:{}),
+ });
  page=await browser.newPage({viewport:{width:1280,height:900}});
  page.on('pageerror',error=>errors.push(error.message));
  await page.goto(vite.resolvedUrls.local[0]+'shared-notices-motion');

@@ -918,6 +918,72 @@ for(const activeScope of ['shared','client']){
   }finally{await act(async()=>renderer.unmount())}
  });
 }
+test('Advanced fold/reopen retains the mounted dirty editor and performs no preference or draft writes',async()=>{
+ const saved=memoryStorage(),calls=[],changes=[],selections=[],disclosures=new Map();
+ const props={state:{appearance:preferenceSnapshot({activeScope:'shared'})},storage:()=>saved,
+  act:async(action,args)=>{calls.push({action,args});return galleryDispatch(action,args)},
+  onPreferenceChange:(...args)=>changes.push(args),onPreferenceSelect:(...args)=>selections.push(args)};
+ let renderer;
+ try{
+  await act(async()=>{renderer=create(React.createElement(EditorHost,props),{
+   createNodeMock:element=>{
+    if(element.type!=='details')return null;
+    const node={open:false};disclosures.set(element.props.className,node);return node;
+   },
+  })});
+  const advanced=disclosures.get('a-appearance-more'),customization=disclosures.get('a-appearance-advanced');
+  assert.ok(advanced&&customization);
+  advanced.open=true;customization.open=true;
+  await act(async()=>input(renderer.root,'theme-css').props.onChange({target:{value:'#amp-one{color:purple}'}}));
+  await act(async()=>input(renderer.root,'theme-name').props.onChange({target:{value:'Private unsaved look'}}));
+  const mounted=renderer.root.findByType(AppearanceSettings),css=input(renderer.root,'theme-css'),name=input(renderer.root,'theme-name');
+  const draft=mounted.props.editor.draft,writes=structuredClone(saved.writes),entries=saved.entries();
+  assert.equal(draft.dirty,true);
+  assert.match(textContent(renderer.root.findByProps({className:'a-appearance-disclosure-status'})),/Unsaved editor changes/);
+  const beforeCalls=calls.length;
+  advanced.open=false;
+  await act(async()=>renderer.update(React.createElement(EditorHost,props)));
+  advanced.open=true;
+  await act(async()=>renderer.update(React.createElement(EditorHost,props)));
+  assert.equal(disclosures.get('a-appearance-more'),advanced,'The outer disclosure was not remounted');
+  assert.equal(disclosures.get('a-appearance-advanced'),customization,'The nested editor disclosure was not remounted');
+  assert.equal(customization.open,true,'Reopening the parent preserves the nested disclosure');
+  assert.equal(renderer.root.findByType(AppearanceSettings),mounted);
+  assert.equal(input(renderer.root,'theme-css'),css);assert.equal(input(renderer.root,'theme-name'),name);
+  assert.equal(mounted.props.editor.draft,draft,'Native folding does not reset or replace the private draft owner');
+  assert.equal(css.props.value,'#amp-one{color:purple}');assert.equal(name.props.value,'Private unsaved look');
+  assert.deepEqual(saved.writes,writes);assert.deepEqual(saved.entries(),entries);
+  assert.equal(calls.length,beforeCalls);assert.deepEqual(changes,[]);assert.deepEqual(selections,[]);
+ }finally{if(renderer)await act(async()=>renderer.unmount())}
+});
+for(const scope of ['shared','client']){
+ test(`${scope} pending and failed advanced preference reveals the still-mounted controls without replay`,async()=>{
+  const held=deferred(),changes=[],selections=[],calls=[],advanced={open:false};
+  const appearance=preferenceSnapshot({activeScope:scope}),before=structuredClone(appearance);
+  let renderer;
+  try{
+   await act(async()=>{renderer=create(React.createElement(PreferenceHost,{
+    appearance,dispatch:async(action,args)=>{calls.push({action,args});return galleryDispatch(action,args)},
+    onPreferenceChange:(...args)=>{changes.push(args);return held.promise},
+    onPreferenceSelect:(...args)=>selections.push(args),
+   }),{createNodeMock:element=>element.type==='details'&&element.props.className==='a-appearance-more'?advanced:null})});
+   assert.equal(advanced.open,false);
+   const layout=renderer.root.findByProps({'aria-label':'Layout'}),field=fieldRow(renderer,'layout');
+   await act(async()=>layout.props.onChange({target:{value:'work'}}));
+   assert.equal(advanced.open,true,'A pending hidden preference is revealed');
+   assert.match(textContent(renderer.root.findByProps({className:'a-appearance-disclosure-status'})),/Saving/);
+   advanced.open=false; // A reader can fold while the admitted edit remains pending.
+   await act(async()=>{held.reject(Error('Synthetic advanced preference refused'));await held.promise.catch(()=>{})});
+   assert.equal(advanced.open,true,'A later actionable failure reopens the folded controls');
+   assert.match(textContent(renderer.root.findByProps({className:'a-appearance-disclosure-status'})),/Needs attention/);
+   assert.match(textContent(field),/Synthetic advanced preference refused/);
+   assert.equal(renderer.root.findByProps({'aria-label':'Layout'}),layout,'The same input and feedback owner survive disclosure');
+   assert.equal(changes.length,1);assert.equal(changes[0][0],'layout');assert.equal(changes[0][2].scope,scope);
+   assert.deepEqual(selections,[]);assert.deepEqual(appearance,before,'Failure disclosure cannot rewrite a profile');
+   assert.ok(calls.every(call=>call.action==='theme.list'),'Revealing failed controls performs no preference/action replay');
+  }finally{if(renderer)await act(async()=>renderer.unmount())}
+ });
+}
 test('Motion status truthfully follows live device changes and removes its listener',async()=>{
  const previous=globalThis.matchMedia,listeners=new Set(),query={matches:false,addEventListener:(name,fn)=>listeners.add(fn),removeEventListener:(name,fn)=>listeners.delete(fn)};
  globalThis.matchMedia=value=>{assert.equal(value,'(prefers-reduced-motion: reduce)');return query};
