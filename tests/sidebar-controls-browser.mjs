@@ -424,6 +424,14 @@ async function responsiveRegression({scenario,readState,emit}){
  const start=calls.length,session=JSON.stringify(readState().sessions[0]);
  const patch=async view=>{Object.assign(readState().view,view);await emit()};
  const capture=async label=>{
+  if(!baseline&&scenario.width>640){
+   // Saved-width changes animate the visible rail independently of its layout
+   // slot. Observe convergence before recording geometry, not an arbitrary frame.
+   await expect.poll(()=>nav.evaluate(node=>{
+    const expected=node.dataset.docked==='true'?node.getBoundingClientRect().width:parseFloat(getComputedStyle(node).getPropertyValue('--nav-width'));
+    return Math.abs(node.querySelector('.a-nav-rail').getBoundingClientRect().width-expected);
+   })).toBeLessThan(1);
+  }
   const geometry=await page.evaluate(()=>{
    const rect=node=>{if(!node)return null;const r=node.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height}};
    const nav=document.querySelector('#workspace-navigation'),chat=document.querySelector('.a-conversation'),layout=document.querySelector('.a-layout');
@@ -492,6 +500,8 @@ async function responsiveRegression({scenario,readState,emit}){
   await expect(nav).toHaveAttribute('data-docked','true');
   const clamped=await capture('saved-width-clamped');
   assert.ok(clamped.chat.width>=359&&clamped.nav.right<=clamped.chat.left+1&&!clamped.overflow);
+  assert.ok(Math.abs(clamped.rail.width-clamped.nav.width)<1&&clamped.rail.right<=clamped.chat.left+1);
+  await visibleGeometry(nav.getByRole('button',{name:'New chat',exact:true}));
   await patch({navWidth:240,navExpanded:true});
   // Canvas remains the existing two-pane/overlay arbitration; never force
   // three columns into a foldable viewport that cannot fit their minima.
