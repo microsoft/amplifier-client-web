@@ -19,7 +19,7 @@ const stubs={
  './appearance-thumbnail':`export const AppearanceThumbnail=()=>null;`,
  'lucide-react':`export const Check=()=>null,Download=Check,FolderOpen=Check,Palette=Check,Upload=Check;`,
 };
-const componentEntry=`export {AppearanceSettings} from './appearance-settings.jsx';export {useAppearanceEditor,appearanceEditorStorageKey} from './appearance-editor.jsx';export {SettingsLayoutContext} from './settings-layout';export {clearAppearanceCatalogs} from './appearance-catalog';`;
+const componentEntry=`export {AppearanceSettings,MotionStatus} from './appearance-settings.jsx';export {useAppearanceEditor,appearanceEditorStorageKey} from './appearance-editor.jsx';export {SettingsLayoutContext} from './settings-layout';export {clearAppearanceCatalogs} from './appearance-catalog';`;
 async function compileSettings(visualChildren){
  return build({
   stdin:{contents:componentEntry,resolveDir:fileURLToPath(new URL('../src/',import.meta.url))},
@@ -32,7 +32,7 @@ async function compileSettings(visualChildren){
 }
 const compiled=await compileSettings(stubs),module={exports:{}};
 new Function('require','module','exports',compiled.outputFiles[0].text)(require,module,module.exports);
-const {AppearanceSettings,useAppearanceEditor,appearanceEditorStorageKey,SettingsLayoutContext,clearAppearanceCatalogs}=module.exports;
+const {AppearanceSettings,MotionStatus,useAppearanceEditor,appearanceEditorStorageKey,SettingsLayoutContext,clearAppearanceCatalogs}=module.exports;
 const thumbnailStubs={...stubs,'./appearance-thumbnail-scene':`export const renderAppearanceThumbnail=(css,mode)=>'<main data-thumbnail-mode="'+mode+'">'+css+'</main>';`};
 delete thumbnailStubs['./appearance-thumbnail'];
 const thumbnailCompiled=await compileSettings(thumbnailStubs),thumbnailModule={exports:{}};
@@ -898,6 +898,39 @@ test('Advanced customization distinguishes saving a copy from updating profiles 
   assert.match(help,/updat(?:e|es|ing).*entry.*profiles.*select/i);
   assertNoFalseLibraryAssurance(help);
  }finally{await act(async()=>renderer.unmount())}
+});
+for(const activeScope of ['shared','client']){
+ test(`${activeScope} primary appearance controls stay simple; Advanced disclosure neither writes nor discards fields`,async()=>{
+  const calls=[],renderer=await renderPreferencePage({appearance:preferenceSnapshot({activeScope}),dispatch:async(action,args)=>{calls.push({action,args});return galleryDispatch(action,args)}});
+  try{
+   const advanced=renderer.root.findByProps({className:'a-appearance-more'});
+   assert.equal(advanced.type,'details');assert.equal(advanced.props.open,undefined);
+   const advancedRows=advanced.findAll(node=>typeof node.props['data-appearance-preference']==='string').map(node=>node.props['data-appearance-preference']);
+   assert.deepEqual(new Set(advancedRows),new Set(['layout','decorations','interfaceDetail','conversationStatus','collapseInterimReplies','workStartView','planPlacement','executionDetail','executionVisibility','executionMetrics']));
+   assert.equal(advanced.findAllByProps({className:'a-appearance-saved'}).length,1);
+   assert.equal(advanced.findAllByProps({className:'a-appearance-import'}).length,1);
+   const outside=renderer.root.findAll(node=>typeof node.props['data-appearance-preference']==='string'&&!advancedRows.includes(node.props['data-appearance-preference'])).map(node=>node.props['data-appearance-preference']);
+   assert.deepEqual(outside,['appearanceId','scheme','density','accent']);
+   assert.equal(renderer.root.findAllByProps({'data-appearance-motion':true}).length,1);
+   assert.equal(advanced.findAllByProps({'data-appearance-motion':true}).length,0);
+   assert.equal(advanced.props.onToggle,undefined,'Native disclosure has no write handler');
+   assert.equal(calls.some(call=>call.action.startsWith('appearance.preferences.')),false);
+  }finally{await act(async()=>renderer.unmount())}
+ });
+}
+test('Motion status truthfully follows live device changes and removes its listener',async()=>{
+ const previous=globalThis.matchMedia,listeners=new Set(),query={matches:false,addEventListener:(name,fn)=>listeners.add(fn),removeEventListener:(name,fn)=>listeners.delete(fn)};
+ globalThis.matchMedia=value=>{assert.equal(value,'(prefers-reduced-motion: reduce)');return query};
+ let renderer;
+ try{
+  await act(async()=>{renderer=create(React.createElement(MotionStatus))});
+  assert.match(textContent(renderer.root),/Standard motion is on/);
+  query.matches=true;await act(async()=>{for(const listener of listeners)listener()});
+  assert.match(textContent(renderer.root),/Reduced motion is on/);
+  assert.equal(renderer.root.findAllByType('button').length,0);
+  assert.equal(renderer.root.findAllByType('input').length,0);
+  await act(async()=>renderer.unmount());renderer=null;assert.equal(listeners.size,0);
+ }finally{if(renderer)await act(async()=>renderer.unmount());if(previous===undefined)delete globalThis.matchMedia;else globalThis.matchMedia=previous}
 });
 
 for(const scope of ['shared','client'])for(const catalogState of ['present','missing','loading','failed']){
