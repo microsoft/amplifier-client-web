@@ -511,7 +511,7 @@ async function responsiveRegression({scenario,readState,emit}){
   await page.keyboard.press('Escape');await expect(app).toBeFocused();
   await page.locator('#navigation-toggle').click();await expect(nav).toBeHidden();
   if(scenario.width<=760){
-   await page.getByRole('button',{name:'Back to chat',exact:true}).click();
+   await page.getByRole('button',{name:'Hide canvas',exact:true}).click();
    await expect(page.locator('#workspace-canvas')).toBeHidden();
   }
   readState().canvas.open=false;await patch({navPinned:true,navExpanded:true});
@@ -535,7 +535,7 @@ async function responsiveRegression({scenario,readState,emit}){
  }
  await expect(composer).toHaveDraft(draft);
  assert.equal(JSON.stringify(readState().sessions[0]),session,'No session/history/model mutation');
- assert.ok(calls.slice(start).every(call=>['view.update','shell.report','canvas.visibility'].includes(call.action)),'Only synthetic view changes and explicit Canvas Back');
+ assert.ok(calls.slice(start).every(call=>['view.update','shell.report','canvas.visibility'].includes(call.action)),'Only synthetic view changes and explicit Canvas hide');
  proof.passed=true;
 }
 
