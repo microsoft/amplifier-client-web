@@ -273,7 +273,7 @@ const callbackStart=mainSource.indexOf(' const readAppearanceSnapshot=useCallbac
 const callbackEnd=mainSource.indexOf(' useEffect(()=>{',mainSource.indexOf(' const updatePresentation=useCallback(',callbackStart));
 assert.ok(callbackStart>0&&callbackEnd>callbackStart);
 function mainPreferences(harness,dispatch=harness.dispatch,rendered=globalValues){
- return runInNewContext(`${mainSource.slice(callbackStart,callbackEnd)}\n({updatePresentation,updateAppearancePreference,readAppearanceSnapshot,readAppearancePreferences})`,{
+ return runInNewContext(`${mainSource.slice(callbackStart,callbackEnd)}\n({updatePresentation,updateAppearancePreference,selectAppearanceProfile,readAppearanceSnapshot,readAppearancePreferences})`,{
   useCallback:fn=>fn,clientId:'test-client',dispatch,sparseExecutionVisibilityPatch,appearancePreferenceMatches,effectivePreferenceValue,hasAppearanceIdentity,
   state:{appearance:{namespace,generation,availability:'connected',renderedPreferences:copy(rendered),effective:copy(globalValues)}},appearancePreferenceClient:{current:harness.client},
  });
@@ -1172,6 +1172,93 @@ test('definite browser storage failure leaves source, Global and retained local 
  assert.equal(h.server.command.status,'failed');assert.equal(h.server.activeScope,'shared');
  assert.deepEqual(h.server.local,before.local);assert.deepEqual(h.server.shared,before.shared);
  assert.deepEqual(h.storage.parsed(),record);assert.equal(h.storage.writes.length,0);
+});
+
+test('quota-failed Global switch reconfirms only the unchanged browser record after a fresh read and ready ACK, while the UI command stays failed',async()=>{
+ const record={version:'confirmed-browser-v1',activeScope:'client',values:browserValues};
+ const h=makeHarness({activeScope:'client',localValues:browserValues,storageVersion:record.version,record});
+ await connect(h);
+ const before=h.server,acknowledged=h.client.getSnapshot().acknowledged,raw=h.storage.raw();
+ const trace=[],calls=[],attempts=[];
+ let failed=false,readHeld=false,releaseRead,markRead,releaseReady,markReady;
+ const readGate=new Promise(resolve=>{releaseRead=resolve}),readStarted=new Promise(resolve=>{markRead=resolve});
+ const readyGate=new Promise(resolve=>{releaseReady=resolve}),readyStarted=new Promise(resolve=>{markReady=resolve});
+ const getItem=h.storage.getItem.bind(h.storage);
+ h.storage.getItem=key=>{trace.push('storage-read');return getItem(key)};
+ h.storage.setItem=(key,value)=>{
+  attempts.push({key,value:JSON.parse(value)});trace.push('quota-throw');
+  throw new DOMException('Injected storage quota exceeded.','QuotaExceededError');
+ };
+ h.onReport(async(args,server)=>{
+  if(args.status==='failed'&&args.commandId==='quota-select-global'){
+   // Unlike the shared fake's command-only failure, the actual host also mirrors
+   // storageError. A later ready report clears that error, not the failed command.
+   h.setServer({...server,local:{...server.local,error:args.error},
+    command:{...server.command,status:'failed',error:args.error}});
+   failed=true;trace.push('failed-ACK');
+   return {accepted:true,result:{status:'failed',error:args.error}};
+  }
+  if(args.status==='ready'&&failed){
+   assert.deepEqual(args,{
+    generation,revision:acknowledged.revision,storageVersion:record.version,
+    activeScope:'client',values:browserValues,status:'ready',
+   },'Only the freshly read, unchanged browser record can be reconfirmed.');
+   assert.match(server.local.error,/Injected storage quota exceeded/);
+   trace.push('ready-pending');markReady();await readyGate;
+   h.setServer({...server,activeScope:args.activeScope,local:{...server.local,
+    revision:args.revision,storageVersion:args.storageVersion,values:copy(args.values),reported:true,error:null}});
+   trace.push('ready-ACK');
+   return {accepted:true,result:{status:'reported'}};
+  }
+ });
+ const dispatch=async(action,args={})=>{
+  calls.push({action,args:copy(args)});
+  if(action==='appearance.preferences.select'){
+   assert.deepEqual(copy(args),{generation,activeScope:'shared',expectedRevision:acknowledged.revision,
+    expectedStorageVersion:record.version});
+   h.command('quota-select-global',{activeScope:'shared',values:browserValues});
+   return {accepted:true,result:{status:'awaiting-storage',commandId:'quota-select-global'}};
+  }
+  if(action==='appearance.preferences.read'&&failed&&!readHeld){
+   readHeld=true;trace.push('fresh-read-pending');markRead();await readGate;
+   trace.push('fresh-read');
+  }
+  return h.dispatch(action,args);
+ };
+ h.client.setDispatch(dispatch);
+ const outcome=mainPreferences(h,dispatch,browserValues).selectAppearanceProfile('shared');
+ const rejected=assert.rejects(outcome,/Injected storage quota exceeded.*no command was replayed/);
+ await readStarted;
+ assert.equal(h.client.getSnapshot().acknowledged,null,'Failure clears the old ACK before reconfirmation.');
+ assert.equal(h.client.getStatus().status,'failed');
+ assert.equal(h.server.command.status,'failed');assert.match(h.server.local.error,/Injected storage quota exceeded/);
+ assert.equal(h.server.activeScope,'client');assert.equal(h.storage.raw(),raw);
+ releaseRead();await readyStarted;
+ assert.equal(h.client.getSnapshot().acknowledged,null,'A fresh read and an in-flight ready report are not an ACK.');
+ assert.equal(h.client.getStatus().status,'failed');assert.notEqual(h.server.local.error,null);
+ assert.deepEqual(trace.slice(trace.indexOf('failed-ACK')),[
+  'failed-ACK','fresh-read-pending','fresh-read','storage-read','ready-pending',
+ ]);
+ releaseReady();await rejected;
+ await h.client.waitUntilReady();
+ assert.deepEqual(h.client.getSnapshot().acknowledged,acknowledged,'Ready restores only the old exact record, never the attempted Global record.');
+ assert.deepEqual(h.server.local,before.local,'Ready clears storageError without changing the confirmed mirror.');
+ assert.deepEqual(h.server.shared,before.shared);assert.equal(h.server.activeScope,'client');
+ assert.equal(h.server.command.status,'failed');assert.equal(h.client.getStatus().status,'ready');
+ await assert.rejects(h.client.waitForCommand('quota-select-global'),/Injected storage quota exceeded/);
+ assert.equal(await h.client.reconcile(),true);await h.client.observe(h.server,{connected:true});
+ assert.deepEqual(h.reports.map(report=>({status:report.status,activeScope:report.activeScope,
+  storageVersion:report.storageVersion,commandId:report.commandId})),[
+  {status:'ready',activeScope:'client',storageVersion:record.version,commandId:undefined},
+  {status:'failed',activeScope:'client',storageVersion:record.version,commandId:'quota-select-global'},
+  {status:'ready',activeScope:'client',storageVersion:record.version,commandId:undefined},
+ ]);
+ assert.deepEqual(attempts,[{key:namespace,value:{version:'browser-version-1',activeScope:'shared',values:browserValues}}]);
+ assert.equal(calls.filter(row=>row.action==='appearance.preferences.select').length,1,'The failed UI gesture is not replayed.');
+ assert.equal(calls.every(row=>['appearance.preferences.read','appearance.preferences.select','appearance.client.report'].includes(row.action)),true);
+ assert.equal(h.storage.raw(),raw);assert.deepEqual(h.storage.writes,[]);assert.deepEqual(h.storage.deletes,[]);
+ assert.equal(trace.at(-1),'storage-read');
+ assert.equal(trace.filter(event=>event==='ready-ACK').length,1);
 });
 
 test('main presentation empty patches return unchanged before storage readiness, inspection or selection',async()=>{

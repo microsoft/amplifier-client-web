@@ -8,6 +8,7 @@ import {createHash} from 'node:crypto';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {join,resolve,basename} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {isDeepStrictEqual} from 'node:util';
 import {chromium,expect} from '@playwright/test';
 import {openSettingsPage} from './browser-settings.mjs';
 
@@ -334,14 +335,39 @@ try{
   evidence.checks.push('confirmed v4 cache paints before reload hydration; stable namespace and editor; real cross-tab storage/source reconciliation');
 
   const lastConfirmed=await readAction(page,'appearance.preferences.read'),lastStored=await storageRecord(page,namespace,'localStorage');
-  await page.evaluate(namespace=>{
+  await expect.poll(async()=>{
+   const cache=await storageRecord(page,cacheKey);
+   return cache?.namespace===lastConfirmed.namespace&&cache.activeScope==='client'&&
+    cache.storageVersion===lastStored.version&&cache.compositionId===lastConfirmed.composition.id;
+  }).toBe(true);
+  const quotaCache=await storageRecord(page,cacheKey);
+  assert.equal(quotaCache.scheme,'dark');
+  const quotaReports=[],quotaTasks=[];let quotaReportOverflow=false;
+  const traceReport=response=>{
+   const request=response.request();
+   if(request.method()!=='POST'||new URL(response.url()).pathname!=='/api/actions')return;
+   const body=request.postDataJSON();
+   if(body?.action!=='appearance.client.report')return;
+   if(quotaReports.length>=64){quotaReportOverflow=true;return}
+   const entry={sequence:quotaReports.length,args:body.args};quotaReports.push(entry);
+   quotaTasks.push(response.json().then(receipt=>{
+    entry.accepted=receipt.accepted;entry.result=receipt.result;
+   },error=>{entry.decodeError=error.message}));
+  };
+  page.on('response',traceReport);
+  await page.evaluate(({namespace,cacheKey})=>{
    const descriptor=Object.getOwnPropertyDescriptor(Storage.prototype,'setItem'),original=descriptor.value;
+   window.appearanceQuotaPaints=[];window.appearanceQuotaPaintOverflow=false;
    Object.defineProperty(Storage.prototype,'setItem',{...descriptor,value:function(key,value){
     if(this===localStorage&&key===namespace)throw new DOMException('Synthetic appearance quota failure','QuotaExceededError');
+    if(this===sessionStorage&&key===cacheKey){
+     if(window.appearanceQuotaPaints.length>=64)window.appearanceQuotaPaintOverflow=true;
+     else window.appearanceQuotaPaints.push(JSON.parse(value));
+    }
     return original.call(this,key,value);
    }});
    window.restoreAppearanceStorage=()=>Object.defineProperty(Storage.prototype,'setItem',descriptor);
-  },namespace);
+  },{namespace,cacheKey});
   try{
    await page.getByRole('button',{name:'Global',exact:true}).click();
    await expect(page.locator('.a-appearance-profile-feedback')).toContainText(/fail|storage|quota|could not/i);
@@ -350,13 +376,52 @@ try{
    assert.equal(current.activeScope,'client','Storage failure must not silently select Global');
    assert.deepEqual(current.effective,lastConfirmed.effective);assert.deepEqual(current.shared,global);
    assert.deepEqual(await storageRecord(page,namespace,'localStorage'),lastStored);
-   await expect.poll(()=>storageRecord(page,cacheKey)).toBe(null);
-  }finally{await page.evaluate(()=>window.restoreAppearanceStorage())}
+   await expect.poll(async()=>{
+    current=await readAction(page,'appearance.preferences.read');
+    return current.command?.status==='failed'&&current.local.reported===true&&!current.local.error;
+   }).toBe(true);
+   assert.equal(current.namespace,lastConfirmed.namespace);assert.equal(current.generation,lastConfirmed.generation);
+   assert.equal(current.activeScope,'client');assert.deepEqual(current.effective,lastConfirmed.effective);
+   assert.deepEqual(current.local.values,lastStored.values);assert.equal(current.local.storageVersion,lastStored.version);
+   assert.equal(current.local.revision,lastConfirmed.local.revision);assert.equal(current.composition.id,lastConfirmed.composition.id);
+   // A failed intent is not authority. Exact re-confirmation of the old record
+   // may restore its valid cache after transient error invalidation.
+   await expect.poll(()=>storageRecord(page,cacheKey)).toEqual(quotaCache);
+  }finally{
+   page.off('response',traceReport);
+   try{
+    await Promise.all(quotaTasks);
+    evidence.quota={reports:quotaReports,reportOverflow:quotaReportOverflow,
+     ...await page.evaluate(()=>({cacheWrites:window.appearanceQuotaPaints,cacheOverflow:window.appearanceQuotaPaintOverflow})),lastConfirmed:{
+     namespace:lastConfirmed.namespace,generation:lastConfirmed.generation,revision:lastConfirmed.local.revision,
+     storageVersion:lastStored.version,activeScope:lastConfirmed.activeScope,compositionId:lastConfirmed.composition.id,
+    },settled:current};
+   }finally{await page.evaluate(()=>window.restoreAppearanceStorage())}
+  }
+  assert.equal(evidence.quota.reportOverflow,false,'Quota report trace did not overflow');
+  assert.equal(evidence.quota.cacheOverflow,false,'Quota cache trace did not overflow');
+  assert.ok(quotaReports.every(report=>!report.decodeError),'Every observed report receipt was decoded');
+  const failedReportIndex=quotaReports.findIndex(report=>report.args.commandId&&report.args.status==='failed'&&report.accepted===true&&report.result?.status==='failed');
+  assert.ok(failedReportIndex>=0,
+   'The rejected source switch has a failed command receipt, not a stored/activated outcome');
+  assert.ok(quotaReports.slice(failedReportIndex+1).some(report=>report.args.status==='ready'&&!report.args.commandId&&report.accepted===true&&
+   report.args.generation===lastConfirmed.generation&&report.args.activeScope==='client'&&
+   report.args.storageVersion===lastStored.version&&report.args.revision===lastConfirmed.local.revision&&
+   isDeepStrictEqual(report.args.values,lastStored.values)),
+   'A fresh exact-record ready report re-confirms only the old client profile');
+  assert.ok(!quotaReports.some(report=>report.args.commandId===quotaReports[failedReportIndex].args.commandId&&
+   (report.result?.status==='stored'||report.result?.activated===true)),'Failed command must never report stored or activated');
+  for(const cached of evidence.quota.cacheWrites)assert.deepEqual(cached,quotaCache,'Failed Global intent cannot seed first-paint colors');
+  await prehydration(page,()=>page.reload({waitUntil:'domcontentloaded'}),quotaCache);
+  current=await readAction(page,'appearance.preferences.read');
+  assert.equal(current.activeScope,'client');assert.equal(current.namespace,namespace);
+  assert.deepEqual(current.effective,lastConfirmed.effective);assert.deepEqual(current.shared,global);
+  assert.deepEqual(await storageRecord(page,namespace,'localStorage'),lastStored);
   const final=await records(context,base);inert(final);await canaries(page);
   assert.deepEqual(final.production,persisted.production);
   assert.deepEqual(final.library.legacyNames,cold.library.legacyNames);
   assert.equal(final.library.newNames.length,1,'Only the explicitly imported production package exists');
-  evidence.checks.push('actionable storage failure retains last confirmed scope/values without Global fallback or legacy mutation');
+  evidence.checks.push('failed source command re-confirms only the old client record/cache; reload paints that confirmed profile, never attempted Global');
  });
  await runFixture(true,async({context,page,base})=>{
   const before=await records(context,base);inert(before);assert.equal(before.production.present,true);

@@ -203,6 +203,38 @@ test('cache hook remains inert for preview, unconfirmed, unready and invalid nam
  }
 });
 
+test('matching unconfirmed browser cache is retained without writes, explicit invalidation removes it, and exact old confirmation may repopulate it',()=>{
+ const prior={
+  version:4,namespace,activeScope:'client',storageVersion:'confirmed-browser-v1',
+  compositionId:'confirmed-browser-composition',themeKey:'confirmed-browser-composition',scheme:'light',
+  colors:{light:{background:'#ffffff',foreground:'#222222',chrome:'#ffffff'}},
+ };
+ const raw=JSON.stringify(prior),h=cacheHarness([[cacheKey,raw]]);
+ const identity={namespace,activeScope:prior.activeScope,storageVersion:prior.storageVersion,
+  compositionId:prior.compositionId,scheme:prior.scheme,mode:'light'};
+ h.bootStyles.set('--boot-bg',prior.colors.light.background);h.bootStyles.set('--boot-ink',prior.colors.light.foreground);
+ h.documentRoot.style.colorScheme='light';h.documentRoot.dataset.bootScheme='light';
+ h.update({...identity,confirmed:false});
+ assert.equal(h.records.get(cacheKey),raw,'Lack of current confirmation does not discard a matching last-confirmed composition.');
+ assert.deepEqual(h.writes,[]);assert.deepEqual(h.deletes,[]);
+ assert.equal(h.bootStyles.get('--boot-bg'),prior.colors.light.background);
+ assert.equal(h.documentRoot.style.colorScheme,'light');assert.equal(h.documentRoot.dataset.bootScheme,'light');
+ h.update({...identity,confirmed:false,invalidate:true});
+ assert.equal(h.records.has(cacheKey),false);assert.deepEqual(h.writes,[]);assert.deepEqual(h.deletes,[cacheKey]);
+ assert.equal(h.bootStyles.size,0);assert.equal(h.documentRoot.style.colorScheme,undefined);
+ assert.equal(h.documentRoot.dataset.bootScheme,undefined);
+ h.update({...identity,confirmed:false});
+ assert.equal(h.records.has(cacheKey),false,'A failed/in-flight state cannot recreate even the old cache without confirmation.');
+ assert.deepEqual(h.writes,[]);assert.deepEqual(h.deletes,[cacheKey]);
+ h.update({...identity,confirmed:true});
+ assert.deepEqual(JSON.parse(h.records.get(cacheKey)),prior,'Reconfirmation can recreate the same old client identity and palette; persistent null is not required.');
+ assert.deepEqual(h.writes,[[cacheKey,raw]]);assert.deepEqual(h.deletes,[cacheKey]);
+ const reloaded=boot({raw:h.records.get(cacheKey)});
+ assert.equal(reloaded.root.dataset.bootScheme,'light');
+ assert.deepEqual([...reloaded.styles],[['--boot-bg',prior.colors.light.background],['--boot-ink',prior.colors.light.foreground]]);
+ assert.equal(reloaded.chrome.content,prior.colors.light.chrome);
+});
+
 test('cache hook invalidates replacement namespace, scope, storage version and composition before confirmation',()=>{
  for(const overrides of [{namespace:replacementNamespace},{activeScope:'client'},{storageVersion:'replacement-version'},
   {compositionId:'replacement-composition'},{invalidate:true}]){
@@ -251,6 +283,8 @@ test('main cache confirmation is fenced by the exact production namespace, gener
   {local:{...local,reported:false}},{local:{...local,error:'malformed'}}])assert.equal(confirmed(overrides),false);
  for(const status of ['pending','failed','disconnected'])assert.equal(confirmed({}, {},status),false);
  assert.equal(confirmed({}, {},'stored'),true);
+ assert.equal(confirmed({command:{id:'quota-select-global',status:'failed'}}),true,
+  'A failed source-switch command does not prevent a fresh exact ACK of the still-active browser record from confirming its cache.');
  assert.match(main,/useAppearanceCache\(\{root,shell,namespace:appearance\.namespace,/);
  assert.match(main,/useAppearanceEditor\(state\?\.appearance\?\.theme,''(?:,|\))/);
 });
