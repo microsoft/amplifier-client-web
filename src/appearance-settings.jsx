@@ -349,7 +349,7 @@ export function AppearanceSettings({
    if(isCurrent()){setDeleteTarget(null);await refresh();if(isCurrent())setNotice('Deleted from your library. The active appearance is unchanged.');}
   });
  }
- function exportItem(item){if(!item?.id)return null;return runOperation('export',()=>api.current('theme.export',{id:item.id,format:'zip'}))}
+ function exportItem(item){if(!item?.id)return null;return runOperation('export',()=>api.current('theme.export',{id:item.id}))}
  async function upload(file){
   if(!file)return null;
   return runOperation('import',async isCurrent=>{

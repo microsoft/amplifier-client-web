@@ -527,6 +527,21 @@ test('saved library controls identify the exact item in their accessible names',
  }finally{await host.close()}
 });
 
+test('saved library Export ZIP dispatches only the selected item id under the strict host schema',async()=>{
+ const host=await heldEditor('save');
+ try{
+  const row=host.root.findAllByProps({className:'a-appearance-saved-row'})
+   .find(node=>textContent(node.findByType('strong'))===entryB.name);
+  assert.ok(row,'Exercise the real Forest library row, not the Ocean editor export control.');
+  const exportButton=button(row,'Export ZIP');
+  assert.equal(exportButton.props['data-action'],'theme.export');
+  await act(async()=>{exportButton.props.onClick();await new Promise(resolve=>setImmediate(resolve))});
+  assert.deepEqual(host.calls.filter(call=>call.action==='theme.export'),[
+   {action:'theme.export',args:{id:entryB.id}},
+  ],'The host admits id only; format and other extra properties must not be sent.');
+ }finally{await host.close()}
+});
+
 for(const operation of ['save','update','delete']){
  test(`${operation} failure retained while inactive disappears when its draft is superseded before returning`,async()=>{
   const host=await heldEditor(operation);

@@ -104,19 +104,21 @@ async function seedAndObserve(page){
    for(const [key,value] of Object.entries(retained.session))sessionStorage.setItem(key,value);
    sessionStorage.setItem('appearance-lifecycle-seeded','1');
   }
-  window.appearanceBootFrames=[];
+  window.appearanceBootFrames=[];window.appearanceBootOverflow=false;
+  let stopped=false,frame;
   const sample=()=>{
    const root=document.documentElement;if(!root)return;
    const boot=document.querySelector('.boot');
+   if(!boot||getComputedStyle(boot).display==='none')return;
+   if(window.appearanceBootFrames.length>=120){window.appearanceBootOverflow=true;return}
    window.appearanceBootFrames.push({hydrated:!!document.getElementById('amp-one'),scheme:root.dataset.bootScheme||null,
     background:root.style.getPropertyValue('--boot-bg'),ink:root.style.getPropertyValue('--boot-ink'),
     bodyBackground:document.body?getComputedStyle(document.body).backgroundColor:null,
     bootInk:boot?getComputedStyle(boot).color:null,cache:sessionStorage.getItem(cacheKey)});
-   if(window.appearanceBootFrames.length>24)window.appearanceBootFrames.shift();
   };
-  const observer=new MutationObserver(sample);observer.observe(document,{subtree:true,childList:true,attributes:true,attributeFilter:['style','data-boot-scheme']});
-  requestAnimationFrame(()=>{sample();requestAnimationFrame(sample)});
-  window.stopAppearanceBootProbe=()=>{sample();observer.disconnect();return window.appearanceBootFrames};
+  const paint=()=>{if(stopped)return;sample();frame=requestAnimationFrame(paint)};
+  frame=requestAnimationFrame(paint);
+  window.stopAppearanceBootProbe=()=>{sample();stopped=true;cancelAnimationFrame(frame);return {frames:window.appearanceBootFrames,overflow:window.appearanceBootOverflow}};
  },{retained,cacheKey});
 }
 async function prehydration(page,navigate,expected){
@@ -128,10 +130,11 @@ async function prehydration(page,navigate,expected){
   await navigate();
   await expect(page.locator('.boot')).toBeVisible();
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
-  const frames=await page.evaluate(()=>window.stopAppearanceBootProbe());
+  const {frames,overflow}=await page.evaluate(()=>window.stopAppearanceBootProbe());
+  assert.equal(overflow,false,'First-paint evidence is bounded without silently dropping earlier frames');
   assert.ok(frames.length,'Observe document before API hydration, not only final getState');
   assert.ok(frames.every(frame=>!frame.hydrated),'API gate actually holds hydration');
-  const current=frames.at(-1);
+  for(const current of frames){
   if(expected){
    assert.equal(current.scheme,expected.scheme);
    assert.equal(current.background,expected.colors[expected.scheme].background);
@@ -143,6 +146,7 @@ async function prehydration(page,navigate,expected){
    assert.equal(current.scheme,null);assert.equal(current.background,'');
    assert.equal(current.bodyBackground,'rgb(232, 238, 255)','Loading surface uses the neutral cold-boot paint, not retained magenta/dark data');
    assert.equal(current.cache,null,'Cold boot must not promote a retained/trial cache');
+  }
   }
   evidence.boot.push({phase:expected?'confirmed-cache-reload':'cold-legacy-only',frames});
  }finally{release();await page.unroute('**/api/**',hold)}
