@@ -12,7 +12,7 @@ let state={revision:1,settings:{workspace:'/existing'},runtime:{available:true},
  workspaces:[{id:'project',name:'Existing',path:'/existing',available:true}],selectedSessionId:null,selectedWorkspaceId:'project',
  setup:{providers:[{id:'fixture',module:'provider-fixture',config:{model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/existing'},
  registeredBundles:[{value:'work',label:'Work'}],draftDefaults:Object.fromEntries(['/missing','/existing'].map(workspace=>[JSON.stringify([workspace,'']),{phase:'ready',bundle:'work',effective:{instance:'fixture',model:'fixture-model'},providers:[{id:'fixture'}]}])),canvas:{open:false}};
-const calls=[],workers=[],folders=[],errors=[],handoffReads=[],externalRequests=[];let browser,vite,page,blockHandoffNavigation=false;
+const calls=[],workers=[],folders=[],errors=[],handoffReads=[],externalRequests=[],heldStateReads=[];let browser,vite,page,blockHandoffNavigation=false,holdStateReads=false;
 const shell=createShellHttpFixture(()=>state);
 const draftScope=JSON.stringify([shell.state().client.historyScope||shell.state().client.hostInstanceId,null,null]);
 const action=(name,args={})=>page.evaluate(([name,args])=>window.amplifier.dispatch(name,args),[name,args]);
@@ -33,7 +33,10 @@ try{
   if(!path.startsWith('/api/'))return route.continue();
   const shellResponse=shell.response(route.request());
   if(shellResponse!==undefined)return route.fulfill({json:shellResponse});
-  if(path==='/api/state')return route.fulfill({json:shell.state()});
+  if(path==='/api/state'){
+   if(holdStateReads){heldStateReads.push(route);return}
+   return route.fulfill({json:shell.state()});
+  }
   if(path==='/api/actions'&&route.request().method()==='GET')return route.fulfill({json:[]});
   if(path!=='/api/actions')return route.fulfill({json:{ok:true}});
   const original=route.request().postDataJSON();calls.push(original);
@@ -202,14 +205,24 @@ try{
  }
  assert.equal(handoffReads.length,0,'Rendering, disclosure and resize do not poll delivery');
  await expect(composer).toHaveDraft('Keep this source draft');
- // A manual result without a parent state snapshot must regroup immediately.
+ // A compact exact read with a future stateRevision must settle without the
+ // stream or awaitState's 1500ms recovery GET. Hold any GET so that recovery
+ // cannot accidentally make this pass while the authoritative row stays older.
+ holdStateReads=true;
  await receipt('unknown').getByRole('button',{name:'Check delivery',exact:true}).click();
  await expect.poll(()=>handoffReads.length).toBe(1);
  const localRead=handoffReads.shift();assert.equal(localRead.body.args.requestId,'unknown');
- await localRead.route.fulfill({json:{accepted:true,result:{...baseline,requestId:'unknown'}}});
+ const readStateRevision=state.revision+1;
+ await localRead.route.fulfill({json:{accepted:true,hostInstanceId:shell.state().client.hostInstanceId,
+  stateRevision:readStateRevision,result:{...baseline,requestId:'unknown'}}});
  await expect(summary).toHaveText('Past handoffs (8)');
  await expect(receipt('unknown')).not.toBeVisible();await expect(summary).toBeFocused();
+ const afterRead=await page.evaluate(()=>window.amplifier.getState());
+ assert.ok(afterRead.revision<readStateRevision,'Exact read does not advance the authoritative stream baseline');
+ assert.equal(afterRead.handoffs.find(row=>row.requestId==='unknown').status,'unknown');
  assert.equal(state.handoffs.find(row=>row.requestId==='unknown').status,'unknown','Only the returned local receipt changed');
+ assert.equal(heldStateReads.length,0,'Handoff read must not wait for or recover an unrelated state frame');
+ holdStateReads=false;
  // A newer stream revision cannot be overwritten by an older delayed read.
  const unknownIndex=state.handoffs.findIndex(row=>row.requestId==='unknown');
  state.handoffs[unknownIndex]={...state.handoffs[unknownIndex],revision:4};await emit();

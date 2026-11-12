@@ -408,9 +408,10 @@ function App(){
     if(historyVisit)destinationHistory.current.finish(result);
     try{
      if(result.state)acceptState(result.state);
-     // Exact annotation and read-only preview receipts settle locally. Navigation
-     // still waits for its authoritative frame and exact history confirmation.
-     else if(!['message.reaction','peer.preview','context.inspect','conversation.delivery'].includes(action))await awaitState(result);
+     // Exact annotation, preview and delivery reads settle locally, including
+     // handoff reads whose scoped receipt may be newer than the stream. Creation,
+     // confirmation and navigation still wait for their authoritative state.
+     else if(!['message.reaction','peer.preview','context.inspect','conversation.delivery','session.handoff.read'].includes(action))await awaitState(result);
     }catch(error){
      // An accepted reset is not a refusal when only its following read fails.
      // Keep the exact receipt; the Canvas owner offers a read, never a replay.
