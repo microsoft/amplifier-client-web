@@ -41,3 +41,17 @@ test('chat info discards old locations and errors immediately and ignores late i
  assert.match(JSON.stringify(root.toJSON()),/\/history\/d/);
  await renderAct(async()=>root.unmount());
 });
+
+test('external chat retains explicit Full access without mounting native file settings',async()=>{
+ const calls=[],session={id:'host-chat',externalAgent:{id:'remote',label:'Project assistant'}};
+ let root;
+ const act=async(name,args)=>{calls.push({name,args});return {accepted:true,result:{revision:'access-r1',mode:'ask',source:'default',overrides:{session:{mode:'inherit'},workspace:{mode:'inherit'},app:{mode:'inherit'}}}}};
+ try{
+  await renderAct(async()=>root=create(React.createElement(ChatPages,{page:'chat-write-files',state:{view:{}},session,act,open:()=>{}})));
+  assert.deepEqual(calls,[{name:'access.get',args:{sessionId:'host-chat'}}]);
+  await renderAct(async()=>root.root.findByProps({'aria-label':'Access mode'}).props.onChange({target:{value:'full'}}));
+  await renderAct(async()=>root.root.findAllByType('button').find(node=>node.children.includes('Save access preference')).props.onClick());
+  assert.deepEqual(calls[1],{name:'access.set',args:{sessionId:'host-chat',scope:'session',mode:'full',expectedRevision:'access-r1'}});
+  assert.doesNotMatch(JSON.stringify(root.toJSON()),/File restrictions/);
+ }finally{await renderAct(async()=>root?.unmount())}
+});

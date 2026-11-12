@@ -122,6 +122,7 @@ export function WorkHeader({state,session,act,open,narrow,presentation,fileDropH
     <button data-action="session.pin" onClick={()=>act('session.pin',{id:session.id,pinned:!(state.pinnedSessionIds||[]).includes(session.id)})}><Pin/>{(state.pinnedSessionIds||[]).includes(session.id)?'Unpin':'Pin'}</button>
     {!session.externalAgent&&<button onClick={()=>open('chat-share')}><Share2/>Share or save</button>}
     <button onClick={()=>open('session-details')}><Info/>Chat info</button>
+    {session.externalAgent&&<button onClick={()=>open('chat-write-files')}><Settings/>Access &amp; approvals</button>}
     <button onClick={()=>open('chat-help')}><Bug/>Help &amp; diagnostics</button>
     {!session.externalAgent&&<button onClick={()=>open('chat-advanced')}><Settings/>Advanced<ChevronRight/></button>}
     <hr/>
