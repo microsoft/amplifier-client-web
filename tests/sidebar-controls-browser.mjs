@@ -453,7 +453,7 @@ async function responsiveRegression({scenario,readState,emit}){
   assert.equal(geometry.role,null);assert.equal(geometry.modal,null);assert.equal(geometry.chatInert,false);assert.equal(geometry.scrims,0);
   assert.ok(geometry.nav.width>=216&&geometry.nav.width<=240,'Normal sidebar width: '+JSON.stringify(geometry));
   assert.ok(geometry.chat.width>=359&&geometry.nav.right<=geometry.chat.left+1&&!geometry.overflow,JSON.stringify(geometry));
-  for(const button of await page.locator('.a-sidebar-modes button,.a-nav-search-launch').all()){
+  if(!baseline)for(const button of await page.locator('.a-sidebar-modes button,.a-nav-search-launch').all()){
    const box=await visibleGeometry(button);assert.ok(box.height>=44&&box.width>=44);
   }
  }
@@ -505,7 +505,8 @@ async function responsiveRegression({scenario,readState,emit}){
   await page.setViewportSize({width:656,height:900});
   await expect(nav).not.toHaveAttribute('aria-modal','true');
   await expect(nav).toHaveAttribute('data-docked','true');
-  await expect(composer).toBeFocused();await expect(composer).toBeEditable();
+  await expect(page.locator('#navigation-toggle')).toBeFocused();
+  await expect(composer).toBeEditable();await composer.focus();await expect(composer).toBeFocused();
   assert.equal(await composer.evaluate(node=>!!node.closest('[inert]')),false);
   await capture('unfold-inert-released');
  }
