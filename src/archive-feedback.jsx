@@ -9,10 +9,10 @@ export function ArchiveButton({chat,archived=false,children,...props}){
 }
 export function ArchiveNotice({value}){
  const expiry=useRef(null),region=useRef(null);
- const operation=value.notice?.operation,phase=value.notice?.phase,persistent=value.notice?.persistent;
+ const operation=value.notice?.operation,phase=value.notice?.phase,persistent=value.notice?.persistent,navigationPending=value.notice?.navigationPending;
  const kept=value.notice?.kept===true;
  useEffect(()=>{
-  if(phase!=='success'||persistent||kept||!Number.isSafeInteger(operation))return;
+  if(phase!=='success'||navigationPending||persistent||kept||!Number.isSafeInteger(operation))return;
   const doc=region.current?.ownerDocument||globalThis.document;
   const timer=createNoticeExpiry(()=>value.expire(operation));expiry.current=timer;
   const visibility=()=>timer.pause('hidden',!!doc?.hidden);
@@ -21,7 +21,7 @@ export function ArchiveNotice({value}){
   timer.pause('focus',!!region.current?.contains(doc?.activeElement));
   doc?.addEventListener('visibilitychange',visibility);
   return()=>{timer.dispose();expiry.current=null;doc?.removeEventListener('visibilitychange',visibility)};
- },[operation,phase,persistent,kept,value.expire]);
+ },[operation,phase,navigationPending,persistent,kept,value.expire]);
  const notice=value.notice;if(!notice)return null;
  return <div ref={region} className="a-alert" style={notice.phase==='error'?undefined:{color:'var(--a-ink)',background:'var(--a-soft)',borderColor:'var(--a-line)'}} data-archive-notice role={notice.phase==='error'?'alert':'status'} aria-live={notice.phase==='error'?'assertive':'polite'} aria-atomic="true"
   onMouseEnter={()=>expiry.current?.pause('hover',true)} onMouseLeave={()=>expiry.current?.pause('hover',false)}

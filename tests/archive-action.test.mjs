@@ -91,6 +91,14 @@ test('navigation failure is a persistent confirmation, not an expiring routine s
  assert.equal(f.feedback.notice.phase,'success');assert.equal(f.feedback.notice.persistent,true);
  const latest=f.feedback.notice;f.action.expire(latest.operation);assert.deepEqual(f.feedback.notice,latest);
 });
+test('held browse cannot lose a later warning to routine expiry; mutation lock is still released',async()=>{
+ const held=deferred(),entered=deferred(),f=fixture(undefined,()=>{entered.resolve();return held.promise});
+ const run=f.action.run(chat);await entered.promise;
+ const latest=f.feedback.notice;assert.equal(latest.navigationPending,true);assert.deepEqual(f.feedback.pending,[]);
+ f.action.expire(latest.operation);assert.deepEqual(f.feedback.notice,latest);
+ held.reject(Error('Late browse failure'));await run;
+ assert.equal(f.feedback.notice.persistent,true);assert.match(f.feedback.notice.text,/Could not open/);
+});
 test('Keep open belongs to the captured notice, survives renderer changes and is not inherited',async()=>{
  const held=deferred(),entered=deferred(),f=fixture(undefined,()=>{entered.resolve();return held.promise});
  const run=f.action.run(chat);await entered.promise;const operation=f.feedback.notice.operation;

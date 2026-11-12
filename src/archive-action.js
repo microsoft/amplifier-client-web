@@ -34,12 +34,15 @@ export function createArchiveAction({getState,getRevision,dispatch,navigate,onCh
   }finally{pending.delete(id);publish()}
   // The mutation is finished. Navigation must never hold Undo or other changes.
   const success={id,title:chat.title||'Untitled chat',phase:'success',archive,text:archive?'Chat archived':'Chat restored'};
-  update(operation,success);
-  if(leaving&&isCurrent()){
+  const browsing=leaving&&isCurrent();
+  // Undo is usable immediately, but do not expire an unresolved browse warning.
+  update(operation,{...success,navigationPending:browsing});
+  if(browsing){
    // Navigation is a separate outcome: a failed browse must not claim archive failed.
    try{
     const result=await navigate(destination,isCurrent,isActive);
     if(result?.accepted===false)update(operation,{...success,persistent:true,text:'Chat archived. Your current view was kept.'});
+    else update(operation,success);
    }catch{
     update(operation,{...success,persistent:true,text:'Chat archived. Could not open the chat list.'});
    }
@@ -50,7 +53,7 @@ export function createArchiveAction({getState,getRevision,dispatch,navigate,onCh
  return {
   run,
   keep:(operation,kept)=>{if(notice?.operation!==operation||notice.phase!=='success')return;notice={...notice,kept};publish()},
-  expire:(operation)=>{if(notice?.operation===operation&&notice.phase==='success'&&!notice.persistent&&!notice.kept)dismiss(operation)},
+  expire:(operation)=>{if(notice?.operation===operation&&notice.phase==='success'&&!notice.navigationPending&&!notice.persistent&&!notice.kept)dismiss(operation)},
   dismiss,
  };
 }
