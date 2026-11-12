@@ -44,7 +44,7 @@
     it, like the ordinary unpinned overlay, rather than becoming a hidden
     "Close navigation" target behind Canvas. Focused Canvas retains z-index 60. */
  #amp-one.a-chat-shell .a-layout[data-pane-layout][data-canvas-open="true"]>.a-nav-slot.is-expanded{z-index:21}
- #amp-one.a-chat-shell .a-layout[data-pane-layout][data-canvas-open="true"]:has(>.a-nav-slot[data-docked="true"]:not([hidden]))>.a-canvas-panel:not([data-focused="true"]){left:calc(var(--nav-width) + 12px)}
+ #amp-one.a-chat-shell .a-layout[data-pane-layout][data-canvas-open="true"]:has(>.a-nav-slot[data-docked="true"]:not([hidden]))>.a-canvas-panel:not([data-focused="true"]){left:calc(var(--nav-width) + 12px);width:auto}
 }
 @media(max-width:640px){
  #amp-one.a-chat-shell .a-layout[data-pane-layout][data-navigation-narrow="true"]>.a-nav-slot[data-docked]{position:fixed;inset:0;z-index:90;width:100%;min-width:0;height:100dvh;flex:none;transform:none}

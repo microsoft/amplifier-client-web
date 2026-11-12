@@ -445,6 +445,12 @@ async function responsiveRegression({scenario,readState,emit}){
   if(scenario.width<=640)assert.ok(Math.abs(geometry.nav.width-scenario.width)<1);
   await page.getByRole('slider',{name:'Filter conversations by age'}).focus();
   await page.keyboard.press('Escape');await expect(nav).toBeHidden();
+  // Initial saved expansion has no user opener. Reopen explicitly to test
+  // the real trigger's focus-return contract rather than assuming one.
+  await page.locator('#navigation-toggle').click();
+  await expect(nav).toHaveAttribute('aria-modal','true');
+  await page.getByRole('slider',{name:'Filter conversations by age'}).focus();
+  await page.keyboard.press('Escape');await expect(nav).toBeHidden();
   await expect(page.locator('#navigation-toggle')).toBeFocused();
   assert.equal(await composer.evaluate(node=>!!node.closest('[inert]')),false);
  }else{
