@@ -630,8 +630,8 @@ try{
    // A real viewport resize asks the existing layout observer to resample this
    // synthetic nondefault gap; no new fixture-only production measurement API.
    await page.setViewportSize({width:scenario.width+1,height:900});
-   await page.setViewportSize({width:scenario.width,height:900});
    await expect.poll(()=>page.locator('.a-layout').evaluate(node=>getComputedStyle(node).getPropertyValue('--layout-gap').trim())).toBe(scenario.gap+'px');
+   await page.setViewportSize({width:scenario.width,height:900});
   }
   if(scenario.enlarged)await page.addStyleTag({content:'#amp-one{--a-text-xs:24px;--a-text-sm:26px;--a-text-base:28px;font-size:28px}'});
   if(responsive){
