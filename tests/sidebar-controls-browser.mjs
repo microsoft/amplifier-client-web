@@ -460,7 +460,7 @@ async function responsiveRegression({scenario,readState,emit}){
   assert.ok(geometry.nav.width>=216&&geometry.nav.width<=240,'Normal sidebar width: '+JSON.stringify(geometry));
   assert.ok(geometry.chat.width>=359&&geometry.nav.right<=geometry.chat.left+1&&!geometry.overflow,JSON.stringify(geometry));
   if(!baseline)for(const button of await page.locator('.a-sidebar-modes button,.a-nav-search-launch').all()){
-   const box=await visibleGeometry(button);assert.ok(box.height>=44&&box.width>=44);
+   const box=await visibleGeometry(button);assert.ok(box.height>=44&&box.width>=44,JSON.stringify({label:await button.getAttribute('aria-label')||await button.textContent(),box}));
   }
  }
  if(baseline){proof.passed=true;return}

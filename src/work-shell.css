@@ -228,7 +228,7 @@
 }
 @media(pointer:coarse){
  #amp-one.a-approachable-shell .a-sidebar-modes button,#amp-one.a-approachable-shell .a-nav-search-launch{min-height:44px}
- #amp-one.a-approachable-shell .a-sidebar-modes>.a-sidebar-new{flex-basis:44px;width:44px;min-width:44px}
+ #amp-one.a-approachable-shell .a-sidebar-modes>.a-sidebar-new{flex-basis:44px;width:44px;min-width:44px;min-height:44px;height:44px}
 }
 
 /* Composite search fields own one focus ring, including in custom themes. */
