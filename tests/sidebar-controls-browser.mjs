@@ -509,6 +509,11 @@ async function responsiveRegression({scenario,readState,emit}){
   await emit();await expect(page.locator('#workspace-canvas')).toBeVisible();
   const canvas=await capture('canvas-open');
   assert.equal(canvas.overflow,false);assert.ok(canvas.canvas.width>0&&canvas.canvas.right<=scenario.width+1);
+  if(scenario.width<=760&&canvas.docked==='true'){
+   const gap=parseFloat(canvas.gap)||0;
+   assert.ok(Math.abs(canvas.canvas.left-canvas.nav.right-gap)<1,'Compact Canvas uses the measured gap: '+JSON.stringify(canvas));
+   assert.ok(Math.abs(canvas.canvas.right-scenario.width)<1,'Compact Canvas fills the remaining width');
+  }
   if(canvas.canvasOverlay==='false'&&canvas.available<900)assert.equal(canvas.docked,'false');
   await visibleGeometry(nav.getByRole('button',{name:'New chat',exact:true}));
   await page.locator('#navigation-toggle').click();await expect(nav).toBeHidden();
@@ -557,7 +562,8 @@ try{
  browser=await chromium.launch({headless:true,args:process.env.CHROMIUM_SINGLE_PROCESS==='1'?['--single-process','--no-zygote']:[]});
  for(const scenario of responsive?[
   ...[320,360,390,639,640].map(width=>({name:'phone-'+width,width,touch:true})),
-  ...[641,656,673,690,720,750,768,820].map(width=>({name:'fold-'+width,width,touch:true})),
+  ...[641,656,673,690,720,750,760,761,768,820,900,901].map(width=>({name:'fold-'+width,width,touch:true})),
+  {name:'fold-gap-work',width:656,touch:true,gap:8,work:true},
   {name:'fold-dark',width:720,touch:true,dark:true},
   {name:'fold-enlarged',width:720,touch:true,enlarged:true},
   {name:'desktop-1280',width:1280,touch:true},
@@ -578,6 +584,9 @@ try{
    setup:{providers:[{id:'fixture',module:'provider-fixture',enabled:true,config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false},attention:{badgeUnread:2,settingsUnread:3}};
   if(scenario.pinned)state.pinnedNavigation={items:[{id:'chat:chat',kind:'chat',row:state.sessions[0]}],total:1};
   const shell=createShellHttpFixture(()=>state),stopGuard={armed:false};
+  // Retain the shared fixture's disconnected Reference identity. This is a
+  // rendering preference only, not a production profile or storage ACK model.
+  if(scenario.work)state.appearance={...shell.state().appearance,renderedPreferences:{layout:'work'}};
   page=await browser.newPage({viewport:{width:scenario.width,height:900},hasTouch:!!scenario.touch,isMobile:!!scenario.touch,
    ...(responsive?{userAgent:'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36',colorScheme:scenario.dark?'dark':'light'}:{})});
   page.on('pageerror',error=>errors.push(error.message));
@@ -616,6 +625,14 @@ try{
   await page.goto(vite.resolvedUrls.local[0]);
   await page.getByRole('slider',{name:'Filter conversations by age'}).waitFor();
   await page.locator('.a-sidebar-section').first().waitFor();
+  if(scenario.gap){
+   await page.addStyleTag({content:`#amp-one .a-layout[data-pane-layout]{gap:${scenario.gap}px!important}`});
+   // A real viewport resize asks the existing layout observer to resample this
+   // synthetic nondefault gap; no new fixture-only production measurement API.
+   await page.setViewportSize({width:scenario.width+1,height:900});
+   await page.setViewportSize({width:scenario.width,height:900});
+   await expect.poll(()=>page.locator('.a-layout').evaluate(node=>getComputedStyle(node).getPropertyValue('--layout-gap').trim())).toBe(scenario.gap+'px');
+  }
   if(scenario.enlarged)await page.addStyleTag({content:'#amp-one{--a-text-xs:24px;--a-text-sm:26px;--a-text-base:28px;font-size:28px}'});
   if(responsive){
    const emit=async()=>{const revision=++state.revision;await page.evaluate(value=>window.emitFixtureState(value),shell.state());await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().revision)).toBeGreaterThanOrEqual(revision)};
@@ -697,7 +714,7 @@ try{
  assert.deepEqual(errors,[]);
  assert.ok(calls.every(call=>!['session.select','conversation.send','session.history','session.create'].includes(call.action)),'Passive controls never execute or reload history');
  assert.equal(explicitStops.length,responsive?0:1);assert.deepEqual(attachmentRequests,[]);
- assert.ok(regressions.length===(responsive?16:2)&&regressions.every(row=>row.passed));
+ assert.ok(regressions.length===(responsive?21:2)&&regressions.every(row=>row.passed));
  if(!baseline&&!responsive)assert.ok(menuRegressions.length===8&&menuRegressions.every(row=>row.passed));
  console.log(JSON.stringify({scope:'synthetic client browser',baseline,scenarios:results,regressions,menuRegressions,errors},null,2));
 }catch(error){

@@ -39,7 +39,7 @@ export function WorkspaceLayout({state,act,children,presentation={},appearanceCs
   setDraft(null);act('view.update',{patch});
  };
  return <Layout.Provider value={{...sizes,narrow,navigationNarrow,canvasOnLeft,preview:(key,value)=>setDraft({[key]:value,priority:key==='navWidth'?'nav':'canvas'}),cancel:()=>setDraft(null),persist}}>
-  <main ref={host} className="a-layout" data-part="workspace" data-narrow={narrow} data-navigation-narrow={navigationNarrow} data-canvas-open={!!state.selectedSessionId&&!!state.canvas?.open} data-pane-layout="" data-canvas-mode={overview?'overview':'artifact'} data-canvas-overlay={sizes.overlay} style={{'--nav-width':sizes.expandedNav+'px','--canvas-width':sizes.canvas+'px','--chat-min':CHAT_MIN+'px'}}>{children}</main>
+  <main ref={host} className="a-layout" data-part="workspace" data-narrow={narrow} data-navigation-narrow={navigationNarrow} data-canvas-open={!!state.selectedSessionId&&!!state.canvas?.open} data-pane-layout="" data-canvas-mode={overview?'overview':'artifact'} data-canvas-overlay={sizes.overlay} style={{'--nav-width':sizes.expandedNav+'px','--canvas-width':sizes.canvas+'px','--chat-min':CHAT_MIN+'px','--layout-gap':metrics.gap+'px'}}>{children}</main>
  </Layout.Provider>;
 }
 export function usePanelLayout(state,act){
