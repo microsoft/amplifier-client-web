@@ -502,7 +502,8 @@ async function responsiveRegression({scenario,readState,emit}){
   if(canvas.canvasOverlay==='false'&&canvas.available<900)assert.equal(canvas.docked,'false');
   await visibleGeometry(nav.getByRole('button',{name:'New chat',exact:true}));
   await page.locator('#navigation-toggle').click();await expect(nav).toBeHidden();
-  await page.locator('#navigation-toggle').click();await expect(nav).toBeVisible();
+  await page.locator('#navigation-toggle').click();await expect(nav).not.toHaveAttribute('hidden');
+  await expect(nav.locator('.a-nav-rail')).toBeVisible();
   await visibleGeometry(nav.getByRole('button',{name:'New chat',exact:true}));
   // Disclosure must be actionable on top of compact Canvas, not merely have
   // a positive bounding box behind it. Escape closes only the nested menu.
