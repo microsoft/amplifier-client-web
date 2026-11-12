@@ -3,14 +3,16 @@ import {createServer} from 'vite';
 import {chromium,expect} from '@playwright/test';
 import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
-import {createShellHttpFixture} from './shell-http-fixture.mjs';
+import {mkdir} from 'node:fs/promises';
+import {createShellHttpFixture,installFixtureEvents} from './shell-http-fixture.mjs';
+import './composer-test-helpers.mjs';
 
 let state={revision:1,settings:{workspace:'/existing'},runtime:{available:true},view:{navPinned:true,setupJourney:'done',newSessionDraft:{workspace:'/missing'}},
  sessions:[{id:'old',title:'Previous conversation',sessionKind:'root',workspace:'/existing',workspaceId:'project',status:'idle',historyManaged:true,historyLoaded:true,messages:[],workers:[]}],
  workspaces:[{id:'project',name:'Existing',path:'/existing',available:true}],selectedSessionId:null,selectedWorkspaceId:'project',
  setup:{providers:[{id:'fixture',module:'provider-fixture',config:{model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/existing'},
  registeredBundles:[{value:'work',label:'Work'}],draftDefaults:Object.fromEntries(['/missing','/existing'].map(workspace=>[JSON.stringify([workspace,'']),{phase:'ready',bundle:'work',effective:{instance:'fixture',model:'fixture-model'},providers:[{id:'fixture'}]}])),canvas:{open:false}};
-const calls=[],workers=[],folders=[],errors=[];let browser,vite,page;
+const calls=[],workers=[],folders=[],errors=[],handoffReads=[],externalRequests=[];let browser,vite,page,blockHandoffNavigation=false;
 const shell=createShellHttpFixture(()=>state);
 const draftScope=JSON.stringify([shell.state().client.historyScope||shell.state().client.hostInstanceId,null,null]);
 const action=(name,args={})=>page.evaluate(([name,args])=>window.amplifier.dispatch(name,args),[name,args]);
@@ -18,16 +20,17 @@ const reply=(route,extra={})=>{state.revision++;return route.fulfill({json:{acce
 try{
  vite=await createServer({configFile:false,root:fileURLToPath(new URL('../',import.meta.url)),server:{host:'127.0.0.1',port:0,hmr:false},optimizeDeps:{include:['react','react-dom/client','react/jsx-dev-runtime']}});await vite.listen();
  browser=await chromium.launch({headless:true,...(process.env.DTU_CHROMIUM_SINGLE_PROCESS?{args:['--no-zygote','--single-process','--disable-gpu']}:{ }),...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}:{})});page=await browser.newPage({viewport:{width:1280,height:900}});page.on('pageerror',e=>errors.push(e.message));
+ await page.addInitScript(installFixtureEvents);
  await page.addInitScript(scope=>{
-  // The event stream owns bootstrap; /api/state alone no longer loads the app.
-  window.EventSource=class extends EventTarget{constructor(){super();this.readyState=0;queueMicrotask(async()=>{const state=await fetch('/api/state').then(r=>r.json());if(this.readyState===2)return;this.readyState=1;this.onopen?.();this.dispatchEvent(new MessageEvent('state',{data:JSON.stringify(state)}))})}close(){this.readyState=2}};
   // This is a failed submission from this known source, not a legacy unbound
   // row (which must remain retained and must not be assigned to the current host).
   if(sessionStorage.getItem('amplifier.messageOutbox.v1')===null)sessionStorage.setItem('amplifier.messageOutbox.v1',JSON.stringify([
    {id:'old-failed',commandId:'old-command',sessionId:null,scope,text:'Hi!',attachmentIds:[],status:'failed',error:'Old workspace unavailable',createdAt:1}]));
  },draftScope);
- await page.route('**/api/**',async route=>{
-  const path=new URL(route.request().url()).pathname;
+ await page.route('**/*',async route=>{
+  const address=new URL(route.request().url()),path=address.pathname;
+  if(address.origin!==new URL(vite.resolvedUrls.local[0]).origin){externalRequests.push(address.href);return route.abort('blockedbyclient')}
+  if(!path.startsWith('/api/'))return route.continue();
   const shellResponse=shell.response(route.request());
   if(shellResponse!==undefined)return route.fulfill({json:shellResponse});
   if(path==='/api/state')return route.fulfill({json:shell.state()});
@@ -35,6 +38,11 @@ try{
   if(path!=='/api/actions')return route.fulfill({json:{ok:true}});
   const original=route.request().postDataJSON();calls.push(original);
   const body=original.action==='shell.command'?{...original,action:original.args.action,args:original.args.args}:original.action==='shell.view.update'?{...original,action:'view.update'}:original;
+  if(body.action==='session.handoff.read'){handoffReads.push({route,body});return}
+  if(body.action==='session.select'){
+   if(blockHandoffNavigation)return route.fulfill({status:409,json:{accepted:false,error:'Navigation blocked for fixture'}});
+   state.selectedSessionId=body.args.id;
+  }
   if(body.action==='view.update')state.view={...state.view,...body.args.patch};
   if(body.action==='session.draft'){state.selectedSessionId=null;state.view.draft='';}
   if(body.action==='workspace.list')return reply(route,{result:{items:state.workspaces,nextOffset:null}});
@@ -124,7 +132,122 @@ try{
  await page.getByRole('button',{name:'Use this folder',exact:true}).click();
  await expect(page.getByRole('textbox',{name:/Folder on/})).toHaveValue(createdPath);
  assert.equal(calls.filter(row=>row.action==='conversation.send').length,1,'Folder selection does not send a new message');
+ // Saved handoff receipts use the same real client and synthetic peer. No login,
+ // runtime, live-control, or model actions are needed to inspect their delivery.
+ const baseline={requestId:'past-0',sourceSessionId:'old',workspace:'/existing',bundle:'work',
+  title:'Accepted chat 0',text:'Exact saved opening brief. <script>plain text only</script>',selection:{},
+  status:'accepted',creation:'created',delivery:'accepted',revision:3,targetSessionId:'created',
+  message:'Initial brief accepted. This does not mean its requested work has completed.'};
+ const acceptedRows=Array.from({length:6},(_,index)=>({...baseline,requestId:`past-${index}`,title:index===5?'LongTitle'.repeat(24):`Accepted chat ${index}`}));
+ state.handoffs=[...acceptedRows,
+  {...baseline,requestId:'cancelled',title:'Cancelled proposal',status:'cancelled',creation:'not_started',delivery:'not_started',targetSessionId:null,message:'No chat was created.'},
+  ...['pending','unknown','failed','creating','created','delivering','future-status'].map(status=>({...baseline,
+   requestId:status,title:`Needs attention: ${status}`,status,delivery:status==='pending'?'not_started':'unknown',
+   revision:2,message:`Visible ${status} delivery`,...(status==='pending'?{creation:'not_started',targetSessionId:null,reviewHash:'exact-review'}:{})})),
+  {...baseline,requestId:'foreign',sourceSessionId:'another-source',title:'Private other-source receipt'},
+ ];
+ state.selectedSessionId='old';state.view={...state.view,panel:null,navPinned:false,draft:'Keep this source draft'};
+ delete state.view.newSessionDraft;
+ state.sessions.find(row=>row.id==='old').messages=[{id:'saved-answer',role:'assistant',text:'Saved conversation answer.',displayOnly:true}];
+ const startHandoffCalls=calls.length;
+ await page.reload();await expect(composer).toHaveDraft('Keep this source draft');
+ const handoffs=page.getByRole('region',{name:'New chat requests',exact:true});
+ const past=handoffs.locator('details.a-handoffs-past'),summary=past.locator(':scope > summary');
+ const receipt=id=>handoffs.locator(`[data-handoff-id="${id}"]`);
+ const emit=async()=>{
+  const revision=++state.revision;
+  await page.evaluate(frame=>window.emitState(frame),shell.state());
+  await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().revision)).toBeGreaterThanOrEqual(revision);
+ };
+ const screenshot=async name=>{
+  if(!process.env.AMPLIFIER_TEST_ARTIFACTS)return;
+  await mkdir(process.env.AMPLIFIER_TEST_ARTIFACTS,{recursive:true});
+  await page.screenshot({path:`${process.env.AMPLIFIER_TEST_ARTIFACTS}/handoffs-${name}.png`});
+ };
+ await expect(page.getByText('Saved conversation answer.',{exact:true})).toBeVisible();
+ await expect(past).toHaveCount(1);await expect(summary).toHaveText('Past handoffs (7)');
+ await expect(past).not.toHaveAttribute('open','');
+ await expect(receipt('past-0')).not.toBeVisible();await expect(receipt('foreign')).toHaveCount(0);
+ for(const status of ['pending','unknown','failed','creating','created','delivering','future-status']){
+  await expect(handoffs.locator(`:scope > [data-handoff-id="${status}"]`)).toBeVisible();
+ }
+ await expect(receipt('pending').getByRole('button',{name:'Create and start',exact:true})).toBeVisible();
+ await expect(receipt('unknown').getByRole('button',{name:'Check delivery',exact:true})).toBeVisible();
+ await expect(handoffs.getByRole('button',{name:'Check status',exact:true})).toHaveCount(0);
+ for(const width of [1280,320]){
+  await page.setViewportSize({width,height:900});
+  await summary.scrollIntoViewIfNeeded();
+  assert.ok((await past.boundingBox()).height<=64,'Settled receipts occupy one compact collapsed line, not a stack of cards');
+  await screenshot(`${width}-collapsed`);
+  await summary.focus();await page.keyboard.press('Enter');
+  await expect(past).toHaveAttribute('open','');
+  await expect(receipt('past-0').getByText('Opening brief accepted',{exact:true})).toBeVisible();
+  await expect(receipt('cancelled').getByText('Cancelled',{exact:true})).toBeVisible();
+  await expect(past.getByText('Opening brief acceptance is not work completion.',{exact:true})).toBeVisible();
+  await page.keyboard.press('Tab');
+  await expect(receipt('past-0').getByRole('button',{name:'Open chat',exact:true})).toBeFocused();
+  const detail=receipt('past-5').locator(':scope > details');
+  await detail.locator('summary').focus();await page.keyboard.press('Space');
+  await expect(detail.locator('pre')).toHaveText(baseline.text);
+  await expect(handoffs.locator('script')).toHaveCount(0);
+  const layout=await handoffs.evaluate(element=>({
+   width:element.clientWidth,scroll:element.scrollWidth,
+   page:document.documentElement.scrollWidth,viewport:window.innerWidth,
+  }));
+  assert.ok(layout.scroll<=layout.width+1,`Handoffs overflow at ${width}px: ${JSON.stringify(layout)}`);
+  assert.ok(layout.page<=layout.viewport+1,`Page overflows at ${width}px: ${JSON.stringify(layout)}`);
+  await screenshot(`${width}-expanded`);
+  await summary.focus();await page.keyboard.press('Space');await expect(past).not.toHaveAttribute('open','');
+  await expect(summary).toBeFocused();
+ }
+ assert.equal(handoffReads.length,0,'Rendering, disclosure and resize do not poll delivery');
+ await expect(composer).toHaveDraft('Keep this source draft');
+ // A manual result without a parent state snapshot must regroup immediately.
+ await receipt('unknown').getByRole('button',{name:'Check delivery',exact:true}).click();
+ await expect.poll(()=>handoffReads.length).toBe(1);
+ const localRead=handoffReads.shift();assert.equal(localRead.body.args.requestId,'unknown');
+ await localRead.route.fulfill({json:{accepted:true,result:{...baseline,requestId:'unknown'}}});
+ await expect(summary).toHaveText('Past handoffs (8)');
+ await expect(receipt('unknown')).not.toBeVisible();await expect(summary).toBeFocused();
+ assert.equal(state.handoffs.find(row=>row.requestId==='unknown').status,'unknown','Only the returned local receipt changed');
+ // A newer stream revision cannot be overwritten by an older delayed read.
+ const unknownIndex=state.handoffs.findIndex(row=>row.requestId==='unknown');
+ state.handoffs[unknownIndex]={...state.handoffs[unknownIndex],revision:4};await emit();
+ await expect(receipt('unknown')).toBeVisible();
+ await receipt('unknown').getByRole('button',{name:'Check delivery',exact:true}).click();
+ await expect.poll(()=>handoffReads.length).toBe(1);
+ state.handoffs[unknownIndex]={...state.handoffs[unknownIndex],revision:6,message:'Newer stream still cannot confirm delivery.'};await emit();
+ await handoffReads.shift().route.fulfill({json:{accepted:true,result:{...baseline,requestId:'unknown',revision:5}}});
+ await expect(receipt('unknown')).toContainText('Newer stream still cannot confirm delivery.');
+ await expect(summary).toHaveText('Past handoffs (7)');
+ await expect(receipt('unknown').getByRole('button',{name:'Check delivery',exact:true})).toBeEnabled();
+ // An error after a streamed acceptance remains visible outside the disclosure.
+ await receipt('unknown').getByRole('button',{name:'Check delivery',exact:true}).click();
+ await expect.poll(()=>handoffReads.length).toBe(1);
+ state.handoffs[unknownIndex]={...baseline,requestId:'unknown',revision:7};await emit();
+ await handoffReads.shift().route.fulfill({status:503,json:{accepted:false,error:'Delivery read unavailable'}});
+ await expect(handoffs.locator(':scope > [data-handoff-id="unknown"]').getByRole('alert')).toContainText('Delivery read unavailable');
+ await expect(summary).toHaveText('Past handoffs (7)');await screenshot('read-error-visible');
+ await expect(composer).toHaveDraft('Keep this source draft');
+ const handoffActions=()=>calls.slice(startHandoffCalls).map(raw=>raw.action==='shell.command'?{...raw,action:raw.args.action,args:raw.args.args}:raw);
+ assert.deepEqual(handoffActions().filter(row=>row.action.startsWith('session.handoff.')).map(row=>row.action),
+  ['session.handoff.read','session.handoff.read','session.handoff.read']);
+ assert.equal(handoffActions().filter(row=>/^(conversation\.(send|retry)|session\.(create|select)|worker\.spawn)$/.test(row.action)).length,0);
+ // Expansion is local. Navigation happens only on the ordinary explicit control.
+ await summary.focus();await page.keyboard.press('Enter');
+ blockHandoffNavigation=true;
+ await receipt('past-0').getByRole('button',{name:'Open chat',exact:true}).click();
+ await expect(handoffs.locator(':scope > [data-handoff-id="past-0"]').getByRole('alert')).toContainText('Navigation blocked for fixture');
+ await expect(receipt('past-0').locator(':scope > details > summary')).toBeFocused();
+ await expect(page.getByRole('banner')).toContainText('Previous conversation');
+ await expect(composer).toHaveDraft('Keep this source draft');
+ blockHandoffNavigation=false;
+ await receipt('past-0').getByRole('button',{name:'Open chat',exact:true}).click();
+ await expect(page.getByRole('banner')).toContainText('Created conversation');
+ assert.deepEqual(handoffActions().filter(row=>row.action==='session.select').map(row=>row.args),[{id:'created'},{id:'created'}]);
+ assert.equal(handoffActions().filter(row=>/^(conversation\.(send|retry)|session\.create)$/.test(row.action)).length,0);
+ assert.deepEqual(externalRequests,[]);
  assert.deepEqual(errors,[]);
- console.log('New chat recovery passed: truthful new-chat header; scoped persisted failed-message discard; inline creation error; corrected-path retry with canonical created-chat identity sends once; worker success persists reset; failure/local and shared newer drafts retained; modal error dismissal. Zero model calls.');
+ console.log('New chat recovery passed: truthful new-chat header; scoped persisted failed-message discard; inline creation error; corrected-path retry with canonical created-chat identity sends once; worker success persists reset; failure/local and shared newer drafts retained; modal error dismissal; compact past handoffs at 320/1280px; native disclosure and focus; local delivery regroup; stale read ordering; visible errors; explicit navigation only. Zero model calls.');
 }catch(error){console.error('Recovery fixture evidence:',JSON.stringify({errors,body:await page?.locator('body').innerText().catch(()=>''),actions:calls.map(row=>({action:row.action,id:row.id}))}));throw error}
 finally{await browser?.close();await vite?.close()}
