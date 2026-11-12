@@ -110,7 +110,7 @@ test('resource navigation reads real inventory and lifecycle owners, never coope
   assert.match(JSON.stringify(root.toJSON()),/db:owned/);
   const managed=root.root.findByProps({'aria-label':'Managed resources'}).parent;
   await act(async()=>managed.props.onToggle({currentTarget:{open:true}}));
-  assert.match(JSON.stringify(root.toJSON()),/Bound port: |8765/);
+  assert.equal(root.root.findByProps({'data-managed-resource':'preview'}).findAllByType('p').find(node=>node.children.join('').startsWith('Bound port:')).children.join(''),'Bound port: 8765');
   assert.match(JSON.stringify(root.toJSON()),/outcome unknown/,'uncertain real operations remain visible');
   assert.equal(root.root.findByProps({'aria-label':'Task storage'}).type,'section');
   assert.equal(root.root.findByProps({'aria-label':'Test environments'}).type,'section');
