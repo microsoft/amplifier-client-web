@@ -447,7 +447,7 @@ async function responsiveRegression({scenario,readState,emit}){
   await page.keyboard.press('Escape');await expect(nav).toBeHidden();
   // Initial saved expansion has no user opener. Reopen explicitly to test
   // the real trigger's focus-return contract rather than assuming one.
-  await page.locator('#navigation-toggle').click();
+  await page.locator('#navigation-toggle').focus();await page.locator('#navigation-toggle').press('Enter');
   await expect(nav).toHaveAttribute('aria-modal','true');
   await page.getByRole('slider',{name:'Filter conversations by age'}).focus();
   await page.keyboard.press('Escape');await expect(nav).toBeHidden();
@@ -523,7 +523,7 @@ async function responsiveRegression({scenario,readState,emit}){
   await composer.focus();
   await page.setViewportSize({width:390,height:900});await expect(nav).toBeHidden();
   assert.equal(readState().view.navPinned,true);
-  await page.locator('#navigation-toggle').click();await expect(nav).toHaveAttribute('aria-modal','true');
+  await page.locator('#navigation-toggle').focus();await page.locator('#navigation-toggle').press('Enter');await expect(nav).toHaveAttribute('aria-modal','true');
   await expect(composer).toHaveDraft(draft);
   await page.setViewportSize({width:656,height:900});
   await expect(nav).not.toHaveAttribute('aria-modal','true');
