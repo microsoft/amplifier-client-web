@@ -425,9 +425,9 @@ async function responsiveRegression({scenario,readState,emit}){
  const patch=async view=>{Object.assign(readState().view,view);await emit()};
  const capture=async label=>{
   const geometry=await page.evaluate(()=>{
-   const rect=node=>{const r=node.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height}};
+   const rect=node=>{if(!node)return null;const r=node.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height}};
    const nav=document.querySelector('#workspace-navigation'),chat=document.querySelector('.a-conversation'),layout=document.querySelector('.a-layout');
-   return {nav:rect(nav),chat:rect(chat),available:layout.clientWidth,gap:getComputedStyle(layout).columnGap,
+   return {nav:rect(nav),rail:rect(nav.querySelector('.a-nav-rail')),chat:rect(chat),available:layout.clientWidth,gap:getComputedStyle(layout).columnGap,
     docked:nav.dataset.docked,role:nav.getAttribute('role'),modal:nav.getAttribute('aria-modal'),
     chatInert:!!chat.closest('[inert]'),scrims:document.querySelectorAll('.a-navigation-scrim').length,
     overflow:document.documentElement.scrollWidth>innerWidth,viewport:innerWidth,
@@ -479,7 +479,9 @@ async function responsiveRegression({scenario,readState,emit}){
   await patch({navPinned:false,navExpanded:true});
   await expect(nav).toHaveAttribute('data-docked','false');
   const overlay=await capture('unpinned');
-  assert.ok(overlay.nav.width>=216&&overlay.nav.width<=240);assert.equal(overlay.chatInert,false);
+  assert.equal(overlay.nav.width,0);assert.ok(overlay.rail.width>=216&&overlay.rail.width<=240);
+  assert.equal(overlay.chatInert,false);assert.ok(overlay.chat.width>=scenario.width-24);
+  await visibleGeometry(nav.getByRole('button',{name:'New chat',exact:true}));
   await patch({navPinned:true,navExpanded:false,navWidth:2000});
   await expect(nav).toHaveAttribute('data-docked','true');
   const clamped=await capture('saved-width-clamped');
@@ -491,8 +493,23 @@ async function responsiveRegression({scenario,readState,emit}){
   await emit();await expect(page.locator('#workspace-canvas')).toBeVisible();
   const canvas=await capture('canvas-open');
   assert.equal(canvas.overflow,false);assert.ok(canvas.canvas.width>0&&canvas.canvas.right<=scenario.width+1);
-  if(scenario.width<900)assert.equal(canvas.docked,'false');
-  readState().canvas.open=false;await emit();await expect(nav).toHaveAttribute('data-docked','true');
+  if(canvas.canvasOverlay==='false'&&canvas.available<900)assert.equal(canvas.docked,'false');
+  await visibleGeometry(nav.getByRole('button',{name:'New chat',exact:true}));
+  await page.locator('#navigation-toggle').click();await expect(nav).toBeHidden();
+  await page.locator('#navigation-toggle').click();await expect(nav).toBeVisible();
+  await visibleGeometry(nav.getByRole('button',{name:'New chat',exact:true}));
+  // Disclosure must be actionable on top of compact Canvas, not merely have
+  // a positive bounding box behind it. Escape closes only the nested menu.
+  const app=nav.getByRole('button',{name:'App options',exact:true});
+  await app.click();await expect(nav.getByRole('button',{name:'What agents see',exact:true})).toBeVisible();
+  await page.keyboard.press('Escape');await expect(app).toBeFocused();
+  await page.locator('#navigation-toggle').click();await expect(nav).toBeHidden();
+  if(scenario.width<=760){
+   await page.getByRole('button',{name:'Back to chat',exact:true}).click();
+   await expect(page.locator('#workspace-canvas')).toBeHidden();
+  }
+  readState().canvas.open=false;await patch({navPinned:true,navExpanded:true});
+  await expect(nav).toHaveAttribute('data-docked','true');
  }
  // One representative round trip verifies modal focus/inert cleanup with the
  // same mounted composer and saved pinned preference.
@@ -512,7 +529,7 @@ async function responsiveRegression({scenario,readState,emit}){
  }
  await expect(composer).toHaveDraft(draft);
  assert.equal(JSON.stringify(readState().sessions[0]),session,'No session/history/model mutation');
- assert.ok(calls.slice(start).every(call=>['view.update','shell.report'].includes(call.action)),'Only synthetic view changes');
+ assert.ok(calls.slice(start).every(call=>['view.update','shell.report','canvas.visibility'].includes(call.action)),'Only synthetic view changes and explicit Canvas Back');
  proof.passed=true;
 }
 
@@ -572,6 +589,7 @@ try{
      return route.fulfill({status:409,json:{accepted:false,error:'This rendering fixture refuses effects.'}});
     }
     if(body.action==='view.update')state={...state,revision:state.revision+1,view:{...state.view,...body.args.patch}};
+    if(responsive&&body.action==='canvas.visibility')state={...state,revision:state.revision+1,canvas:{...state.canvas,open:body.args.open}};
     return route.fulfill({json:{accepted:true,state:shell.state(),result:{}}});
    }
    return route.fulfill({json:{ok:true}});
