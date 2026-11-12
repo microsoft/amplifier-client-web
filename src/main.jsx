@@ -255,6 +255,8 @@ function App(){
    args={...args,patch:{...args.patch,canvasDraft:{...args.patch.canvasDraft,permissionHistoryKey:key}}};
   }else if(action==='canvas.select'||action==='canvas.visibility'||isNavigationAction(action,args))canvasInputRevision.current++;
   const chatReference=action==='session.select'&&(args.chatReference||args.peerPreview);
+  const handoffNavigation=action==='session.select'&&typeof meta.handoffIsCurrent==='function';
+  if(handoffNavigation&&!meta.handoffIsCurrent())return Promise.resolve({accepted:false,error:'The handoff is no longer in this source chat.'});
   if(chatReference&&meta.chatReferenceIntent!==undefined&&meta.chatReferenceIntent!==archiveRevision.current)
    return Promise.resolve({accepted:false,superseded:true,error:'A newer navigation kept this chat reference from opening.'});
   if(meta.archiveIsCurrent&&!meta.archiveIsCurrent())return Promise.resolve({accepted:false});
@@ -328,10 +330,10 @@ function App(){
   if(action==='view.update'&&Object.keys(args.patch||{}).some(key=>key==='draft'||key.startsWith('canvas')))args={sessionId:latest.current?.selectedSessionId,...args};
   const selectedId=action==='session.select'?args.id:action==='shell.command'&&args.action==='session.select'?args.args?.id:null;
   const openingDraft=action==='session.draft'||action==='shell.command'&&args.action==='session.draft';
-  // References, like external links, keep source controls/editors mounted until
+  // Handoffs and references, like external links, keep source controls mounted until
   // acceptance. The same navigation queue and Settings/Canvas guards still own
   // the transition; rejection must not destroy the control that shows it.
-  const navigationToken=openingDraft?conversationNavigation.current.beginDraft():selectedId&&!meta.chatLink&&!chatReference&&!canvasDirtyBarrier.current?conversationNavigation.current.begin(pendingView.current.apply(latest.current),selectedId,meta.navigationSession):null;
+  const navigationToken=openingDraft?conversationNavigation.current.beginDraft():selectedId&&!meta.chatLink&&!chatReference&&!handoffNavigation&&!canvasDirtyBarrier.current?conversationNavigation.current.begin(pendingView.current.apply(latest.current),selectedId,meta.navigationSession):null;
   if(navigationToken&&serverState.current){latest.current=conversationNavigation.current.apply(serverState.current);setState(pendingView.current.apply(latest.current))}
   if(action==='canvas.visibility')args={sessionId:latest.current?.selectedSessionId??null,canvasId:latest.current?.canvas?.id??null,...args};
   const pending=action==='canvas.visibility'?pendingView.current.addCanvas(latest.current,args.open):action==='view.update'?(meta.pendingViewToken??pendingView.current.add(args.patch||{},args.sessionId)):null;
@@ -361,6 +363,7 @@ function App(){
    if((navigation||['question.answer','question.cancel','question.supersede','canvas.views.loadVersion'].includes(action))&&dirtyBarrier)await dirtyBarrier;
    if(capabilityMutation)capabilityStopFence.current.assertMutation(args,meta.capabilityRead);
    if(meta.chatLink&&!meta.chatLinkIsCurrent())return {accepted:false};
+   if(handoffNavigation&&!meta.handoffIsCurrent())return {accepted:false,error:'The handoff is no longer in this source chat.'};
    if(meta.archiveIsCurrent&&!meta.archiveIsCurrent())return {accepted:false};
    if(chatReference&&(meta.chatReferenceIntent!==archiveRevision.current||
      latest.current?.selectedSessionId!==chatReference.sourceSessionId))

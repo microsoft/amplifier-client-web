@@ -167,3 +167,92 @@ test('a changed source discards local reads and cannot adopt a late result for t
  await act(async()=>root.update(view(current,dispatch)));
  assert.deepEqual(activeIds(),['request']);assert.equal(history().length,0);
 });
+
+test('Open chat keeps its scoped navigation fence until acceptance, refusal or unknown settles',async()=>{
+ const calls=[];let finish;
+ const dispatch=(action,args,meta)=>{calls.push({action,args,meta});return new Promise((resolve,reject)=>{finish={resolve,reject}})};
+ await act(async()=>{root=create(view(state(accepted),dispatch))});
+ await act(async()=>{button('session.select').props.onClick();button('session.select').props.onClick()});
+ assert.equal(calls.length,1);assert.equal(calls[0].action,'session.select');
+ assert.deepEqual(calls[0].args,{id:'target'});assert.equal(calls[0].meta.handoffIsCurrent(),true);
+ assert.equal(button('session.select').props.disabled,true);
+ await act(async()=>finish.resolve({accepted:false,error:'Settings changes were kept.'}));
+ assert.deepEqual(activeIds(),['request']);assert.equal(history().length,0);
+ assert.equal(root.root.findByProps({role:'alert'}).children.join(''),'Settings changes were kept.');
+ for(const outcome of ['unknown','missing-acceptance']){
+  await act(async()=>{button('session.select').props.onClick();button('session.select').props.onClick()});
+  assert.equal(button('session.select').props.disabled,true);
+  if(outcome==='unknown')await act(async()=>finish.reject(Error('Connection lost')));
+  else await act(async()=>finish.resolve({}));
+  assert.deepEqual(activeIds(),['request']);assert.equal(history().length,0);
+  assert.ok(root.root.findByProps({role:'alert'}).children.join(''));
+ }
+ assert.equal(calls.length,3);
+ await act(async()=>{button('session.select').props.onClick()});
+ const latestFence=calls.at(-1).meta.handoffIsCurrent;
+ await act(async()=>root.update(view(state(accepted,'other'),dispatch)));
+ assert.equal(latestFence(),false,'A queued navigation cannot outlive its source view');
+ await act(async()=>finish.reject(Error('Late refusal')));
+ assert.equal(root.toJSON(),null);
+ await act(async()=>root.update(view(state(accepted),dispatch)));
+ assert.deepEqual(pastIds(),['request']);assert.doesNotMatch(text(),/Late refusal/);
+});
+
+test('rotating bounded projection discards old local reads and errors rather than retaining briefs',async()=>{
+ const entries=Array.from({length:24},(_,index)=>({...accepted,requestId:`rotating-${index}`,revision:2,status:'unknown',delivery:'unknown',text:`Projected brief ${index}`}));
+ const calls=[];
+ const dispatch=async(action,args)=>{
+  calls.push(action);
+  if(args.requestId==='rotating-0')throw Error('Old local error');
+  return {accepted:true,result:{...entries.find(entry=>entry.requestId===args.requestId),revision:100,status:'accepted',delivery:'accepted',text:'Local-only returned brief'}};
+ };
+ await act(async()=>{root=create(view(state(entries.slice(0,4)),dispatch))});
+ for(let offset=0;offset<entries.length;offset+=4){
+  await act(async()=>root.update(view(state(entries.slice(offset,offset+4)),dispatch)));
+  const reads=root.root.findAllByType('button').filter(node=>node.props['data-action']==='session.handoff.read');
+  for(const read of reads)await act(async()=>read.props.onClick());
+ }
+ assert.equal(calls.length,24);
+ // Returning the same IDs with older stream rows must not revive evicted local
+ // receipts, retained full briefs, errors or a compact success presentation.
+ for(let offset=0;offset<entries.length;offset+=4){
+  await act(async()=>root.update(view(state(entries.slice(offset,offset+4)),dispatch)));
+  assert.deepEqual(activeIds(),entries.slice(offset,offset+4).map(entry=>entry.requestId));
+  assert.equal(history().length,0);assert.doesNotMatch(text(),/Local-only returned brief|Old local error/);
+ }
+ assert.equal(calls.length,24,'Window rotation never reads or replays effects');
+});
+
+test('completion of an evicted in-flight read cannot resurrect its result or error',async()=>{
+ let finish;const dispatch=()=>new Promise((resolve,reject)=>{finish={resolve,reject}});
+ const unknown={...accepted,revision:2,status:'unknown',delivery:'unknown'};
+ const neighbor={...accepted,requestId:'neighbor'};
+ await act(async()=>{root=create(view(state([unknown,neighbor]),dispatch))});
+ for(const outcome of ['accepted','error']){
+  await act(async()=>{button('session.handoff.read').props.onClick()});
+  await act(async()=>root.update(view(state(neighbor),dispatch)));
+  if(outcome==='accepted')await act(async()=>finish.resolve({accepted:true,result:{...accepted,revision:99,text:'Evicted returned brief'}}));
+  else await act(async()=>finish.reject(Error('Evicted read error')));
+  await act(async()=>root.update(view(state([unknown,neighbor]),dispatch)));
+  assert.deepEqual(activeIds(),['request']);
+  assert.deepEqual(pastIds(),['neighbor']);
+  assert.doesNotMatch(text(),/Evicted returned brief|Evicted read error/);
+  assert.equal(button('session.handoff.read').props.disabled,false);
+ }
+});
+
+test('a projected-again pending receipt stays fenced until its original call settles',async()=>{
+ const unknown={...accepted,revision:2,status:'unknown',delivery:'unknown'};
+ const neighbor={...accepted,requestId:'neighbor'};
+ let finish,calls=0;const dispatch=()=>{calls++;return new Promise(resolve=>{finish=resolve})};
+ await act(async()=>{root=create(view(state([unknown,neighbor]),dispatch))});
+ await act(async()=>{button('session.handoff.read').props.onClick()});
+ await act(async()=>root.update(view(state(neighbor),dispatch)));
+ await act(async()=>root.update(view(state([unknown,neighbor]),dispatch)));
+ assert.equal(button('session.handoff.read').props.disabled,true);
+ await act(async()=>button('session.handoff.read').props.onClick());
+ assert.equal(calls,1);
+ await act(async()=>finish({accepted:true,result:accepted}));
+ assert.deepEqual(activeIds(),[]);assert.deepEqual(pastIds(),['request','neighbor']);
+ assert.equal(button('session.handoff.read').props.disabled,false);
+});

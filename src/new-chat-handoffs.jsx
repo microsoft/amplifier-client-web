@@ -40,30 +40,53 @@ function HandoffList({rows,dispatch}){
  // cannot discard an error or an unconfirmed action. Nothing is persisted/replayed.
  const [interactions,setInteractions]=useState({});
  const running=useRef(new Set()),section=useRef(null),historySummary=useRef(null),focused=useRef(null);
+ const mounted=useRef(false),projected=useRef(new Set());
+ useLayoutEffect(()=>{mounted.current=true;return()=>{mounted.current=false}},[]);
+ useLayoutEffect(()=>{
+  projected.current=new Set(rows.map(row=>row.requestId));
+  setInteractions(previous=>{
+   const kept=Object.entries(previous).filter(([id])=>projected.current.has(id)||running.current.has(id));
+   return kept.length===Object.keys(previous).length?previous:Object.fromEntries(kept);
+  });
+ },[rows]);
  const entries=rows.map(row=>{
   const interaction=interactions[row.requestId]||{},read=interaction.read;
   const receipt=read&&read.revision>row.revision?read:row;
   return {receipt,interaction,compact:isSettled(receipt)&&!interaction.error&&!interaction.unconfirmed};
  });
  const active=entries.filter(entry=>!entry.compact),past=entries.filter(entry=>entry.compact);
- const update=(id,patch)=>setInteractions(previous=>({...previous,[id]:{...previous[id],...patch}}));
+ const update=(id,patch)=>{
+  if(!mounted.current)return;
+  setInteractions(previous=>{
+   // An evicted in-flight row stays fenced until settlement.
+   // A late result must not restore its brief/error after it leaves the window.
+   if(!projected.current.has(id)){
+    if(running.current.has(id)||!Object.hasOwn(previous,id))return previous;
+    const next={...previous};delete next[id];return next;
+   }
+   const prior=previous[id]||{};
+   return {...previous,[id]:{...prior,...(typeof patch==='function'?patch(prior):patch)}};
+  });
+ };
  async function perform(action,receipt){
   const id=receipt.requestId;
-  if(running.current.has(id))return;
+  if(!mounted.current||!projected.current.has(id)||running.current.has(id))return;
   running.current.add(id);update(id,{busy:true,...(action==='confirm'?{unconfirmed:true}:{})});
   try{
-   if(action==='open')await dispatch('session.select',{id:receipt.targetSessionId});
+   if(action==='open'){
+    const response=await dispatch('session.select',{id:receipt.targetSessionId},{
+     handoffIsCurrent:()=>mounted.current&&projected.current.has(id),
+    });
+    if(response?.accepted!==true)throw Error(response?.error||'Opening this chat could not be confirmed. Check the current selection before trying again.');
+    update(id,{error:''});
+   }
    else{
     const args={requestId:id,...(action==='confirm'?{reviewHash:receipt.reviewHash}:{})};
     const response=await dispatch('session.handoff.'+action,args,{feedback:false}),read=response?.result;
     if(response?.accepted!==true||read?.requestId!==id||read?.sourceSessionId!==receipt.sourceSessionId||!Number.isSafeInteger(read?.revision))
      throw Error('The result could not be confirmed. Check delivery before taking another action.');
-    setInteractions(previous=>{
-     const prior=previous[id]||{};
-     return {...previous,[id]:{...prior,read:prior.read?.revision>read.revision?prior.read:read,error:'',unconfirmed:false}};
-    });
+    update(id,prior=>({read:prior.read?.revision>read.revision?prior.read:read,error:'',unconfirmed:false}));
    }
-   if(action==='open')update(id,{error:''});
   }catch(e){update(id,{error:e.message||'The result could not be confirmed. Check delivery before taking another action.'})}
   finally{running.current.delete(id);update(id,{busy:false})}
  }

@@ -12,7 +12,7 @@ let state={revision:1,settings:{workspace:'/existing'},runtime:{available:true},
  workspaces:[{id:'project',name:'Existing',path:'/existing',available:true}],selectedSessionId:null,selectedWorkspaceId:'project',
  setup:{providers:[{id:'fixture',module:'provider-fixture',config:{model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/existing'},
  registeredBundles:[{value:'work',label:'Work'}],draftDefaults:Object.fromEntries(['/missing','/existing'].map(workspace=>[JSON.stringify([workspace,'']),{phase:'ready',bundle:'work',effective:{instance:'fixture',model:'fixture-model'},providers:[{id:'fixture'}]}])),canvas:{open:false}};
-const calls=[],workers=[],folders=[],errors=[],handoffReads=[],externalRequests=[],heldStateReads=[];let browser,vite,page,blockHandoffNavigation=false,holdStateReads=false;
+const calls=[],workers=[],folders=[],errors=[],handoffReads=[],handoffNavigations=[],externalRequests=[],heldStateReads=[];let browser,vite,page,holdHandoffNavigation=false,holdStateReads=false;
 const shell=createShellHttpFixture(()=>state);
 const draftScope=JSON.stringify([shell.state().client.historyScope||shell.state().client.hostInstanceId,null,null]);
 const action=(name,args={})=>page.evaluate(([name,args])=>window.amplifier.dispatch(name,args),[name,args]);
@@ -43,7 +43,7 @@ try{
   const body=original.action==='shell.command'?{...original,action:original.args.action,args:original.args.args}:original.action==='shell.view.update'?{...original,action:'view.update'}:original;
   if(body.action==='session.handoff.read'){handoffReads.push({route,body});return}
   if(body.action==='session.select'){
-   if(blockHandoffNavigation)return route.fulfill({status:409,json:{accepted:false,error:'Navigation blocked for fixture'}});
+   if(holdHandoffNavigation){handoffNavigations.push({route,body});return}
    state.selectedSessionId=body.args.id;
   }
   if(body.action==='view.update')state.view={...state.view,...body.args.patch};
@@ -190,7 +190,9 @@ try{
   await page.keyboard.press('Tab');
   await expect(receipt('past-0').getByRole('button',{name:'Open chat',exact:true})).toBeFocused();
   const detail=receipt('past-5').locator(':scope > details');
-  await detail.locator('summary').focus();await page.keyboard.press('Space');
+  if(!await detail.evaluate(node=>node.open)){await detail.locator('summary').focus();await page.keyboard.press('Space')}
+  await expect(detail).toHaveAttribute('open','');
+  await expect(detail.locator('pre')).toBeVisible();
   await expect(detail.locator('pre')).toHaveText(baseline.text);
   await expect(handoffs.locator('script')).toHaveCount(0);
   const layout=await handoffs.evaluate(element=>({
@@ -242,25 +244,82 @@ try{
  await expect(handoffs.locator(':scope > [data-handoff-id="unknown"]').getByRole('alert')).toContainText('Delivery read unavailable');
  await expect(summary).toHaveText('Past handoffs (7)');await screenshot('read-error-visible');
  await expect(composer).toHaveDraft('Keep this source draft');
+ // Moving focus away during a read supersedes the component's focus restoration.
+ await receipt('unknown').getByRole('button',{name:'Check delivery',exact:true}).click();
+ await expect.poll(()=>handoffReads.length).toBe(1);
+ await composer.focus();await expect(composer).toBeFocused();
+ await handoffReads.shift().route.fulfill({json:{accepted:true,result:{...baseline,requestId:'unknown',revision:7}}});
+ await expect(summary).toHaveText('Past handoffs (8)');
+ await expect(receipt('unknown')).not.toBeVisible();
+ await expect(composer).toBeFocused();await expect(composer).toHaveDraft('Keep this source draft');
  const handoffActions=()=>calls.slice(startHandoffCalls).map(raw=>raw.action==='shell.command'?{...raw,action:raw.args.action,args:raw.args.args}:raw);
  assert.deepEqual(handoffActions().filter(row=>row.action.startsWith('session.handoff.')).map(row=>row.action),
-  ['session.handoff.read','session.handoff.read','session.handoff.read']);
+  ['session.handoff.read','session.handoff.read','session.handoff.read','session.handoff.read']);
  assert.equal(handoffActions().filter(row=>/^(conversation\.(send|retry)|session\.(create|select)|worker\.spawn)$/.test(row.action)).length,0);
- // Expansion is local. Navigation happens only on the ordinary explicit control.
+ // The target is already in the real client's session list: optimistic selection
+ // would unmount the source card before these delayed failures could show.
+ await page.setViewportSize({width:1280,height:900});
  await summary.focus();await page.keyboard.press('Enter');
- blockHandoffNavigation=true;
- await receipt('past-0').getByRole('button',{name:'Open chat',exact:true}).click();
- await expect(handoffs.locator(':scope > [data-handoff-id="past-0"]').getByRole('alert')).toContainText('Navigation blocked for fixture');
- await expect(receipt('past-0').locator(':scope > details > summary')).toBeFocused();
- await expect(page.getByRole('banner')).toContainText('Previous conversation');
+ assert.ok((await page.evaluate(()=>window.amplifier.getState())).sessions.some(row=>row.id==='created'));
+ const navigationCount=()=>handoffActions().filter(row=>row.action==='session.select').length;
+ holdHandoffNavigation=true;
+ for(const [id,outcome] of [['past-0','rejected'],['past-1','unknown']]){
+  const openChat=receipt(id).getByRole('button',{name:'Open chat',exact:true}),before=navigationCount();
+  await openChat.click();await expect.poll(()=>handoffNavigations.length).toBe(1);
+  await expect(page.getByRole('banner')).toContainText('Previous conversation');
+  await expect(handoffs).toBeVisible();await expect(openChat).toBeDisabled();
+  await expect(composer).toHaveDraft('Keep this source draft');
+  assert.equal((await page.evaluate(()=>window.amplifier.getState())).selectedSessionId,'old');
+  await openChat.evaluate(node=>node.click());await emit();
+  assert.equal(navigationCount(),before+1,'Reentry while navigation is pending must not post again');
+  const pending=handoffNavigations.shift();assert.deepEqual(pending.body.args,{id:'created'});
+  if(outcome==='rejected')await pending.route.fulfill({status:409,json:{accepted:false,error:'Navigation blocked for fixture'}});
+  else await pending.route.abort('failed');
+  const prominent=handoffs.locator(`:scope > [data-handoff-id="${id}"]`);
+  await expect(prominent.getByRole('alert')).toBeVisible();
+  if(outcome==='rejected')await expect(prominent.getByRole('alert')).toContainText('Navigation blocked for fixture');
+  await expect(prominent.getByRole('button',{name:'Open chat',exact:true})).toBeEnabled();
+  await expect(prominent.locator(':scope > details > summary')).toBeFocused();
+  await emit();
+  await expect(prominent.getByRole('alert')).toBeVisible();
+  await expect(page.getByRole('banner')).toContainText('Previous conversation');
+  await expect(composer).toHaveDraft('Keep this source draft');
+  assert.equal(navigationCount(),before+1,'Failure/unknown never automatically reopens a chat');
+  await screenshot(`navigation-${outcome}-visible`);
+ }
+ holdHandoffNavigation=false;
+ // Use the real dirty-settings registry, prompt and local accepted:false path,
+ // with a private synthetic key draft beside the source chat. Never save it.
+ state.canvas={id:'handoff-settings',kind:'settings',title:'Settings',open:true};
+ state.voiceConfiguration={source:'private',available:false,environmentAvailable:false};
+ state.view={...state.view,settingsExpanded:['voice'],canvasFocused:false,canvasControlsExpanded:false};
+ await emit();
+ const settings=page.locator('.a-settings-canvas'),voiceKey=settings.locator('#voice-api-key');
+ await expect(voiceKey).toBeVisible();await voiceKey.fill('synthetic-unsaved-key');
+ await expect(settings.getByText('You have unsaved settings changes. They are kept while Settings stays open.',{exact:true})).toBeVisible();
+ const beforeGuard=navigationCount(),guardOpen=receipt('past-2').getByRole('button',{name:'Open chat',exact:true});
+ await guardOpen.click();
+ const guard=page.getByRole('alertdialog',{name:'Unsaved settings changes',exact:true});
+ await expect(guard).toBeVisible();await expect(guardOpen).toBeDisabled();
+ await guardOpen.evaluate(node=>node.click());
+ await guard.getByRole('button',{name:'Keep settings open',exact:true}).click();
+ await expect(guard).toHaveCount(0);
+ await expect(handoffs.locator(':scope > [data-handoff-id="past-2"]').getByRole('alert')).toHaveText('Settings changes were kept.');
+ await expect(voiceKey).toHaveValue('synthetic-unsaved-key');
  await expect(composer).toHaveDraft('Keep this source draft');
- blockHandoffNavigation=false;
+ assert.equal(navigationCount(),beforeGuard,'Declining the actual dirty guard sends no selection');
+ assert.equal(handoffActions().filter(row=>row.action==='voice.configure').length,0,'Private fixture draft is never submitted');
+ await screenshot('navigation-guard-declined');
+ await voiceKey.fill('');
+ await expect(settings.getByText('You have unsaved settings changes. They are kept while Settings stays open.',{exact:true})).toHaveCount(0);
+ state.canvas={open:false};await emit();
+ // A fresh explicit click may navigate after failure; no retry was automatic.
  await receipt('past-0').getByRole('button',{name:'Open chat',exact:true}).click();
  await expect(page.getByRole('banner')).toContainText('Created conversation');
- assert.deepEqual(handoffActions().filter(row=>row.action==='session.select').map(row=>row.args),[{id:'created'},{id:'created'}]);
+ assert.deepEqual(handoffActions().filter(row=>row.action==='session.select').map(row=>row.args),[{id:'created'},{id:'created'},{id:'created'}]);
  assert.equal(handoffActions().filter(row=>/^(conversation\.(send|retry)|session\.create)$/.test(row.action)).length,0);
  assert.deepEqual(externalRequests,[]);
  assert.deepEqual(errors,[]);
- console.log('New chat recovery passed: truthful new-chat header; scoped persisted failed-message discard; inline creation error; corrected-path retry with canonical created-chat identity sends once; worker success persists reset; failure/local and shared newer drafts retained; modal error dismissal; compact past handoffs at 320/1280px; native disclosure and focus; local delivery regroup; stale read ordering; visible errors; explicit navigation only. Zero model calls.');
+ console.log('New chat recovery passed: truthful new-chat header; scoped persisted failed-message discard; inline creation error; corrected-path retry with canonical created-chat identity sends once; worker success persists reset; failure/local and shared newer drafts retained; modal error dismissal; compact past handoffs and visible details at 320/1280px; native disclosure and moved-away focus; local delivery regroup; stale read ordering; known-target delayed rejection/unknown and actual dirty-guard decline keep errors and drafts; explicit navigation only. Zero model calls.');
 }catch(error){console.error('Recovery fixture evidence:',JSON.stringify({errors,body:await page?.locator('body').innerText().catch(()=>''),actions:calls.map(row=>({action:row.action,id:row.id}))}));throw error}
 finally{await browser?.close();await vite?.close()}
