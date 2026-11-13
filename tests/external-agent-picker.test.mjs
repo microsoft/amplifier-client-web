@@ -21,7 +21,7 @@ test('catalog choice updates only the private draft id and never launches or dis
   assert.deepEqual(calls,[['externalAgents.list',{}]]);
   assert.deepEqual(root.root.findAllByType('option').map(node=>node.children.join('')),['Amplifier','My Instance']);
   await act(async()=>root.root.findByType('select').props.onChange({target:{value:'remote'}}));
-  assert.deepEqual(calls[1],['view.update',{patch:{newSessionDraft:{...base.view.newSessionDraft,externalAgentId:'remote',externalAgentIds:[]}}}]);
+  assert.deepEqual(calls[1],['view.update',{patch:{newSessionDraft:{...base.view.newSessionDraft,externalAgentId:'remote'}}}]);
   assert.equal(root.root.findByType('select').props.value,'','selection follows the acknowledged parent draft');
   assert.equal(calls.length,2);
  }finally{await act(async()=>root?.unmount())}
@@ -36,7 +36,7 @@ test('a missing saved choice stays unavailable until the user explicitly chooses
   assert.equal(root.root.findAllByType('option').find(node=>node.props.value==='removed').children.join(''),'removed — unavailable');
   assert.equal(calls.length,1);
   await act(async()=>root.root.findByType('select').props.onChange({target:{value:''}}));
-  assert.deepEqual(calls[1][1].patch.newSessionDraft,{...state.view.newSessionDraft,externalAgentId:'',externalAgentIds:[]});
+  assert.deepEqual(calls[1][1].patch.newSessionDraft,base.view.newSessionDraft);
  }finally{await act(async()=>root?.unmount())}
 });
 
@@ -103,7 +103,7 @@ test('adding an independent second agent preserves the draft and cannot select a
   assert.equal(extra.findAllByType('option').find(node=>node.props.value==='remote').props.disabled,true);
   await act(async()=>extra.props.onChange({target:{value:'remote'}}));assert.equal(calls.length,1);
   await act(async()=>extra.props.onChange({target:{value:'second'}}));
-  assert.deepEqual(calls[1],['view.update',{patch:{newSessionDraft:{...state.view.newSessionDraft,externalAgentId:'',externalAgentIds:['remote','second']}}}]);
+  assert.deepEqual(calls[1],['view.update',{patch:{newSessionDraft:{...base.view.newSessionDraft,externalAgentIds:['remote','second']}}}]);
   assert.equal(calls.length,2,'Adding a participant does not launch an agent or create a conversation');
  }finally{await act(async()=>root?.unmount())}
 });
@@ -117,7 +117,7 @@ test('a missing group member stays selected and choosing Amplifier explicitly cl
   assert.equal(extra.props.value,'missing');
   assert.equal(extra.findAllByType('option').find(node=>node.props.value==='missing').children.join(''),'missing — unavailable');
   await act(async()=>root.root.findByProps({'aria-label':'Agent for new chat'}).props.onChange({target:{value:''}}));
-  assert.deepEqual(calls[1][1].patch.newSessionDraft,{...state.view.newSessionDraft,externalAgentId:'',externalAgentIds:[]});
+  assert.deepEqual(calls[1][1].patch.newSessionDraft,base.view.newSessionDraft);
  }finally{await act(async()=>root?.unmount())}
 });
 
@@ -127,6 +127,6 @@ test('removing a second participant returns to the ordinary single-agent draft',
  try{
   await act(async()=>{root=create(React.createElement(ExternalAgentPicker,{state,act:dispatch}))});
   await act(async()=>root.root.findByProps({'aria-label':'Additional agent 1'}).props.onChange({target:{value:''}}));
-  assert.deepEqual(calls[1][1].patch.newSessionDraft,{...state.view.newSessionDraft,externalAgentId:'remote',externalAgentIds:[]});
+  assert.deepEqual(calls[1][1].patch.newSessionDraft,{...base.view.newSessionDraft,externalAgentId:'remote'});
  }finally{await act(async()=>root?.unmount())}
 });

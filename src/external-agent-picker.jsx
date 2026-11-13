@@ -26,7 +26,8 @@ export function ExternalAgentPicker({state,act,refreshKey,disabled=false}){
   else if(value)ids[index]=value;
   else ids.splice(index,1);
   setAdding(false);
-  return perform('view.update',{patch:{newSessionDraft:{...draft,externalAgentId:ids.length===1?ids[0]:'',externalAgentIds:ids.length>1?ids:[]}}});
+  const {externalAgentId,externalAgentIds,...rest}=draft||{};
+  return perform('view.update',{patch:{newSessionDraft:{...rest,...(ids.length===1?{externalAgentId:ids[0]}:ids.length?{externalAgentIds:ids}:{})}}});
  }
  async function perform(action,args){
   if(disabled||pending.current)return;
