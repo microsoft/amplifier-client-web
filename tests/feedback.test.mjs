@@ -108,6 +108,33 @@ test('historical report waits for a retiring editor save and keeps newest text, 
  await renderAct(async()=>root.unmount());
 });
 
+test('historical report waits for retiring file staging and preserves its attachment with exact binding',async()=>{
+ let root,release,staging,opening;const state=base(),calls=[];
+ const file={id:'a'.repeat(32),name:'saved.txt',mime:'text/plain',size:3};
+ const failureContext={sessionId:'chat',inputId:'original',generationId:'original-generation'};
+ const action=async(name,args)=>{
+  calls.push({name,args:structuredClone(args)});
+  if(name==='feedback.attachment.add')return new Promise(resolve=>{release=()=>resolve({accepted:true,state:{view:{feedbackDraft:{...draft,attachments:[file]}}}})});
+  if(name==='view.update')state.view={...state.view,...args.patch};
+  return {accepted:true};
+ };
+ const prior=globalThis.FileReader;
+ globalThis.FileReader=class{readAsDataURL(){this.result='data:text/plain;base64,YWJj';this.onload()}};
+ try{
+  await renderAct(async()=>{root=create(React.createElement(FeedbackPanel,{state,act:action}))});
+  await renderAct(async()=>{staging=root.root.findByProps({'aria-label':'Choose feedback files'}).props.onChange({target:{files:[{name:'saved.txt',size:3}],value:''}})});
+  await renderAct(async()=>root.unmount());
+  await renderAct(async()=>{opening=openProblemReport(state,action,failureContext)});
+  assert.equal(calls.some(row=>row.args?.patch?.panel==='feedback'),false);
+  await renderAct(async()=>{release();await staging;await opening});
+  assert.deepEqual(state.view.feedbackDraft.attachments,[file]);
+  assert.deepEqual(state.view.feedbackDraft.failureContext,failureContext);
+  assert.equal(state.view.feedbackDraft.body,draft.body);
+  await renderAct(async()=>new Promise(resolve=>setTimeout(resolve,20)));
+  assert.deepEqual(state.view.feedbackDraft.failureContext,failureContext);
+ }finally{globalThis.FileReader=prior}
+});
+
 test('local report prepares only exact supplied text and does not submit or overwrite a draft',async()=>{
  const calls=[];let root;
  try{

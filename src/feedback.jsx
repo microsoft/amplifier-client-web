@@ -29,11 +29,12 @@ export function FeedbackPanel({state,act}){
  const alive=useRef(true);useEffect(()=>{alive.current=true;return()=>{alive.current=false}},[]);
  const [draft,setDraft]=useState(()=>shared||empty()),[busy,setBusy]=useState(false),[error,setError]=useState(''),[uploading,setUploading]=useState(false),[dragging,setDragging]=useState(false),[retryUpload,setRetryUpload]=useState(null);
  const current=useRef(draft),submitting=useRef(false),fileInput=useRef(null),staging=useRef(false),dirty=useRef(false),timer=useRef(null),saving=useRef(null);
+ const attachmentWork=useRef(null);
  const edited=useRef(false);
  useEffect(()=>{
-  const editor={flush,value:()=>current.current,edited:()=>edited.current};
+  const editor={flush:settleDraft,value:()=>current.current,edited:()=>edited.current};
   draftEditors.add(editor);
-  return()=>{clearTimeout(timer.current);void flush().catch(()=>{}).finally(()=>draftEditors.delete(editor))};
+  return()=>{clearTimeout(timer.current);void settleDraft().catch(()=>{}).finally(()=>draftEditors.delete(editor))};
  },[]);
  useEffect(()=>{if(shared&&!dirty.current&&!submitting.current){current.current=shared;setDraft(shared)}},[shared]);
  const requests=state.feedback?.requests||[],pending=draft.pending;
@@ -60,9 +61,15 @@ export function FeedbackPanel({state,act}){
  }
  function save(next){edited.current=true;current.current=next;dirty.current=true;setDraft(next);return flush()}
  function edit(patch){edited.current=true;setError('');current.current={...current.current,...patch};dirty.current=true;setDraft(current.current);clearTimeout(timer.current);timer.current=setTimeout(()=>flush().catch(()=>setError('The draft could not be saved. Reconnect and try again.')),250)}
+ function attachmentStarted(){
+  let finish;attachmentWork.current=new Promise(resolve=>finish=resolve);
+  return()=>{attachmentWork.current=null;finish()};
+ }
+ async function settleDraft(){if(attachmentWork.current)await attachmentWork.current;await flush()}
  function setPreview(id){edit({previewId:id})}
  async function stageExcerpt(args){
   if(staging.current||current.current.pending)throw Error('Wait for the current attachment or submission to finish.');
+  const finish=attachmentStarted();
   staging.current=true;setUploading(true);
   try{
    await flush();
@@ -70,11 +77,12 @@ export function FeedbackPanel({state,act}){
    const response=await act('feedback.excerpt.stage',args);
    if(!response?.result)throw Error('The excerpt was not attached. Check the same review again.');
    if(alive.current&&selectedSession.current===args.id)acceptDraft(response);
-  }finally{staging.current=false;setUploading(false)}
+  }finally{staging.current=false;setUploading(false);finish()}
  }
- function acceptDraft(response){const next=response?.state?.view?.feedbackDraft;if(next){const changed=JSON.stringify(next.attachments)!==JSON.stringify(current.current.attachments);current.current={...current.current,attachments:next.attachments,...(changed?{confirmExcerpts:false,confirmedExcerpts:[],uploadDestination:null,confirmedFiles:[]}: {})};setDraft(current.current);if(changed){dirty.current=true;void flush().catch(()=>setError('The updated attachment list could not be saved.'))}}}
+ function acceptDraft(response){const next=response?.state?.view?.feedbackDraft;if(next){const changed=JSON.stringify(next.attachments)!==JSON.stringify(current.current.attachments);current.current={...current.current,attachments:next.attachments,...(changed?{confirmExcerpts:false,confirmedExcerpts:[],uploadDestination:null,confirmedFiles:[]}: {})};setDraft(current.current);if(changed){edited.current=true;dirty.current=true;void flush().catch(()=>setError('The updated attachment list could not be saved.'))}}}
  async function stageFiles(files,retry){
   if(staging.current||current.current.pending)return;
+  const finish=attachmentStarted();
   staging.current=true;setUploading(true);setError('');setDragging(false);
   try{
    await flush();
@@ -86,9 +94,9 @@ export function FeedbackPanel({state,act}){
     catch(error){setRetryUpload(request);throw error}
    }
   }catch(error){setError(error?.message||'The file could not be added. Check the draft and retry; it will not be added twice.')}
-  finally{staging.current=false;setUploading(false)}
+  finally{staging.current=false;setUploading(false);finish()}
  }
- async function removeFile(id){if(frozen)return;setError('');try{await flush();acceptDraft(await act('feedback.attachment.remove',{id}));if(preview===id)setPreview(null)}catch(error){setError(error?.message||'The attachment could not be removed.')}}
+ async function removeFile(id){if(frozen||staging.current)return;const finish=attachmentStarted();staging.current=true;setUploading(true);setError('');try{await flush();acceptDraft(await act('feedback.attachment.remove',{id}));if(preview===id)setPreview(null)}catch(error){setError(error?.message||'The attachment could not be removed.')}finally{staging.current=false;setUploading(false);finish()}}
  function paste(event){const files=Array.from(event.clipboardData?.files||[]);if(files.length){event.preventDefault();event.stopPropagation();if(!frozen)stageFiles(files)}}
  function drop(event){if(!event.dataTransfer?.types?.includes('Files'))return;event.preventDefault();event.stopPropagation();setDragging(false);if(!frozen)stageFiles(Array.from(event.dataTransfer.files||[]))}
  async function submit(event){
