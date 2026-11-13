@@ -41,7 +41,7 @@ export function completedTurnEnds(session){
 
 export function StreamingMessage({session,state,embedded=false}){
  if(!session?.streaming)return null;
- const message={id:session.streamingId||'streaming',role:'assistant',source:'amplifier',inputId:session.streamingInputId,streaming:true};
+ const message={id:session.streamingId||'streaming',role:'assistant',source:session.externalAgent?'external':'amplifier',inputId:session.streamingInputId,streaming:true};
  const body=<div className="a-message-body"><Markdown text={session.streaming}/></div>;
  return isVoiceWorkMessage(message)?<VoiceWorkMessage key={session.id+':'+message.id} message={message} session={session} state={state} embedded={embedded}>{body}</VoiceWorkMessage>:
   <article className="a-message a-assistant">{session.externalAgent&&<p className="a-message-attribution">{externalAgentLabel(session,session.externalAgent.activeAgentId||session.externalAgent.id)}</p>}{body}</article>;
