@@ -18,7 +18,7 @@ const sourceB={historyScope:'synthetic-host/account-b',hostInstanceId:'fixture-h
 const workspace='/fixture',createdId='created',nativeId='native-created';
 const createdScope=JSON.stringify([sourceA.historyScope,workspace,nativeId]);
 const newScope=JSON.stringify([sourceA.historyScope,null,null]);
-const allCases=['accepted','late-success','late-session-busy','unconfirmed-creation','late-creation','pending-next-draft'];
+const allCases=['accepted','late-success','late-session-busy','unconfirmed-creation','late-creation','pending-next-draft','legacy-failed'];
 const selectedCases=process.env.AMPLIFIER_DELIVERY_NEW_CHAT_CASE?[process.env.AMPLIFIER_DELIVERY_NEW_CHAT_CASE]:allCases;
 assert.ok(selectedCases.every(kind=>allCases.includes(kind)),`Unknown AMPLIFIER_DELIVERY_NEW_CHAT_CASE; choose ${allCases.join(', ')}`);
 const cases=[],reports=[];let vite,browser;
@@ -181,9 +181,18 @@ async function runCase(kind){
   assert.equal((await current()).selectedSessionId,null);
   assert.deepEqual(await outbox(),[]);
   const submitted=`First new-chat request: ${kind}`;
-  await composer.fill(submitted);
-  const sendButton=page.getByRole('button',{name:'Send message',exact:true});
-  await expect(sendButton).toBeEnabled();await sendButton.click();
+  if(kind==='legacy-failed'){
+   await page.evaluate(({key,scope,text})=>sessionStorage.setItem(key,JSON.stringify([{
+    id:'legacy-failed',commandId:'old-failed',sessionId:null,scope,text,attachmentIds:[],status:'failed',
+    creation:{id:'old-creation',setup:{workspace:'/fixture'}},
+   }])),{key:outboxKey,scope:newScope,text:submitted});
+   await page.reload();await expect(composer).toBeVisible();
+   await page.getByRole('button',{name:'Retry',exact:true}).click();
+  }else{
+   await composer.fill(submitted);
+   const sendButton=page.getByRole('button',{name:'Send message',exact:true});
+   await expect(sendButton).toBeEnabled();await sendButton.click();
+  }
   await expect.poll(()=>!!creation).toBe(true);
   const beforeCreation=await outbox();
   assert.equal(beforeCreation.length,1);
@@ -351,6 +360,7 @@ async function runCase(kind){
    await reply(creation.route,{sessionId:createdId});
    await expect.poll(()=>!!send).toBe(true);
    assert.equal(send.body.args.sessionId,createdId);
+   assert.deepEqual(send.body.args.expectedSource,{workspace,nativeIdentity:nativeId});
    assert.equal(send.body.args.text,submitted);
    assert.equal(send.body.id,original.commandId);
    await expect.poll(async()=>(await outbox())[0]?.scope).toBe(createdScope);
@@ -358,6 +368,7 @@ async function runCase(kind){
    assert.equal(pending.length,1);
    assert.equal(pending[0].sessionId,createdId);
    assert.equal(pending[0].scope,createdScope);
+   assert.deepEqual(pending[0].expectedSource,send.body.args.expectedSource);
    assert.equal(pending[0].status,'sending');
    assert.equal(pending[0].text,submitted);
    await expect(page.locator(`[data-input-id="${send.body.id}"]`)).toHaveCount(1);
