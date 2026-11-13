@@ -2,7 +2,8 @@ import React,{useEffect,useRef,useState} from 'react';
 import {inputStatus,statusLabel,workingDuration} from './input-status.js';
 import {messageTime} from './message-time';
 import {hostNow} from './api';
-import {ConversationFailure,problemReportPatch} from './conversation-controls';
+import {ConversationFailure} from './conversation-controls';
+import {openProblemReport} from './feedback';
 
 export function InputStatus({message,connected=true,current=true,act,sessionId,state}){
  const status=inputStatus(message),saved=message.displayOnly||!current,live=status?.phase==='working'&&connected&&!saved;
@@ -21,8 +22,7 @@ export function InputStatus({message,connected=true,current=true,act,sessionId,s
   if(!canReport||reportFlight.current)return;
   reportFlight.current=true;setReporting(true);setReportError('');
   try{
-   const response=await act('view.update',{patch:problemReportPatch(state,{sessionId,inputId:status.inputId,generationId})});
-   if(response?.accepted!==true)throw Error('Could not open the report. Nothing was submitted.');
+   await openProblemReport(state,act,{sessionId,inputId:status.inputId,generationId});
   }catch{setReportError('Could not open the report. Nothing was submitted.')}
   finally{reportFlight.current=false;setReporting(false)}
  }

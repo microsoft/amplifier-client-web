@@ -6,7 +6,7 @@ import {create} from 'react-test-renderer';
 import {createServer} from 'vite';
 
 const server=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
-const {FeedbackPanel,FeedbackDiagnostics,LocalFeedbackReport}=await server.ssrLoadModule('/src/feedback.jsx');
+const {FeedbackPanel,FeedbackDiagnostics,LocalFeedbackReport,openProblemReport}=await server.ssrLoadModule('/src/feedback.jsx');
 test.after(()=>server.close());
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 const draft={title:'Canvas bug',body:'A preview stopped responding.',category:'bug',includeDiagnostics:false};
@@ -72,6 +72,39 @@ test('late diagnostic preview cannot replace a different exact request or chat',
  await renderAct(async()=>root.update(React.createElement(FeedbackDiagnostics,{state:{selectedSessionId:'other'},failureContext:{...original,sessionId:'other'},act:action})));
  await renderAct(async()=>{release({result:{diagnostics:{failureReport:'STALE SAVED REQUEST'}}});await pending});
  assert.doesNotMatch(JSON.stringify(root.toJSON()),/STALE SAVED REQUEST/);
+ await renderAct(async()=>root.unmount());
+});
+
+test('historical report waits for a retiring editor save and keeps newest text, binding and pending payload',async()=>{
+ let root,release,opening;const calls=[],state=base();
+ const failureContext={sessionId:'chat',inputId:'saved-input',generationId:'saved-generation'};
+ const action=async(name,args)=>{
+  calls.push({name,args:structuredClone(args)});
+  if(calls.length===1)await new Promise(resolve=>release=resolve);
+  if(name==='view.update')state.view={...state.view,...args.patch};
+  if(name==='feedback.submit')throw Error('lost acknowledgement');
+  return {accepted:true};
+ };
+ await renderAct(async()=>{root=create(React.createElement(FeedbackPanel,{state,act:action}))});
+ await renderAct(async()=>{
+  root.root.findByProps({id:'feedback-body'}).props.onChange({target:{value:'First pending text'}});
+  await new Promise(resolve=>setTimeout(resolve,300));
+ });
+ await renderAct(async()=>root.root.findByProps({id:'feedback-body'}).props.onChange({target:{value:'Newest private draft'} }));
+ await renderAct(async()=>root.unmount());
+ await renderAct(async()=>{opening=openProblemReport(state,action,failureContext)});
+ assert.equal(calls.length,1,'binding must wait for the existing save owner');
+ await renderAct(async()=>{release();await opening});
+ assert.equal(state.view.feedbackDraft.body,'Newest private draft');
+ assert.deepEqual(state.view.feedbackDraft.failureContext,failureContext);
+ assert.equal(calls.at(-1).args.patch.panel,'feedback');
+ await renderAct(async()=>{root=create(React.createElement(FeedbackPanel,{state,act:action}))});
+ await renderAct(async()=>root.root.findByType('form').props.onSubmit({preventDefault(){}}));
+ const pending=state.view.feedbackDraft.pending;
+ assert.deepEqual(pending.failureContext,failureContext);
+ assert.equal(pending.body,'Newest private draft');
+ await renderAct(async()=>new Promise(resolve=>setTimeout(resolve,20)));
+ assert.deepEqual(state.view.feedbackDraft.pending,pending,'no retiring editor may overwrite frozen submission');
  await renderAct(async()=>root.unmount());
 });
 

@@ -131,6 +131,8 @@ test('failed diagnostic copy keeps its complete manual report through equivalent
   const report=JSON.parse(root.root.findByProps({'aria-label':'Diagnostic report'}).props.value);
   assert.equal(report.failure.generationId,'failed-turn');
   assert.equal(report.client.userAgent,'fixture-browser');
+  assert.equal('recentRequests' in report.client,false);
+  assert.equal('recentActions' in report.client,false);
   await renderAct(async()=>root.update(React.createElement(ConversationDetails,{session:{...session,failure:{...failure,recordedAt:43}},act,focused:true})));
   assert.doesNotMatch(JSON.stringify(root.toJSON()),/Copy diagnostic text manually/);
  }finally{await renderAct(async()=>root?.unmount())}

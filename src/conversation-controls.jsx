@@ -3,17 +3,13 @@ import {X,Copy,RefreshCw} from 'lucide-react';
 import './conversation-controls.css';
 import {readItems} from './attention';
 import {isTopLevelChat} from './chat-navigation';
-import {recentRequestTimings,recentActionTimings} from './api.js';
 import {sessionIdentity} from './navigation-presentation';
 import {ConversationUsage} from './conversation-usage.jsx';
 import {settingsPatch} from './settings-navigation';
+import {openProblemReport} from './feedback';
 
 function recoveryUnsafe(session){
  return ['working','running','starting','stopping'].includes(session.status)||session.configurationBusy||(session.workers||[]).some(worker=>['queued','starting','running','working','stopping'].includes(worker.status));
-}
-
-export function problemReportPatch(state,failureContext=null){
- return {panel:'feedback',feedbackDraft:{...(state?.view?.feedbackDraft||{}),includeDiagnostics:false,failureContext}};
 }
 
 export function ConversationName({session,act,details=true}){
@@ -89,7 +85,7 @@ export function ConversationDetails({session,act,focused=false,open}){
   setCopied('');setCopyReport(null);
   const pending=inspect().then(current=>{
    if(!current||activeIdentity.current!==reportIdentity)return;
-   const captured={...current,client:{userAgent:(navigator.userAgent||'').slice(0,512),language:navigator.language,online:navigator.onLine,visibility:globalThis.document?.visibilityState,recentRequests:recentRequestTimings(),recentActions:recentActionTimings()}};
+   const captured={...current,client:{userAgent:(navigator.userAgent||'').slice(0,512),language:navigator.language,online:navigator.onLine,visibility:globalThis.document?.visibilityState}};
    setCopyReport(captured);return captured;
   });
   if(navigator.clipboard?.write&&typeof ClipboardItem!=='undefined'){
@@ -149,6 +145,11 @@ export function ConversationError({state,session,act}){
  const requestBound=!!(failure?.generationId||failure?.inputId||failure?.inputIds?.length);
  const inputId=failure?.inputId||failure?.inputIds?.[0];
  const failureContext=inputId&&failure?.generationId?{sessionId:session.id,inputId,generationId:failure.generationId}:null;
+ async function report(){
+  if(inFlight.current||state.view?.feedbackDraft?.pending)return;
+  inFlight.current=true;setError('');
+  try{await openProblemReport(state,act,failureContext)}catch(error){setError(error.message)}finally{inFlight.current=false}
+ }
  return <div className="a-alert" role="alert" data-part="conversation-trouble"><span><strong>{failure?.summary||'Something needs attention.'}</strong> {exceptional?failure.guidance:requestBound?'You can send a new instruction when you’re ready.':'Your saved messages are kept. Review the details below.'}</span>
   {recoverable&&<button type="button" className="a-link" data-action="session.recover" disabled={recovering||working} onClick={recover}>{recovering?'Creating recovery copy…':'Create recovery copy'}</button>}
   {failure?.category==='authentication'&&<button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:settingsPatch('ai-connections')})}>AI connections</button>}
@@ -156,7 +157,7 @@ export function ConversationError({state,session,act}){
   <details><summary>Details &amp; reporting</summary>
    {recoverable&&<p>A recovery copy keeps readable text, not old tool calls or image payloads. Safety stops remain; nothing is replayed.</p>}
    <button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{panel:'chat-error'}})}>Technical details</button>
-   <button type="button" className="a-link" data-action="view.update" disabled={!!state.view?.feedbackDraft?.pending} onClick={()=>{if(!state.view?.feedbackDraft?.pending)return act('view.update',{patch:problemReportPatch(state,failureContext)})}}>Report a problem</button>
+   <button type="button" className="a-link" data-action="view.update" disabled={!!state.view?.feedbackDraft?.pending} onClick={report}>Report a problem</button>
   </details>
   {error&&<p role="alert">{error}</p>}
   {item&&<button type="button" aria-label="Dismiss conversation error" data-action="attention.read" onClick={()=>readItems(act,[item])}><X/></button>}

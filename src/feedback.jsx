@@ -11,13 +11,30 @@ import {FeedbackReconcile} from './feedback-lifecycle';
 const empty=()=>({title:'',body:'',category:'bug',includeDiagnostics:false,attachments:[],confirmExcerpts:false,confirmedExcerpts:[],uploadDestination:null,confirmedFiles:[]});
 const sizeLabel=bytes=>bytes<1024?`${bytes} B`:bytes<1024*1024?`${Math.ceil(bytes/1024)} KB`:`${(bytes/(1024*1024)).toFixed(1)} MB`;
 const encodeFile=file=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onerror=()=>reject(new Error('Could not read this file.'));reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.readAsDataURL(file)});
+// Only mounted/retiring editors own draft writes. A report-opening handoff waits
+// for their ordinary saves, including a final save delayed past unmount.
+const draftEditors=new Set();
+export async function openProblemReport(state,act,failureContext=null){
+ const editors=[...draftEditors];
+ await Promise.all(editors.map(editor=>editor.flush()));
+ const draft=editors.findLast(editor=>editor.edited())?.value()||state?.view?.feedbackDraft||{};
+ if(draft.pending)throw Error('Finish checking the existing report before starting another.');
+ const response=await act('view.update',{patch:{panel:'feedback',feedbackDraft:{...draft,includeDiagnostics:false,failureContext}}});
+ if(response?.accepted!==true)throw Error('Could not open the report. Nothing was submitted.');
+ return response;
+}
 export function FeedbackPanel({state,act}){
  const shared=state.view?.feedbackDraft;
  const selectedSession=useRef(state.selectedSessionId);selectedSession.current=state.selectedSessionId;
  const alive=useRef(true);useEffect(()=>{alive.current=true;return()=>{alive.current=false}},[]);
  const [draft,setDraft]=useState(()=>shared||empty()),[busy,setBusy]=useState(false),[error,setError]=useState(''),[uploading,setUploading]=useState(false),[dragging,setDragging]=useState(false),[retryUpload,setRetryUpload]=useState(null);
  const current=useRef(draft),submitting=useRef(false),fileInput=useRef(null),staging=useRef(false),dirty=useRef(false),timer=useRef(null),saving=useRef(null);
- useEffect(()=>()=>{clearTimeout(timer.current);if(dirty.current)void flush().catch(()=>{})},[]);
+ const edited=useRef(false);
+ useEffect(()=>{
+  const editor={flush,value:()=>current.current,edited:()=>edited.current};
+  draftEditors.add(editor);
+  return()=>{clearTimeout(timer.current);void flush().catch(()=>{}).finally(()=>draftEditors.delete(editor))};
+ },[]);
  useEffect(()=>{if(shared&&!dirty.current&&!submitting.current){current.current=shared;setDraft(shared)}},[shared]);
  const requests=state.feedback?.requests||[],pending=draft.pending;
  const result=pending&&requests.find(item=>item.requestId===pending.requestId);
@@ -41,8 +58,8 @@ export function FeedbackPanel({state,act}){
   finally{saving.current=null}
   if(dirty.current)return flush();
  }
- function save(next){current.current=next;dirty.current=true;setDraft(next);return flush()}
- function edit(patch){setError('');current.current={...current.current,...patch};dirty.current=true;setDraft(current.current);clearTimeout(timer.current);timer.current=setTimeout(()=>flush().catch(()=>setError('The draft could not be saved. Reconnect and try again.')),250)}
+ function save(next){edited.current=true;current.current=next;dirty.current=true;setDraft(next);return flush()}
+ function edit(patch){edited.current=true;setError('');current.current={...current.current,...patch};dirty.current=true;setDraft(current.current);clearTimeout(timer.current);timer.current=setTimeout(()=>flush().catch(()=>setError('The draft could not be saved. Reconnect and try again.')),250)}
  function setPreview(id){edit({previewId:id})}
  async function stageExcerpt(args){
   if(staging.current||current.current.pending)throw Error('Wait for the current attachment or submission to finish.');
