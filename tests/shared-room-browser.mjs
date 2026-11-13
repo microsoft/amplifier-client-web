@@ -22,7 +22,7 @@ function initialState(){
 async function runCase(kind){
  const report={case:kind,passed:false,actions:[],errors:[],externalRequests:[]};reports.push(report);
  const context=await browser.newContext({viewport:{width:1280,height:900}}),page=await context.newPage();
- let state=initialState();const shell=createShellHttpFixture(()=>state);
+ let state=initialState(),deliveryMode='unknown';const shell=createShellHttpFixture(()=>state);
  const count=action=>report.actions.filter(row=>row.action===action).length;
  const outbox=()=>page.evaluate(key=>JSON.parse(sessionStorage.getItem(key)||'[]'),outboxKey);
  const reply=(route,extra={})=>{state.revision++;return route.fulfill({json:{accepted:true,state:shell.state(),...extra}})};
@@ -68,7 +68,7 @@ async function runCase(kind){
     room().externalStreams={alpha:{id:'a-draft',text:'Alpha is checking',inputId:body.id},beta:{id:'b-draft',text:'Beta is checking',inputId:body.id}};
     return reply(route,{delivery:'accepted'});
    }
-   if(body.action==='conversation.delivery')return reply(route,{result:{sessionId:body.args.sessionId,inputId:body.args.inputId,delivery:'unknown',source:{workspace,nativeIdentity:'shared'},message:'Nothing was resent.'}});
+   if(body.action==='conversation.delivery')return reply(route,{result:{sessionId:body.args.sessionId,inputId:body.args.inputId,delivery:deliveryMode==='unknown'?'unknown':'accepted',source:{workspace,sessionId:deliveryMode==='wrong-room'?'another-room':'shared'},message:'Nothing was resent.'}});
    assert.ok(!['conversation.retry','worker.spawn','call.start','probe.spawn','runtime.start'].includes(body.action),'No execution or replay operation belongs in this fixture');
    if(body.action==='view.update')state.view={...state.view,...body.args.patch};
    if(body.action==='session.select')state.selectedSessionId=body.args.id;
@@ -110,6 +110,15 @@ async function runCase(kind){
    await expect.poll(()=>count('conversation.delivery')).toBeGreaterThan(0);
    await expect.poll(async()=>(await outbox())[0]?.status).toBe('unknown');
    const retained=(await outbox())[0];assert.equal(retained.commandId,held.commandId);assert.equal(retained.text,held.text);assert.equal(Object.hasOwn(retained,'recipientAgentId'),false);
+   deliveryMode='wrong-room';
+   await page.getByRole('button',{name:'Check delivery',exact:true}).click();
+   await expect(page.getByText('The delivery source could not be verified. Nothing was sent again.',{exact:true})).toBeVisible();
+   assert.equal((await outbox())[0].commandId,held.commandId,'An accepted receipt from another room cannot retire this input');
+   report.wrongRoomReceiptPreservedInput=true;
+   deliveryMode='accepted';
+   await page.getByRole('button',{name:'Check delivery',exact:true}).click();
+   await expect.poll(async()=>(await outbox()).length).toBe(0);
+   report.exactRoomReceiptSettledWithoutReplay=true;
    assert.equal(count('session.create'),1);assert.equal(count('conversation.send'),2);assert.equal(count('conversation.retry'),0);
    assert.ok(report.actions.filter(row=>row.action==='conversation.delivery').every(row=>row.args.inputId===held.commandId&&row.args.sessionId==='shared'));
    report.busyPostAndPassiveRecovery=true;
