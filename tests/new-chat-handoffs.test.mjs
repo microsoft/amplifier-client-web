@@ -179,6 +179,48 @@ for(const status of ['accepted','cancelled'])test(`exact ${status} settlement su
  assert.deepEqual(calls,['session.handoff.confirm','session.handoff.read'],'Omission and restoration never replay or poll');
 });
 
+for(const outcome of ['accepted','unconfirmed'])test(`repeated ${outcome} omission renders reuse compact interaction identity`,async()=>{
+ let commits=0,calls=0;
+ const dispatch=async()=>{calls++;if(outcome==='unconfirmed')throw Error('Lost confirmation');return {accepted:true,result:accepted}};
+ const profiled=current=>React.createElement(React.Profiler,{id:'handoffs',onRender:()=>{commits++}},view(current,dispatch));
+ await act(async()=>{root=create(profiled(state()))});
+ await act(async()=>button('session.handoff.confirm').props.onClick());
+ await act(async()=>root.update(profiled(state([]))));
+ for(let cycle=0;cycle<4;cycle++){
+  const before=commits;
+  await act(async()=>root.update(profiled(state([]))));
+  assert.equal(commits-before,1,'Unchanged omission must not schedule a nested interaction-state commit');
+  assert.equal(root.toJSON(),null);
+ }
+ await act(async()=>root.update(profiled(state())));
+ if(outcome==='accepted')assert.equal(root.toJSON(),null,'Restored older pending cannot undo the witness');
+ else{
+  assert.ok(button('session.handoff.read'));assert.equal(button('session.handoff.confirm'),undefined);
+  assert.doesNotMatch(text(),/Lost confirmation/);
+ }
+ assert.equal(calls,1,'Repeated renders and restoration do not read or replay');
+});
+
+for(const outcome of ['accepted','error'])test(`late ${outcome} read while omitted preserves only the prior settlement witness`,async()=>{
+ let finish,calls=0;
+ const dispatch=()=>{calls++;return calls===1?Promise.resolve({accepted:true,result:{...accepted,revision:9}}):new Promise((resolve,reject)=>{finish={resolve,reject}})};
+ const unknown={...accepted,revision:8,status:'unknown',delivery:'unknown'};
+ await act(async()=>{root=create(view(state(unknown),dispatch))});
+ await act(async()=>button('session.handoff.read').props.onClick());
+ await act(async()=>root.update(view(state({...unknown,revision:10}),dispatch)));
+ await act(async()=>{button('session.handoff.read').props.onClick()});
+ await act(async()=>root.update(view(state([]),dispatch)));
+ if(outcome==='accepted')await act(async()=>finish.resolve({accepted:true,result:{...accepted,revision:100,text:'Late exact body',message:'Late exact feedback'}}));
+ else await act(async()=>finish.reject(Error('Late exact error')));
+ await act(async()=>root.update(view(state({...row,revision:8}),dispatch)));
+ assert.equal(root.toJSON(),null,'The already-observed revision 9 witness survives');
+ await act(async()=>root.update(view(state({...unknown,revision:10}),dispatch)));
+ assert.deepEqual(activeIds(),['request'],'The omitted late revision 100 was not adopted');
+ assert.ok(button('session.handoff.read'));assert.equal(button('session.handoff.read').props.disabled,false);
+ assert.doesNotMatch(text(),/Late exact body|Late exact feedback|Late exact error/);
+ assert.equal(calls,2);
+});
+
 test('a late older read cannot hide a newer stream failure; equal revisions also favor the stream',async()=>{
  let finish;const dispatch=()=>new Promise(resolve=>{finish=resolve});
  await act(async()=>{root=create(view(state({...accepted,status:'unknown',revision:2}),dispatch))});

@@ -11,11 +11,17 @@ function isSettled(receipt){
 
 // Omission is not a newer receipt. Retain only scalar settlement ordering and
 // safety flags in this source view, never the evicted brief or old feedback.
-function omittedInteraction({read,unconfirmed,busy}){
- return {
-  ...(isSettled(read||{})?{read:{revision:read.revision,status:read.status,creation:read.creation,delivery:read.delivery,targetSessionId:read.targetSessionId??null}}:{}),
+function omittedInteraction(interaction){
+ const {read,unconfirmed,busy}=interaction;
+ let witness=isSettled(read||{})?{revision:read.revision,status:read.status,creation:read.creation,delivery:read.delivery,targetSessionId:read.targetSessionId??null}:null;
+ if(witness&&Object.keys(read).length===Object.keys(witness).length&&Object.entries(witness).every(([key,value])=>Object.is(read[key],value)))witness=read;
+ const retained={
+  ...(witness?{read:witness}:{}),
   ...(unconfirmed?{unconfirmed:true}:{}),...(busy?{busy:true}:{}),
  };
+ // Once compacted, unchanged nested/outer identity lets the layout effect bail
+ // out instead of scheduling another commit for every parent render.
+ return Object.keys(interaction).length===Object.keys(retained).length&&Object.entries(retained).every(([key,value])=>Object.is(interaction[key],value))?interaction:retained;
 }
 
 function HandoffCard({receipt,interaction={},perform,open}){
