@@ -12,6 +12,10 @@ function recoveryUnsafe(session){
  return ['working','running','starting','stopping'].includes(session.status)||session.configurationBusy||(session.workers||[]).some(worker=>['queued','starting','running','working','stopping'].includes(worker.status));
 }
 
+export function problemReportPatch(state,failureContext=null){
+ return {panel:'feedback',feedbackDraft:{...(state?.view?.feedbackDraft||{}),includeDiagnostics:false,failureContext}};
+}
+
 export function ConversationName({session,act,details=true}){
  const [name,setName]=useState(session.title||''),[saving,setSaving]=useState(false),[error,setError]=useState('');
  const dirty=useRef(false),inFlight=useRef(false);
@@ -141,8 +145,10 @@ export function ConversationError({state,session,act}){
   try{const response=await act('session.recover',{id:session.id});if(response?.accepted!==true)throw Error('Could not create the recovery copy.')}
   catch(error){setError(error.message)}finally{inFlight.current=false;setRecovering(false)}
  }
- const exceptional=['context_limit','context_compaction','invalid_image','computer_capture_stop','authentication','provider_selection','bundle_configuration','runtime_dependency'].includes(failure?.category);
+ const exceptional=['context_limit','context_compaction','invalid_image','computer_capture_stop','authentication','provider_selection','bundle_configuration','runtime_dependency','persistence'].includes(failure?.category);
  const requestBound=!!(failure?.generationId||failure?.inputId||failure?.inputIds?.length);
+ const inputId=failure?.inputId||failure?.inputIds?.[0];
+ const failureContext=inputId&&failure?.generationId?{sessionId:session.id,inputId,generationId:failure.generationId}:null;
  return <div className="a-alert" role="alert" data-part="conversation-trouble"><span><strong>{failure?.summary||'Something needs attention.'}</strong> {exceptional?failure.guidance:requestBound?'You can send a new instruction when you’re ready.':'Your saved messages are kept. Review the details below.'}</span>
   {recoverable&&<button type="button" className="a-link" data-action="session.recover" disabled={recovering||working} onClick={recover}>{recovering?'Creating recovery copy…':'Create recovery copy'}</button>}
   {failure?.category==='authentication'&&<button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:settingsPatch('ai-connections')})}>AI connections</button>}
@@ -150,7 +156,7 @@ export function ConversationError({state,session,act}){
   <details><summary>Details &amp; reporting</summary>
    {recoverable&&<p>A recovery copy keeps readable text, not old tool calls or image payloads. Safety stops remain; nothing is replayed.</p>}
    <button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{panel:'chat-error'}})}>Technical details</button>
-   <button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{panel:'feedback'}})}>Report a problem</button>
+   <button type="button" className="a-link" data-action="view.update" disabled={!!state.view?.feedbackDraft?.pending} onClick={()=>{if(!state.view?.feedbackDraft?.pending)return act('view.update',{patch:problemReportPatch(state,failureContext)})}}>Report a problem</button>
   </details>
   {error&&<p role="alert">{error}</p>}
   {item&&<button type="button" aria-label="Dismiss conversation error" data-action="attention.read" onClick={()=>readItems(act,[item])}><X/></button>}

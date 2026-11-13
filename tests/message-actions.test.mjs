@@ -23,7 +23,8 @@ test('historical failure details never borrow the current conversation error or 
  const html=renderToStaticMarkup(React.createElement(MessageEntry,{message,session:{id:'chat',error:'NEW PRIVATE ERROR',failure:{summary:'Unrelated latest failure'}},state:{view:{}},act:()=>{},statusCurrent:false}));
  assert.match(html,/Original request failure/);assert.match(html,/old-generation/);
  assert.match(html,/Recorded/);assert.doesNotMatch(html,/Occurred|NEW PRIVATE ERROR|Unrelated latest failure/);
- assert.match(html,/Reporting previews current chat diagnostics, not this saved request/);
+ assert.match(html,/Report this problem/);
+ assert.doesNotMatch(html,/Include the recorded details above yourself/);
  assert.doesNotMatch(html,/data-action="conversation\.(send|retry)"|Create recovery copy/);
 });
 test('status summary keeps a plain live phase label alongside accessible timing',()=>{

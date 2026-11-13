@@ -187,7 +187,7 @@ for(const category of ['unknown','worker_startup','worker_exit','worker_communic
    for(const button of root.root.findAllByType('button'))await renderAct(async()=>button.props.onClick());
    assert.deepEqual(calls,[
     {name:'view.update',args:{patch:{panel:'chat-error'}}},
-    {name:'view.update',args:{patch:{panel:'feedback'}}},
+    {name:'view.update',args:{patch:{panel:'feedback',feedbackDraft:{includeDiagnostics:false,failureContext:null}}}},
     {name:'attention.read',args:{ids:['session:chat'],fingerprints:{'session:chat':'recorded-failure'}}}
    ]);
    assert.deepEqual({session,state},before);

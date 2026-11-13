@@ -36,6 +36,45 @@ test('diagnostic preview names its destination and never attaches private local 
  assert.deepEqual(calls,[]);
 });
 
+test('historical failure context reaches preview, frozen submit and local report without borrowing a newer error',async()=>{
+ const failureContext={sessionId:'chat',inputId:'original',generationId:'old-generation'};
+ const state={...base(),selectedSessionId:'chat',sessions:[{id:'chat',error:'NEW PRIVATE ERROR',failure:{generationId:'new-generation'}}]};
+ state.view.feedbackDraft={...draft,includeDiagnostics:true,failureContext};
+ const calls=[];let root;
+ const action=async(name,args)=>{
+  calls.push({name,args:structuredClone(args)});
+  if(name==='feedback.submit')throw Error('lost acknowledgement');
+  if(name==='feedback.diagnostics')return {accepted:true,result:{snapshot:'request',diagnostics:{failureReport:{requestOutcome:'failed',generation:'hashed-old'}}}};
+  if(name==='feedback.report')return {accepted:true,result:{submitted:false,content:'# Selected saved failure'}};
+  return {accepted:true};
+ };
+ await renderAct(async()=>{root=create(React.createElement(FeedbackPanel,{state,act:action}))});
+ await renderAct(async()=>root.root.findByProps({'data-part':'feedback-diagnostics'}).props.onToggle({currentTarget:{open:true}}));
+ assert.deepEqual(calls.find(row=>row.name==='feedback.diagnostics').args.failureContext,failureContext);
+ assert.match(JSON.stringify(root.toJSON()),/hashed-old/);assert.doesNotMatch(JSON.stringify(root.toJSON()),/NEW PRIVATE ERROR|new-generation/);
+ await renderAct(async()=>root.root.findByProps({'data-action':'feedback.report'}).props.onClick());
+ assert.deepEqual(calls.find(row=>row.name==='feedback.report').args.failureContext,failureContext);
+ await renderAct(async()=>root.root.findByType('form').props.onSubmit({preventDefault(){}}));
+ const first=calls.find(row=>row.name==='feedback.submit').args;
+ assert.deepEqual(first.failureContext,failureContext);
+ assert.equal(JSON.stringify(first).includes('NEW PRIVATE ERROR'),false);
+ await renderAct(async()=>root.root.findByType('form').props.onSubmit({preventDefault(){}}));
+ assert.deepEqual(calls.filter(row=>row.name==='feedback.submit')[1].args,first);
+ await renderAct(async()=>root.unmount());
+});
+
+test('late diagnostic preview cannot replace a different exact request or chat',async()=>{
+ const original={sessionId:'chat',inputId:'old',generationId:'old-generation'};
+ let root,release,pending;
+ const action=()=>new Promise(resolve=>release=resolve);
+ await renderAct(async()=>{root=create(React.createElement(FeedbackDiagnostics,{state:{selectedSessionId:'chat'},failureContext:original,act:action}))});
+ await renderAct(async()=>{pending=root.root.findByType('details').props.onToggle({currentTarget:{open:true}})});
+ await renderAct(async()=>root.update(React.createElement(FeedbackDiagnostics,{state:{selectedSessionId:'other'},failureContext:{...original,sessionId:'other'},act:action})));
+ await renderAct(async()=>{release({result:{diagnostics:{failureReport:'STALE SAVED REQUEST'}}});await pending});
+ assert.doesNotMatch(JSON.stringify(root.toJSON()),/STALE SAVED REQUEST/);
+ await renderAct(async()=>root.unmount());
+});
+
 test('local report prepares only exact supplied text and does not submit or overwrite a draft',async()=>{
  const calls=[];let root;
  try{

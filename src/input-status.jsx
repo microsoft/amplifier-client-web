@@ -1,12 +1,13 @@
-import React,{useEffect,useState} from 'react';
+import React,{useEffect,useRef,useState} from 'react';
 import {inputStatus,statusLabel,workingDuration} from './input-status.js';
 import {messageTime} from './message-time';
 import {hostNow} from './api';
-import {ConversationFailure} from './conversation-controls';
+import {ConversationFailure,problemReportPatch} from './conversation-controls';
 
-export function InputStatus({message,connected=true,current=true,act}){
+export function InputStatus({message,connected=true,current=true,act,sessionId,state}){
  const status=inputStatus(message),saved=message.displayOnly||!current,live=status?.phase==='working'&&connected&&!saved;
  const [now,setNow]=useState(hostNow);
+ const [reporting,setReporting]=useState(false),[reportError,setReportError]=useState(''),reportFlight=useRef(false);
  useEffect(()=>{
   if(!live)return;
   setNow(hostNow());
@@ -14,6 +15,17 @@ export function InputStatus({message,connected=true,current=true,act}){
   return()=>clearInterval(timer);
  },[live,status?.inputId,status?.startedAt]);
  if(!status)return null;
+ const generationId=status.generationId||status.failure?.generationId;
+ const canReport=!!(sessionId&&status.inputId&&generationId&&!state?.view?.feedbackDraft?.pending);
+ async function report(){
+  if(!canReport||reportFlight.current)return;
+  reportFlight.current=true;setReporting(true);setReportError('');
+  try{
+   const response=await act('view.update',{patch:problemReportPatch(state,{sessionId,inputId:status.inputId,generationId})});
+   if(response?.accepted!==true)throw Error('Could not open the report. Nothing was submitted.');
+  }catch{setReportError('Could not open the report. Nothing was submitted.')}
+  finally{reportFlight.current=false;setReporting(false)}
+ }
  const duration=workingDuration(status,now,connected&&!saved);
  const label=status.phase==='working'&&saved?'Working last observed · saved history':statusLabel(status,connected);
  const observed=messageTime(status.startedAt||status.updatedAt);
@@ -32,6 +44,6 @@ export function InputStatus({message,connected=true,current=true,act}){
   </summary>
   <span className="a-input-status-detail">{status.reason&&<>{status.reason} </>}{explanation}</span>
   {status.phase==='failed'&&status.failure&&<ConversationFailure session={{}} failure={status.failure}/>}
-  {status.phase==='failed'&&act&&<><p className="a-caption">Reporting previews current chat diagnostics, not this saved request. Include the recorded details above yourself if needed; they are not attached automatically.</p><button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{panel:'feedback'}})}>Report a problem</button></>}
+  {status.phase==='failed'&&act&&<><button type="button" className="a-link" data-action="view.update" disabled={reporting||!canReport} onClick={report}>{reporting?'Opening report…':'Report this problem'}</button>{!canReport&&<p className="a-caption">{state?.view?.feedbackDraft?.pending?'Finish checking the existing report before starting another.':'This saved request has no exact report reference. Its recorded details remain available above.'}</p>}{reportError&&<p role="alert">{reportError}</p>}</>}
  </details>;
 }
