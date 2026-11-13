@@ -4,9 +4,12 @@ import {SettingsActions} from './settings-layout';
 
 const blank=()=>({label:'',command:'',arguments:'',cwd:'',sessionCwd:''});
 const editor=agent=>({...blank(),...agent,arguments:(agent.args||[]).join('\n')});
-function configuration(draft){
+function configuration(draft,saved){
  const {id,label,command,cwd,sessionCwd}=draft;
- return {...(id?{id}:{}),label:label.trim(),command:command.trim(),args:draft.arguments===''?[]:draft.arguments.split('\n').map(value=>value.replace(/\r$/,'')),...(cwd.trim()?{cwd:cwd.trim()}:{}),...(sessionCwd.trim()?{sessionCwd:sessionCwd.trim()}:{})};
+ // Preserve exact launch arguments when editing only the name or directories.
+ // A valid saved argument can itself contain a newline or be an empty string.
+ const args=draft.arguments===saved?.arguments&&saved.args?saved.args:draft.arguments===''?[]:draft.arguments.split('\n').map(value=>value.replace(/\r$/,''));
+ return {...(id?{id}:{}),label:label.trim(),command,args,...(cwd?{cwd}:{}),...(sessionCwd?{sessionCwd}:{})};
 }
 
 export function ExternalAgentSettings({act,navigate=()=>{}}){
@@ -33,7 +36,7 @@ export function ExternalAgentSettings({act,navigate=()=>{}}){
  });
  const change=(key,value)=>{setDraft(current=>({...current,[key]:value}));setNotice('')};
  const mutate=kind=>run(async()=>{
-  const command=pending||{id:crypto.randomUUID(),name:'externalAgents.'+kind,args:kind==='remove'?{id:draft.id,expectedRevision:revision}:{agent:configuration(draft),...(draft.id?{expectedRevision:revision}:{})}};
+  const command=pending||{id:crypto.randomUUID(),name:'externalAgents.'+kind,args:kind==='remove'?{id:draft.id,expectedRevision:revision}:{agent:configuration(draft,saved),...(draft.id?{expectedRevision:revision}:{})}};
   setPending(command);
   try{
    const result=await request(command.name,command.args,{id:command.id});

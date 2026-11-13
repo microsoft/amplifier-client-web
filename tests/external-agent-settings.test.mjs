@@ -72,6 +72,16 @@ test('external creation carries only the endpoint and existing workspace; native
  assert.deepEqual(newChatSetup({view:{newSessionDraft:{externalAgentId:'one'}}}),{externalAgentId:'one',title:'',workspace:'',location:{kind:'workspace'}});
 });
 
+test('a name-only edit preserves exact existing launch bytes, including unusual arguments and paths',async()=>{
+ const original={...agent,command:'/agent with trailing space ',args:['','line one\nline two','\r'],cwd:'/launch ',sessionCwd:'/remote '};let saved;
+ const root=await mount(async(name,args)=>{
+  if(name.endsWith('list'))return ok({agents:catalog});if(name.endsWith('get'))return ok({agent:original,revision:'row-one'});
+  saved=args;return ok({agents:catalog,savedId:'one'});
+ });
+ await click(root,'Edit');await edit(root,'external-agent-name','Renamed');await click(root,'Save connection');
+ assert.deepEqual(saved,{agent:{...original,label:'Renamed'},expectedRevision:'row-one'});await renderAct(async()=>root.unmount());
+});
+
 test('external draft mounts no native model/bundle discovery controls',async()=>{
  const calls=[];let root;
  await renderAct(async()=>{root=create(React.createElement(ComposerOptions,{state:{view:{newSessionDraft:{externalAgentId:'one'}}},act:async(...args)=>calls.push(args)}))});
