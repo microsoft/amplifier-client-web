@@ -9,7 +9,14 @@ import assert from 'node:assert/strict';
 import {createShellHttpFixture,installFixtureEvents} from './shell-http-fixture.mjs';
 const full=Array.from({length:791},(_,i)=>({id:'m'+i,role:i%10===0?'user':'assistant',text:'Message '+i,createdAt:1000+i}));
 const messageWindow={mode:'cursor',offset:null,total:null,before:'older-731',hasEarlier:true,windowKey:'latest-731',coverage:{kind:'saved-web',historyComplete:false}};
+// Navigation must exercise a usable model selector, not an unavailable exact-ID
+// field. This deterministic catalog is synthetic; no provider is contacted.
+const configurationCatalog={configurationRevision:0,nextMessageRevision:0,pinned:true,
+ effective:{instance:'fixture',model:'fixture-model'},
+ providers:[{id:'fixture',sharedCatalogKey:'fixture-models',info:{display_name:'Fixture',defaults:{model:'fixture-model'}}}]};
 let state={revision:1,settings:{workspace:'/fixture'},runtime:{available:true},view:{setupJourney:'done',navPinned:true},sessions:[{id:'chat',sessionKind:'root',title:'Long chat',workspace:'/fixture',workspaceId:'project',status:'idle',historyManaged:false,historyLoaded:false,historyLoading:false,messages:full.slice(-60),messageWindow,execution:{nodes:[],turns:[]}}],workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:'chat',selectedWorkspaceId:'project',canvas:{open:false}};
+state={...state,runtimeControl:{chat:{'configuration.catalog':configurationCatalog}},
+ modelCatalogs:{'fixture-models':{phase:'ready',modelsSupported:true,models:[{id:'fixture-model',name:'Fixture model'}]}}};
 const previews=[],indexes=[],windows=[],earlier=[];let restoring=false;
 let browser,vite,page;const errors=[],calls=[];
 const shell=createShellHttpFixture(()=>state);
@@ -49,6 +56,10 @@ try{
   if(path==='/api/actions'){
    const envelope=route.request().postDataJSON(),body=envelope.action==='shell.command'?envelope.args:envelope;calls.push(body);
    if(body.action==='view.update')state={...state,revision:state.revision+1,view:{...state.view,...body.args.patch}};
+   if(body.action==='runtime.control'){
+    assert.equal(body.args.operation,'configuration.catalog');
+    return route.fulfill({json:{accepted:true,operationId:body.id,result:configurationCatalog,state:shell.state()}});
+   }
    return route.fulfill({json:{accepted:true,operationId:body.id,state:shell.state()}});
   }
   return route.fulfill({json:{ok:true}});
