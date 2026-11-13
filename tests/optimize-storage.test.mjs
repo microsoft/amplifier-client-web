@@ -273,3 +273,37 @@ test('a newer saved pending receipt cannot be overwritten by another editor or l
   assert.equal(calls.filter(call=>call.name===prefix+'preview').length,1);
  }finally{await act(async()=>root.unmount())}
 });
+
+test('failed current read after exact receipt keeps recovery gate even with newer applyable status',async()=>{
+ store.set(key,JSON.stringify({pending:{id:'lost-preview',action:prefix+'preview',args:{scope:'current',sessionId:'chat'}}}));
+ const {dispatch}=host({latest:operation({revision:4})});
+ const peer=async(name,args,meta)=>{
+  if(args.commandId)return ok({commandId:'lost-preview',status:'recorded',result:operation({revision:2})});
+  if(args.operationId)throw Error('Current progress unavailable');
+  return dispatch(name,args,meta);
+ };
+ const root=await mount(peer);
+ try{
+  await act(async()=>click(root,'Read exact optimization command outcome'));
+  assert.match(content(root),/Current progress unavailable/);
+  assert.ok(JSON.parse(store.get(key)).pending);
+  assert.equal(disabled(button(root,'Apply image extraction')),true);
+ }finally{await act(async()=>root.unmount())}
+});
+
+test('reconciled historical policy save reads current choices instead of rolling back',async()=>{
+ const old={revision:2,requestKeepHours:12,responseKeepHours:null};
+ const current={revision:5,requestKeepHours:null,responseKeepHours:48};
+ store.set(key,JSON.stringify({pending:{id:'lost-save',action:prefix+'policy.save',args:{expectedRevision:1,requestKeepHours:12,responseKeepHours:null}}}));
+ const {dispatch,calls}=host({settings:current});
+ const peer=async(name,args,meta)=>args.commandId?ok({commandId:'lost-save',status:'recorded',result:old}):dispatch(name,args,meta);
+ const root=await mount(peer);
+ try{
+  await act(async()=>click(root,'Read exact optimization command outcome'));
+  assert.equal(JSON.parse(store.get(key)).pending,undefined);
+  assert.equal(checkbox(root,' Expire raw request diagnostics during this manual optimization').props.checked,false);
+  assert.equal(checkbox(root,' Expire raw response diagnostics during this manual optimization').props.checked,true);
+  assert.equal(root.root.findByProps({type:'number'}).props.value,48);
+  assert.equal(calls.filter(call=>call.name===prefix+'policy.read').length,2);
+ }finally{await act(async()=>root.unmount())}
+});

@@ -69,17 +69,18 @@ export function OptimizeStorageSettings({act,sessionId,hostId,active=true,naviga
    }
    const name=command.action.slice(prefix.length),result=receipt.result;
    confirmResult(name,command.args,result);
+   // An exact receipt can be old. Keep the pending gate until current policy
+   // and operation eligibility are both read, including after a failed read.
+   const [settings,current]=await Promise.all([
+    read('policy.read'),
+    name==='policy.save'?Promise.resolve(null):read('read',{operationId:result.operationId,limit:50})
+   ]);
+   if(!mounted.current||version!==generation.current)return;
+   confirmResult('policy.save',{},settings);
+   if(current)confirmResult(name,{operationId:result.operationId},current);
    if(!settle(command,{operationId:result.operationId||localRef.current.operationId}))return;
-   if(name==='policy.save'){setPolicy(result);setDraft(result);setOperation(null)}
-   else{
-    // An exact receipt can be old; refresh authority/eligibility before showing
-    // follow-up controls. If refresh fails, keep the receipt but no stale flags.
-    showOperation({...result,canApply:false,canResume:false,canCancel:false});
-    const current=await read('read',{operationId:result.operationId,limit:50});
-    if(!mounted.current||version!==generation.current)return;
-    if(current.operationId!==result.operationId)throw Error('The saved operation did not match the command receipt.');
-    showOperation(current);
-   }
+   setPolicy(settings);setDraft(settings);
+   if(current)showOperation(current);else setOperation(null);
    setNotice('The exact saved command receipt was found. No command was repeated. Read the operation status before deciding what to do next.');
   }catch(e){if(mounted.current&&version===generation.current)setError(e.message)}
   finally{if(mounted.current&&version===generation.current){lock.current=false;setBusy(false)}}
