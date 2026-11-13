@@ -32,12 +32,11 @@ test('double click creates once and acceptance never navigates or sends from the
  await act(async()=>{root=create(view(state(),dispatch))});
  await act(async()=>{button('session.handoff.confirm').props.onClick();button('session.handoff.confirm').props.onClick()});
  assert.deepEqual(calls,[{action:'session.handoff.confirm',args:{requestId:'request',reviewHash:'exact-review'}}]);
- await act(async()=>finish({accepted:true,result:{...row,revision:3,status:'accepted',creation:'created',targetSessionId:'target',message:'Opening message accepted.'}}));
+ await act(async()=>finish({accepted:true,result:accepted}));
  assert.equal(root.toJSON(),null);assert.equal(calls.length,1,'Settlement leaves no card, disclosure or navigation');
 });
 test('lost acknowledgement offers a read, not another create, and newer server receipt wins',async()=>{
  const calls=[];
- const accepted={...row,revision:3,status:'accepted',creation:'created',targetSessionId:'target',message:'Opening message accepted.'};
  const dispatch=async(action,args)=>{calls.push({action,args});if(action.endsWith('.confirm'))throw Error('Connection lost');return {accepted:true,result:accepted}};
  await act(async()=>{root=create(view(state(),dispatch))});
  await act(async()=>button('session.handoff.confirm').props.onClick());
@@ -54,7 +53,7 @@ test('only a definitive pending read re-enables confirmation after lost response
  await act(async()=>button('session.handoff.read').props.onClick());assert.ok(button('session.handoff.confirm'));assert.equal(calls.length,2);
 });
 test('cancellation sends no creation or navigation and removes the whole request',async()=>{
- const calls=[];const dispatch=async(action,args)=>{calls.push({action,args});return {accepted:true,result:{...row,revision:2,status:'cancelled',message:'Nothing was created.'}}};
+ const calls=[];const dispatch=async(action,args)=>{calls.push({action,args});return {accepted:true,result:{...row,revision:2,status:'cancelled',creation:'not_started',delivery:'not_started',message:'Nothing was created.'}}};
  await act(async()=>{root=create(view(state(),dispatch))});
  await act(async()=>button('session.handoff.cancel').props.onClick());
  assert.deepEqual(calls,[{action:'session.handoff.cancel',args:{requestId:'request'}}]);assert.equal(root.toJSON(),null);
@@ -109,6 +108,32 @@ test('known settled receipts leave no history; unfamiliar and contradictory rece
  assert.equal(root.toJSON(),null,'No empty history section or shell when every row is settled');
  await act(async()=>root.update(view(state([]),()=>{calls++})));
  assert.equal(root.toJSON(),null);
+});
+
+test('accepted and cancelled receipts with missing or empty phases stay actionable in streams and exact reads',async()=>{
+ const incomplete=[];
+ for(const status of ['accepted','cancelled']){
+  const complete={...accepted,status,...(status==='cancelled'?{creation:'not_started',delivery:'not_started',targetSessionId:null}:{})};
+  for(const phase of ['creation','delivery'])for(const value of [undefined,null,'']){
+   const receipt={...complete,requestId:`${status}-${phase}-${String(value)}`};
+   if(value===undefined)delete receipt[phase];else receipt[phase]=value;
+   incomplete.push(receipt);
+  }
+  const {creation,delivery,...missingBoth}=complete;
+  incomplete.push({...missingBoth,requestId:`${status}-missing-both`});
+ }
+ const calls=[];
+ const dispatch=async(action,args)=>{calls.push(action);return {accepted:true,result:{...incomplete.find(receipt=>receipt.requestId===args.requestId),revision:4}}};
+ await act(async()=>{root=create(view(state(incomplete),dispatch))});
+ assert.deepEqual(activeIds(),incomplete.map(receipt=>receipt.requestId));
+ for(const receipt of incomplete){
+  const card=root.root.findByProps({'data-handoff-id':receipt.requestId});
+  const check=card.findByProps({'data-action':'session.handoff.read'});
+  await act(async()=>check.props.onClick());
+ }
+ assert.deepEqual(activeIds(),incomplete.map(receipt=>receipt.requestId),'An accepted action envelope cannot complete missing phases');
+ assert.ok(calls.every(action=>action==='session.handoff.read'));
+ assert.equal(calls.length,incomplete.length);
 });
 
 test('manual read removes locally without waiting for a parent snapshot; older stream cannot resurrect it',async()=>{
@@ -274,6 +299,25 @@ test('a projected-again pending receipt stays fenced until its original call set
  assert.equal(calls,1);
  await act(async()=>finish({accepted:true,result:accepted}));
  assert.equal(root.toJSON(),null);
+});
+
+for(const action of ['confirm','cancel'])for(const omittedBeforeFailure of [false,true])test(`${action} uncertainty survives stream omission ${omittedBeforeFailure?'before':'after'} a lost response`,async()=>{
+ let finish,calls=0;
+ const dispatch=()=>{calls++;return new Promise((resolve,reject)=>{finish={resolve,reject}})};
+ await act(async()=>{root=create(view(state(),dispatch))});
+ await act(async()=>{button(`session.handoff.${action}`).props.onClick()});
+ if(omittedBeforeFailure)await act(async()=>root.update(view(state([]),dispatch)));
+ await act(async()=>finish.reject(Error('Lost mutation response')));
+ if(!omittedBeforeFailure)await act(async()=>root.update(view(state([]),dispatch)));
+ assert.equal(root.toJSON(),null,'An omitted row is not retained as a history card');
+ await act(async()=>root.update(view(state(),dispatch)));
+ assert.equal(button('session.handoff.confirm'),undefined);assert.equal(button('session.handoff.cancel'),undefined);
+ assert.ok(button('session.handoff.read'));assert.doesNotMatch(text(),/Lost mutation response/,'Eviction retains the safety flag, not old feedback');
+ assert.equal(calls,1,'Omission must not replay or read automatically');
+ await act(async()=>{button('session.handoff.read').props.onClick()});
+ await act(async()=>finish.resolve({accepted:true,result:row}));
+ assert.ok(button('session.handoff.confirm'));assert.ok(button('session.handoff.cancel'));
+ assert.equal(calls,2,'Only an explicit exact read clears uncertainty');
 });
 
 test('an unmounted source ignores late success and failure without restoring a request',async()=>{

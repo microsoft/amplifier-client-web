@@ -151,6 +151,12 @@ try{
   {...baseline,requestId:'cancel-proposal',title:'Cancel this proposal',status:'pending',creation:'not_started',delivery:'not_started',revision:2,reviewHash:'cancel-review',targetSessionId:null},
   ...['rejected','unknown','guard'].map(outcome=>({...baseline,requestId:`navigation-${outcome}`,title:`Created with failed input: ${outcome}`,status:'failed',delivery:'failed'})),
   {...baseline,requestId:'contradictory',status:'cancelled',creation:'unknown',delivery:'not_started',targetSessionId:null},
+  ...['accepted','cancelled'].flatMap(status=>['creation','delivery','both'].map(missing=>{
+   const receipt={...baseline,requestId:`${status}-missing-${missing}`,title:`Incomplete ${status} phases`,
+    status,...(status==='cancelled'?{creation:'not_started',delivery:'not_started',targetSessionId:null}:{})};
+   if(missing==='both'){delete receipt.creation;delete receipt.delivery}else delete receipt[missing];
+   return receipt;
+  })),
   {...baseline,requestId:'foreign',sourceSessionId:'another-source',title:'Private other-source receipt'},
  ];
  state.selectedSessionId='old';state.view={...state.view,panel:null,navPinned:false,draft:'Keep this source draft'};
@@ -180,6 +186,8 @@ try{
  await expect(receipt('pending').getByRole('button',{name:'Create and start',exact:true})).toBeVisible();
  await expect(receipt('unknown').getByRole('button',{name:'Check delivery',exact:true})).toBeVisible();
  await expect(receipt('contradictory').getByRole('button',{name:'Check delivery',exact:true})).toBeVisible();
+ for(const status of ['accepted','cancelled'])for(const missing of ['creation','delivery','both'])
+  await expect(receipt(`${status}-missing-${missing}`).getByRole('button',{name:'Check delivery',exact:true})).toBeVisible();
  await expect(handoffs.getByRole('button',{name:'Check status',exact:true})).toHaveCount(0);
  for(const width of [1280,320]){
   await page.setViewportSize({width,height:900});

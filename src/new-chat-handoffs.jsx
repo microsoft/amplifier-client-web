@@ -1,11 +1,11 @@
 import React,{useLayoutEffect,useRef,useState} from 'react';
 import './new-chat-handoffs.css';
 
-// Only known settled receipts disappear. Contradictory or unfamiliar
+// Only phase-complete settled receipts disappear. Missing, contradictory or unfamiliar
 // creation/delivery fields must not turn uncertainty into a success.
 function isSettled(receipt){
- if(receipt.status==='accepted')return [undefined,'created'].includes(receipt.creation)&&[undefined,'accepted'].includes(receipt.delivery);
- if(receipt.status==='cancelled')return [undefined,'not_started'].includes(receipt.creation)&&[undefined,'not_started'].includes(receipt.delivery);
+ if(receipt.status==='accepted')return receipt.creation==='created'&&receipt.delivery==='accepted';
+ if(receipt.status==='cancelled')return receipt.creation==='not_started'&&receipt.delivery==='not_started';
  return false;
 }
 
@@ -41,8 +41,9 @@ function HandoffList({rows,dispatch}){
  useLayoutEffect(()=>{
   projected.current=new Set(rows.map(row=>row.requestId));
   setInteractions(previous=>{
-   const kept=Object.entries(previous).filter(([id])=>projected.current.has(id)||running.current.has(id));
-   return kept.length===Object.keys(previous).length?previous:Object.fromEntries(kept);
+   const kept=Object.entries(previous).flatMap(([id,interaction])=>
+    projected.current.has(id)||running.current.has(id)?[[id,interaction]]:interaction.unconfirmed?[[id,{unconfirmed:true}]]:[]);
+   return kept.length===Object.keys(previous).length&&kept.every(([id,interaction])=>interaction===previous[id])?previous:Object.fromEntries(kept);
   });
  },[rows]);
  const entries=rows.map(row=>{
@@ -53,14 +54,15 @@ function HandoffList({rows,dispatch}){
  const update=(id,patch)=>{
   if(!mounted.current)return;
   setInteractions(previous=>{
-   // An evicted in-flight row stays fenced until settlement.
-   // A late result must not restore its brief/error after it leaves the window.
+   const prior=previous[id]||{},next={...prior,...(typeof patch==='function'?patch(prior):patch)};
+   // Omission does not confirm a mutation. Keep only its uncertainty/duplicate
+   // fence, never a late returned brief or error for an evicted row.
    if(!projected.current.has(id)){
-    if(running.current.has(id)||!Object.hasOwn(previous,id))return previous;
-    const next={...previous};delete next[id];return next;
+    if(running.current.has(id)||next.unconfirmed)return {...previous,[id]:{busy:next.busy,unconfirmed:next.unconfirmed}};
+    if(!Object.hasOwn(previous,id))return previous;
+    const kept={...previous};delete kept[id];return kept;
    }
-   const prior=previous[id]||{};
-   return {...previous,[id]:{...prior,...(typeof patch==='function'?patch(prior):patch)}};
+   return {...previous,[id]:next};
   });
  };
  async function perform(action,receipt){
