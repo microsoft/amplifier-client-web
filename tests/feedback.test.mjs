@@ -135,6 +135,51 @@ test('historical report waits for retiring file staging and preserves its attach
  }finally{globalThis.FileReader=prior}
 });
 
+test('historical report retains an accepted excerpt after its editor unmounts, without carrying old consent',async()=>{
+ let root,release,staging,opening;const state={...base(),selectedSessionId:'chat'},calls=[];
+ const file={id:'b'.repeat(32),name:'excerpt.md',mime:'text/markdown',size:7,excerpt:{sha256:'c'.repeat(64),visibility:'public'}};
+ const failureContext={sessionId:'chat',inputId:'original',generationId:'original-generation'};
+ state.view.feedbackDraft={...draft,confirmExcerpts:true,confirmedExcerpts:[{id:'old',sha256:'d'.repeat(64)}]};
+ const action=async(name,args)=>{
+  calls.push({name,args:structuredClone(args)});
+  if(name==='feedback.excerpt.stage')return new Promise(resolve=>{release=()=>resolve({accepted:true,result:file,state:{view:{feedbackDraft:{...draft,attachments:[file]}}}})});
+  if(name==='view.update')state.view={...state.view,...args.patch};
+  return {accepted:true};
+ };
+ await renderAct(async()=>{root=create(React.createElement(FeedbackPanel,{state,act:action}))});
+ await renderAct(async()=>{staging=root.root.find(node=>node.type?.name==='FeedbackExcerpt').props.onStage({id:'chat',reviewId:'exact-review'})});
+ await renderAct(async()=>root.unmount());
+ await renderAct(async()=>{opening=openProblemReport(state,action,failureContext)});
+ assert.equal(calls.some(row=>row.args?.patch?.panel==='feedback'),false);
+ await renderAct(async()=>{release();await staging;await opening});
+ assert.deepEqual(state.view.feedbackDraft.attachments,[file]);
+ assert.deepEqual(state.view.feedbackDraft.failureContext,failureContext);
+ assert.equal(state.view.feedbackDraft.confirmExcerpts,false);
+ assert.deepEqual(state.view.feedbackDraft.confirmedExcerpts,[]);
+});
+
+test('retired destination review cannot overwrite a new historical report',async()=>{
+ const state=base(),calls=[],file={id:'a'.repeat(32),name:'saved.txt',mime:'text/plain',size:3};
+ state.view.feedbackDraft.attachments=[file];
+ let root,release,review;
+ const action=async(name,args)=>{
+  calls.push({name,args});
+  if(name==='feedback.destination')return new Promise(resolve=>release=resolve);
+  if(name==='view.update')state.view={...state.view,...args.patch};
+  return {accepted:true};
+ };
+ const failureContext={sessionId:'chat',inputId:'original',generationId:'original-generation'};
+ await renderAct(async()=>{root=create(React.createElement(FeedbackPanel,{state,act:action}))});
+ await renderAct(async()=>{review=root.root.findAllByType('button').find(button=>button.children.includes('Review file destination')).props.onClick()});
+ await renderAct(async()=>root.unmount());
+ await renderAct(async()=>openProblemReport(state,action,failureContext));
+ const count=calls.length;
+ await renderAct(async()=>{release({result:{repository:'target',visibility:'public'},files:[]});await review;await new Promise(resolve=>setTimeout(resolve,300))});
+ assert.equal(calls.length,count);
+ assert.deepEqual(state.view.feedbackDraft.failureContext,failureContext);
+ assert.deepEqual(state.view.feedbackDraft.attachments,[file]);
+});
+
 test('local report prepares only exact supplied text and does not submit or overwrite a draft',async()=>{
  const calls=[];let root;
  try{

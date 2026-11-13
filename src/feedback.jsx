@@ -76,7 +76,7 @@ export function FeedbackPanel({state,act}){
    if(selectedSession.current!==args.id)throw Error('The selected conversation changed. Review its excerpt again.');
    const response=await act('feedback.excerpt.stage',args);
    if(!response?.result)throw Error('The excerpt was not attached. Check the same review again.');
-   if(alive.current&&selectedSession.current===args.id)acceptDraft(response);
+   if(selectedSession.current===args.id)acceptDraft(response);
   }finally{staging.current=false;setUploading(false);finish()}
  }
  function acceptDraft(response){const next=response?.state?.view?.feedbackDraft;if(next){const changed=JSON.stringify(next.attachments)!==JSON.stringify(current.current.attachments);current.current={...current.current,attachments:next.attachments,...(changed?{confirmExcerpts:false,confirmedExcerpts:[],uploadDestination:null,confirmedFiles:[]}: {})};setDraft(current.current);if(changed){edited.current=true;dirty.current=true;void flush().catch(()=>setError('The updated attachment list could not be saved.'))}}}
@@ -130,7 +130,7 @@ export function FeedbackPanel({state,act}){
     {retryUpload&&<div className="a-feedback-upload-retry"><button type="button" className="a-soft" disabled={uploading} onClick={()=>stageFiles([],retryUpload)}>Check attachment: {retryUpload.name}</button><button type="button" className="a-soft" disabled={uploading} onClick={()=>{setRetryUpload(null);setError('')}}>Stop retrying</button></div>}
    </div>
    {selected.some(row=>!row.excerpt)&&<div>
-    {!pending&&<button type="button" disabled={frozen} onClick={async()=>{try{await flush();const response=await act('feedback.destination',{});const hashes=new Map((response.files||[]).map(row=>[row.id,row.sha256]));edit({uploadDestination:response.result,confirmedFiles:[],attachments:current.current.attachments.map(row=>hashes.has(row.id)?{...row,sha256:hashes.get(row.id)}:row)})}catch{setError('Could not check the file destination. Nothing was uploaded.')}}}>Review file destination</button>}
+    {!pending&&<button type="button" disabled={frozen} onClick={async()=>{try{await flush();const response=await act('feedback.destination',{});if(!alive.current)return;const hashes=new Map((response.files||[]).map(row=>[row.id,row.sha256]));edit({uploadDestination:response.result,confirmedFiles:[],attachments:current.current.attachments.map(row=>hashes.has(row.id)?{...row,sha256:hashes.get(row.id)}:row)})}catch{if(alive.current)setError('Could not check the file destination. Nothing was uploaded.')}}}>Review file destination</button>}
     {shown.uploadDestination&&<><p>Files will be stored in {shown.uploadDestination.repository} · {shown.uploadDestination.visibility==='public'?'Public — anyone can read these files':'Private — repository access required'}. Files remain in repository history. Visibility can change later; removing local files does not remove uploaded files.</p>
      <label><input type="checkbox" disabled={frozen} checked={JSON.stringify(shown.confirmedFiles||[])===JSON.stringify(selected.filter(row=>!row.excerpt).map(row=>({id:row.id,sha256:row.sha256})))} onChange={event=>edit({confirmedFiles:event.target.checked?selected.filter(row=>!row.excerpt).map(row=>({id:row.id,sha256:row.sha256})):[]})}/>Send the exact files listed above to this destination when I submit.</label></>}
    </div>}
