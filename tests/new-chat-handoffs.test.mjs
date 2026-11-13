@@ -198,16 +198,16 @@ test('a newer incomplete exact read stays actionable over an older settlement wa
 });
 
 for(const outcome of ['accepted','unconfirmed'])test(`repeated ${outcome} omission renders reuse compact interaction identity`,async()=>{
- let commits=0,calls=0;
+ let commits=0,calls=0;const phases=[];
  const dispatch=async()=>{calls++;if(outcome==='unconfirmed')throw Error('Lost confirmation');return {accepted:true,result:accepted}};
- const profiled=current=>React.createElement(React.Profiler,{id:'handoffs',onRender:()=>{commits++}},view(current,dispatch));
+ const profiled=current=>React.createElement(React.Profiler,{id:'handoffs',onRender:(_id,phase)=>{commits++;phases.push(phase)}},view(current,dispatch));
  await act(async()=>{root=create(profiled(state()))});
  await act(async()=>button('session.handoff.confirm').props.onClick());
  await act(async()=>root.update(profiled(state([]))));
  for(let cycle=0;cycle<4;cycle++){
   const before=commits;
   await act(async()=>root.update(profiled(state([]))));
-  assert.equal(commits-before,1,'Unchanged omission must not schedule a nested interaction-state commit');
+  assert.equal(commits-before,1,`Unchanged omission must not schedule a nested interaction-state commit; phases: ${phases.slice(before).join(', ')}`);
   assert.equal(root.toJSON(),null);
  }
  await act(async()=>root.update(profiled(state())));

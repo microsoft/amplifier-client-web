@@ -51,14 +51,14 @@ function HandoffList({rows,dispatch}){
  useLayoutEffect(()=>{mounted.current=true;return()=>{mounted.current=false}},[]);
  useLayoutEffect(()=>{
   projected.current=new Set(rows.map(row=>row.requestId));
-  setInteractions(previous=>{
-   const kept=Object.entries(previous).flatMap(([id,interaction])=>{
-    const retained=projected.current.has(id)||running.current.has(id)?interaction:omittedInteraction(interaction);
-    return Object.keys(retained).length?[[id,retained]]:[];
-   });
-   return kept.length===Object.keys(previous).length&&kept.every(([id,interaction])=>interaction===previous[id])?previous:Object.fromEntries(kept);
+  const kept=Object.entries(interactions).flatMap(([id,interaction])=>{
+   const retained=projected.current.has(id)||running.current.has(id)?interaction:omittedInteraction(interaction);
+   return Object.keys(retained).length?[[id,retained]]:[];
   });
- },[rows]);
+  // A no-op updater dispatched during layout can still cause a React commit.
+  // Refresh the projection ref, but dispatch state only for actual compaction.
+  if(kept.length!==Object.keys(interactions).length||kept.some(([id,interaction])=>interaction!==interactions[id]))setInteractions(Object.fromEntries(kept));
+ },[rows,interactions]);
  const entries=rows.map(row=>{
   const interaction=interactions[row.requestId]||{},read=interaction.read;
   const receipt=read&&read.revision>row.revision?read:row;
