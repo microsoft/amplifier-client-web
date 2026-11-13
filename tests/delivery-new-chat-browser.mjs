@@ -352,7 +352,7 @@ async function runCase(kind){
    const created={
     id:createdId,title:'Source A created conversation',runtimeSessionId:nativeId,nativeIdentity:'fallback-not-the-owner',
     workspace,workspaceId:'project',sessionKind:'root',status:'idle',historyManaged:true,historyLoaded:true,
-    messages:[],workers:[],creationCommandId:creation.body.id,
+    messages:[],workers:[],nextMessageRevision:17,creationCommandId:creation.body.id,
    };
    state.sessions.unshift(created);state.selectedSessionId=createdId;delete state.view.newSessionDraft;
    // The receipt gives only the id as its direct result. The full record lives
@@ -361,6 +361,8 @@ async function runCase(kind){
    await expect.poll(()=>!!send).toBe(true);
    assert.equal(send.body.args.sessionId,createdId);
    assert.deepEqual(send.body.args.expectedSource,{workspace,nativeIdentity:nativeId});
+   assert.equal(send.body.args.expectedConfigurationRevision,17,'First fresh input freezes confirmed created-chat configuration');
+   assert.equal(send.body.args.expectedInterruptionRevision,0,'Creation does not rebind submitted Stop epoch');
    assert.equal(send.body.args.text,submitted);
    assert.equal(send.body.id,original.commandId);
    await expect.poll(async()=>(await outbox())[0]?.scope).toBe(createdScope);

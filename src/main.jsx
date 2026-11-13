@@ -614,7 +614,7 @@ function App(){
   for(const entry of outbox.entries){
    if(entry.sessionId||!entry.creation?.id||!outboxMatches(entry,deliveryScope(state,null)))continue;
    const created=state?.sessions?.find(row=>row.creationCommandId===entry.creation.id);
-   if(created)outbox.update(entry.id,{sessionId:created.id,scope:deliveryScope(state,created),...(entry.expectedSource===null?{expectedSource:nativeDeliverySource(created)}:{})});
+   if(created)outbox.update(entry.id,{sessionId:created.id,scope:deliveryScope(state,created),...(entry.expectedSource===null?{expectedSource:nativeDeliverySource(created)}:{}),...(entry.expectedConfigurationRevision===null?{expectedConfigurationRevision:created.nextMessageRevision??0}:{})});
   }
  },[state?.sessions,outbox.entries]);
  // Shell snapshots are server-scoped. An optimistic browse patch can arrive
@@ -919,7 +919,7 @@ function App(){
   const previouslyUncertain=entry.status==='unknown';
   deliveries.current.add(entry.id);outbox.update(entry.id,{status:'sending',error:''});
   try{
-   if(!entry.sessionId){const current=await ensureSession(entry.creation);if(!outboxMatches(entry,deliveryScope(latest.current,null)))throw Object.assign(Error('The delivery target changed. The original submission remains saved.'),{accepted:false,beforePost:true});entry=outbox.update(entry.id,{sessionId:current.id,scope:deliveryScope(latest.current,current),...(entry.expectedSource===null?{expectedSource:nativeDeliverySource(current)}:{})});}
+   if(!entry.sessionId){const current=await ensureSession(entry.creation);if(!outboxMatches(entry,deliveryScope(latest.current,null)))throw Object.assign(Error('The delivery target changed. The original submission remains saved.'),{accepted:false,beforePost:true});entry=outbox.update(entry.id,{sessionId:current.id,scope:deliveryScope(latest.current,current),...(entry.expectedSource===null?{expectedSource:nativeDeliverySource(current)}:{}),...(entry.expectedConfigurationRevision===null?{expectedConfigurationRevision:current.nextMessageRevision??0}:{})});}
    if(!deliveryTargetMatches(latest.current,{scope:entry.scope},entry.sessionId))throw Object.assign(Error('The original message belongs to a different source. Nothing was sent again.'),{accepted:false,beforePost:true});
    const result=await dispatch('conversation.send',{sessionId:entry.sessionId,text:entry.text,...(entry.expectedSource?{expectedSource:entry.expectedSource}:{}),...(entry.document?{document:entry.document}:{}),...(Number.isInteger(entry.expectedConfigurationRevision)?{expectedConfigurationRevision:entry.expectedConfigurationRevision}:{}),...(Number.isInteger(entry.expectedInterruptionRevision)?{expectedInterruptionRevision:entry.expectedInterruptionRevision}:{}),...(entry.replyTo?.id?{replyId:entry.replyTo.id}:{}),attachmentIds:entry.attachmentIds,via:entry.via,preserveDraft:true},{id:entry.commandId,feedback:false,outboxScope:entry.scope,preservePayload:true});
    if(!deliveryTargetMatches(latest.current,{scope:entry.scope},entry.sessionId)){outbox.update(entry.id,{status:'unknown',error:'The source changed before acknowledgement. The original submission remains saved.'});return;}
@@ -945,7 +945,8 @@ function App(){
   if(previous.status==='unknown'&&(previous.expectedGenerationId!==undefined||previous.allowNextTurn!==undefined)){setError('This earlier submission is still uncertain and cannot be sent again here. Use Check delivery for its original receipt. The saved message was kept.');return;}
   const creation=previous.status==='failed'&&!previous.sessionId?{id:crypto.randomUUID(),setup:creationSetup()}:previous.creation;
   const currentSession=latest.current?.sessions?.find(row=>row.id===previous.sessionId);
-  const next=outbox.update(previous.id,{creation,...(previous.status==='failed'?{commandId:crypto.randomUUID(),...freshRetrySource(currentSession,creation),expectedGenerationId:undefined,allowNextTurn:undefined,expectedConfigurationRevision:currentSession?.nextMessageRevision??0,expectedInterruptionRevision:currentSession?.interruptionRevision??0,...(text!==undefined?{text}:{})}:{}),error:''});
+  if(previous.status==='failed'&&previous.sessionId&&!currentSession){setError('Open the original chat before retrying this unsent message. Its saved submission was kept.');return;}
+  const next=outbox.update(previous.id,{creation,...(previous.status==='failed'?{commandId:crypto.randomUUID(),...freshRetrySource(currentSession,creation),expectedGenerationId:undefined,allowNextTurn:undefined,expectedConfigurationRevision:currentSession?currentSession.nextMessageRevision??0:null,expectedInterruptionRevision:currentSession?.interruptionRevision??0,...(text!==undefined?{text}:{})}:{}),error:''});
   if(text!==undefined)act('view.update',{patch:{messageEdit:null}});
   await deliver(next);
  }
@@ -961,7 +962,7 @@ function App(){
   if(detail.focused)detail.latest(false);
   chatScroll.current?.submitted(id);setError('');setQuoteNotice(notice=>quoteNoticeAfterSend(notice,session?.id));editDraft('');clearTimeout(draftTimer.current);
   const blankToken=stagedDraft.current;
-  let entry=outbox.update(id,{commandId:id,sessionId:session?.id??null,scope:deliveryScope(latest.current,session),...(!externalConversation?{expectedSource:nativeDeliverySource(session)}:{}),expectedInterruptionRevision:session?.interruptionRevision??0,...(session?{expectedConfigurationRevision:session.nextMessageRevision??0}:{}),...(!session?{creation:{id:crypto.randomUUID(),setup:creationSetup()}}:{}),text:submittedText,...(submittedDocument?{document:submittedDocument,replyTo:{version:2,segments:submittedDocument.segments}}:state.view?.messageReply?{replyTo:state.view.messageReply}:{}),via:mode==='text'?'text':'chat',attachmentIds:attachments.map(file=>file.id),attachments,status:'sending',createdAt:Date.now()/1000});
+  let entry=outbox.update(id,{commandId:id,sessionId:session?.id??null,scope:deliveryScope(latest.current,session),...(!externalConversation?{expectedSource:nativeDeliverySource(session)}:{}),expectedInterruptionRevision:session?.interruptionRevision??0,expectedConfigurationRevision:session?session.nextMessageRevision??0:null,...(!session?{creation:{id:crypto.randomUUID(),setup:creationSetup()}}:{}),text:submittedText,...(submittedDocument?{document:submittedDocument,replyTo:{version:2,segments:submittedDocument.segments}}:state.view?.messageReply?{replyTo:state.view.messageReply}:{}),via:mode==='text'?'text':'chat',attachmentIds:attachments.map(file=>file.id),attachments,status:'sending',createdAt:Date.now()/1000});
   try{
    const clearingDraft=saveDraft(stagedDraftPayload.current,blankToken);
    // The outbox already owns this exact submitted text. A slow/ lost draft
@@ -970,7 +971,7 @@ function App(){
    if(session)clearingDraft.catch(error=>reportError(error));
    else await clearingDraft;
    if(!outboxMatches(entry,deliveryScope(latest.current,session)))throw Error('The delivery target changed. The original submission remains saved.');
-   const current=session||await ensureSession(entry.creation);if(!outboxMatches(entry,deliveryScope(latest.current,session)))throw Error('The delivery target changed. The original submission remains saved.');entry=outbox.update(id,{sessionId:current.id,scope:deliveryScope(latest.current,current),...(entry.expectedSource===null?{expectedSource:nativeDeliverySource(current)}:{})});
+   const current=session||await ensureSession(entry.creation);if(!outboxMatches(entry,deliveryScope(latest.current,session)))throw Error('The delivery target changed. The original submission remains saved.');entry=outbox.update(id,{sessionId:current.id,scope:deliveryScope(latest.current,current),...(entry.expectedSource===null?{expectedSource:nativeDeliverySource(current)}:{}),...(entry.expectedConfigurationRevision===null?{expectedConfigurationRevision:current.nextMessageRevision??0}:{})});
    await deliver(entry);
   }catch(error){outbox.update(id,{status:error.receipt?.delivery==='failed'||error.status>=400&&error.status<500&&error.status!==408?'failed':'unknown',error:actionErrorMessage(error)});}
  }

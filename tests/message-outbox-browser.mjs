@@ -418,6 +418,23 @@ assert.equal(fork.body.action,'message.edit');assert.equal(fork.body.args.mode,'
   state.sessions=[originalChat];state.selectedSessionId=originalSelection;await emit();await composer().waitFor();
  }
  assert.equal(calls.filter(row=>row.action==='conversation.send'&&row.id===legacy.commandId).length,2,'Only two explicit retained callbacks submit, without automatic resend');
+ // Omission tolerance is for replaying an unknown original, not constructing
+ // fresh intent from a known rejection with defaulted source/config/Stop.
+ const omittedFailed={...legacy,id:'omitted-failed',commandId:'rejected-original',status:'failed',expectedSource:{workspace:'/fixture',nativeIdentity:'chat'},expectedConfigurationRevision:8,expectedInterruptionRevision:4};
+ await page.evaluate(entry=>sessionStorage.setItem('amplifier.messageOutbox.v1',JSON.stringify([entry])),omittedFailed);
+ await page.reload();await composer().waitFor();
+ await page.locator('[data-input-id="rejected-original"]').getByRole('button',{name:'Retry',exact:true}).evaluate(node=>{
+  const propsKey=Object.keys(node).find(key=>key.startsWith('__reactProps$'));window.retainedFailedRetry=node[propsKey].onClick;
+ });
+ state.sessions=[{id:'other',title:'Other selected chat',sessionKind:'root',workspace:'/fixture',workspaceId:'project',status:'idle',historyManaged:true,historyLoaded:true,messages:[],workers:[]}];state.selectedSessionId='other';await emit();
+ await page.waitForFunction(()=>window.amplifier.getState().selectedSessionId==='other'&&!window.amplifier.getState().sessions.some(row=>row.id==='chat'));
+ const sendsBefore=calls.filter(call=>call.action==='conversation.send').length;
+ await page.evaluate(()=>window.retainedFailedRetry());
+ await page.getByText('Open the original chat before retrying this unsent message. Its saved submission was kept.',{exact:true}).waitFor();
+ assert.equal(calls.filter(call=>call.action==='conversation.send').length,sendsBefore,'Retained failed callback cannot send a new unwitnessed command');
+ assert.deepEqual(await outbox(),[omittedFailed],'Rejected payload/identity/preconditions remain exact');
+ state.sessions=[originalChat];state.selectedSessionId=originalSelection;await emit();
+ await page.evaluate(()=>sessionStorage.setItem('amplifier.messageOutbox.v1','[]'));await page.reload();await composer().waitFor();
  await page.screenshot({path:'/tmp/amplifier-optimistic-messages.png'});await page.setViewportSize({width:390,height:844});await page.evaluate(()=>{const save=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key==='amplifier.messageOutbox.v1')throw new DOMException('Fixture quota','QuotaExceededError');return save.call(this,key,value)}});const mobile=await send('Mobile failed message');await mobile.route.fulfill({status:409,json:{accepted:false,error:'Fixture rejection'}});await page.getByRole('button',{name:'Retry',exact:true}).waitFor();await page.getByText('This browser could not save the pending message. Keep this tab open until delivery is confirmed.',{exact:true}).waitFor();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:'/tmp/amplifier-message-retry-mobile.png'});
  await page.addInitScript(()=>Object.defineProperty(window,'sessionStorage',{get(){throw new DOMException('Fixture storage blocked','SecurityError')}}));await page.reload();await composer().waitFor();
  const blockedStorage=await send('Storage unavailable');await blockedStorage.route.fulfill({status:409,json:{accepted:false,error:'Fixture rejection'}});

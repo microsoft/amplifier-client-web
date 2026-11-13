@@ -96,7 +96,32 @@ test('an earlier unknown entry without a Stop epoch is never rebound to the curr
  await retry({localDelivery:{id:'local'}});
  assert.equal(calls.length,1);assert.equal(calls[0].options.id,'earlier-input');
  assert.equal(Object.hasOwn(calls[0].args,'expectedInterruptionRevision'),false,'No current-epoch default in dispatch/delivery');
+ assert.equal(Object.hasOwn(calls[0].args,'expectedConfigurationRevision'),false,'No enrichment of a literal original omission');
  assert.equal(Object.hasOwn(box.current.current[0],'expectedInterruptionRevision'),false);
+});
+
+test('a known-failed retained handler cannot form fresh intent while its captured chat row is omitted',async()=>{
+ const entry={id:'local',commandId:'rejected-input',sessionId:session.id,scope:scope(null,session),expectedSource:nativeDeliverySource(session),expectedConfigurationRevision:7,expectedInterruptionRevision:3,text:'Keep rejected intent',attachmentIds:[],status:'failed'};
+ const box=outbox(entry),before=structuredClone(box.current.current),errors=[];
+ const retry=callback('retryMessage','\n async function send(',{outbox:box,latest:{current:{sessions:[{id:'other'}]}},setError:error=>errors.push(error)});
+ await retry({localDelivery:{id:'local'}});
+ assert.deepEqual(box.current.current,before,'No new ID, witness removal or zero-revision refresh');
+ assert.match(errors[0],/Open the original chat.*retry/i);
+});
+
+for(const external of [false,true])test(`fresh ${external?'ACP':'native'} new-chat send binds confirmed nonzero config without enriching old unknowns`,async()=>{
+ const box=outbox(),delivered=[],state={view:{},sessions:[],selectedSessionId:null};
+ const created={...session,id:'new-chat',nextMessageRevision:17,...(external?{externalAgent:{id:'acp'}}:{})},latest={current:state};
+ const send=callback('send','\n async function submitWorker(',{
+  dictationControl:{current:null},referenceDraftLock:{current:false},draft:'First input',availableAttachments:[],uploadCount:{current:0},busy:false,newChatPending:false,historyPending:false,executionUnavailable:false,
+  preserveOtherDraft(){},session:null,quoteApi:{current:null},crypto:{randomUUID:()=> 'new-input'},externalConversation:external,creationSetup:()=>({workspace:'/fixture'}),detail:{focused:false},chatScroll:{current:null},setError(){},setQuoteNotice(){},quoteNoticeAfterSend(){},editDraft(){},clearTimeout(){},draftTimer:{current:null},stagedDraft:{current:'token'},outbox:box,deliveryScope:scope,latest,state,mode:'text',Date,stagedDraftPayload:{current:{}},
+  saveDraft:async()=>{},reportError(error){throw error},outboxMatches:matches,ensureSession:async()=>created,deliver:async entry=>delivered.push(entry),
+ });
+ await send();
+ assert.equal(delivered.length,1);assert.equal(delivered[0].expectedConfigurationRevision,17);
+ assert.equal(delivered[0].expectedInterruptionRevision,0,'New-chat Stop intent remains captured at submit');
+ if(external)assert.equal(Object.hasOwn(delivered[0],'expectedSource'),false);
+ else assert.deepEqual(delivered[0].expectedSource,nativeDeliverySource(created));
 });
 
 for(const fields of [{expectedGenerationId:'old-run',allowNextTurn:true},{allowNextTurn:true},{expectedGenerationId:null}]){
