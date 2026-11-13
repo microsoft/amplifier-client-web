@@ -59,8 +59,9 @@ export function ExternalAgentSettings({act,navigate=()=>{}}){
     <p className="a-caption">Use individual arguments without shell quotes. For credentials, use the agent’s token-file option or existing configuration.</p>
     <details><summary>Working directories</summary>
      <label htmlFor="external-agent-cwd">Launch directory (optional)</label><input id="external-agent-cwd" value={draft.cwd} onChange={e=>change('cwd',e.target.value)} autoComplete="off" spellCheck={false}/>
+     <p className="a-caption">Leave blank to inherit the app’s launch directory.</p>
      <label htmlFor="external-agent-session-cwd">Agent workspace (optional)</label><input id="external-agent-session-cwd" value={draft.sessionCwd} onChange={e=>change('sessionCwd',e.target.value)} autoComplete="off" spellCheck={false}/>
-     <p className="a-caption">Leave blank to use this chat’s workspace. For a remote instance, the agent workspace must exist on that instance.</p>
+     <p className="a-caption">Leave the agent workspace blank to use this chat’s workspace. For a remote instance, it must exist on that instance.</p>
     </details>
    </fieldset>
    {draft.id&&<p className="a-caption">Changing the command, arguments, or directories requires a new chat. Existing chats keep their original connection binding. Removing this connection keeps saved history.</p>}
