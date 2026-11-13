@@ -63,6 +63,17 @@ test('incoming shared panel changes retain the editor until confirmed, including
  assert.equal(visible,null);await renderAct(async()=>root.unmount());
 });
 
+test('an editor may refuse discard while a save outcome is unconfirmed',async()=>{
+ let root,pending;const entry={label:'Workspace starter',dirty:true,review:()=>{},discard:()=>false};
+ try{
+  await renderAct(async()=>root=create(React.createElement(Fixture,{entry})));
+  await renderAct(async()=>{pending=guard.confirmClose()});
+  await renderAct(async()=>click(root,'Discard changes'));
+  assert.equal(await pending,false);
+  assert.equal(guard.hasUnsaved(),true);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+
 test('approved editor survives the discard reset until the selected target is restored',async()=>{
  let root,visible,finish,restore;const restored=[];
  const registry={hasUnsaved:()=>true,confirmClose:()=>new Promise(resolve=>{finish=resolve})};
