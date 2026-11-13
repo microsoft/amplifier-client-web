@@ -26,6 +26,16 @@ test('a new feedback form requires explicit diagnostic opt-in',()=>{
  assert.match(html,/Prepare local report/);
 });
 
+test('diagnostic preview names its destination and never attaches private local diagnostics automatically',()=>{
+ const calls=[];
+ const html=renderToStaticMarkup(React.createElement(FeedbackDiagnostics,{state:base(),act:(...args)=>calls.push(args)}));
+ assert.match(html,/Review the sanitized evidence/);
+ assert.match(html,/https:\/\/github.com\/microsoft\/amplifier-unified\/issues/);
+ assert.match(html,/Opening this preview does not upload it/);
+ assert.match(html,/Local conversation diagnostics are separate and are not attached automatically/);
+ assert.deepEqual(calls,[]);
+});
+
 test('local report prepares only exact supplied text and does not submit or overwrite a draft',async()=>{
  const calls=[];let root;
  try{

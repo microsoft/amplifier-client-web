@@ -175,6 +175,7 @@ export function FeedbackDiagnostics({state,act,requestId,device,downloadable=fal
  }
  return <details data-part="feedback-diagnostics" onToggle={event=>{if(event.currentTarget.open&&!loaded.current)void load()}}>
   <summary>{requestId?'Submitted diagnostics':'Preview reproduction diagnostics'}</summary>
+  {!requestId&&<p>Review the sanitized evidence below before including it in a report to <a href={state.feedback?.issuesUrl||'https://github.com/microsoft/amplifier-unified/issues'} target="_blank" rel="noopener noreferrer">microsoft/amplifier-unified</a>. Opening this preview does not upload it. Local conversation diagnostics are separate and are not attached automatically.</p>}
   <p className="a-caption">{requestId?'This is the snapshot saved when this submission was accepted.':'Loads only when opened. This is a current preview; live status may change before you submit.'} Host active component generation does not prove which code a running worker loaded. Reported online views counts device reports, not live event-stream connections. No message text, workspace paths, raw logs, or credentials.</p>
   {busy&&<p role="status">Loading diagnostics…</p>}
   {error&&<p role="alert">{error}</p>}

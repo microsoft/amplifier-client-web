@@ -2,8 +2,9 @@ import React,{useEffect,useState} from 'react';
 import {inputStatus,statusLabel,workingDuration} from './input-status.js';
 import {messageTime} from './message-time';
 import {hostNow} from './api';
+import {ConversationFailure} from './conversation-controls';
 
-export function InputStatus({message,connected=true,current=true}){
+export function InputStatus({message,connected=true,current=true,act}){
  const status=inputStatus(message),saved=message.displayOnly||!current,live=status?.phase==='working'&&connected&&!saved;
  const [now,setNow]=useState(hostNow);
  useEffect(()=>{
@@ -30,5 +31,7 @@ export function InputStatus({message,connected=true,current=true}){
   {observed&&<time dateTime={observed.iso} aria-label={`Status observed ${observed.full}`}> · {observed.text}</time>}
   </summary>
   <span className="a-input-status-detail">{status.reason&&<>{status.reason} </>}{explanation}</span>
+  {status.phase==='failed'&&status.failure&&<ConversationFailure session={{}} failure={status.failure}/>}
+  {status.phase==='failed'&&act&&<button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{panel:'feedback'}})}>Report a problem</button>}
  </details>;
 }

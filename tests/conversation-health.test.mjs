@@ -13,8 +13,8 @@ test('details and recovery use shared actions with immediate pending feedback an
  let root,operation;await renderAct(async()=>{root=create(React.createElement(ConversationDetails,{session,act}))});
  // Read-only inspection starts when the details component opens.
  assert.deepEqual(calls,[{name:'capacity.read',args:{sessionId:'chat',limit:1}},{name:'session.inspect',args:{id:'chat'}}]);
- assert.equal(root.root.findByProps({'data-action':'session.recover'}).props.disabled,true);
- await renderAct(async()=>{release({accepted:true,result:{failure:{summary:'Invalid image',errorType:'InvalidRequestError'}}});await Promise.resolve()});
+ assert.equal(root.root.findAllByProps({'data-action':'session.recover'}).length,0);
+ await renderAct(async()=>{release({accepted:true,result:{failure:{category:'invalid_image',summary:'Invalid image',errorType:'InvalidRequestError'}}});await Promise.resolve()});
  assert.match(JSON.stringify(root.toJSON()),/Invalid image/);
  await renderAct(async()=>{operation=root.root.findByProps({'data-action':'session.recover'}).props.onClick()});
  await renderAct(async()=>root.root.findByProps({'data-action':'session.recover'}).props.onClick());
@@ -23,7 +23,7 @@ test('details and recovery use shared actions with immediate pending feedback an
  assert.match(JSON.stringify(root.toJSON()),/Could not create/);await renderAct(async()=>root.unmount());
 });
 test('dismissal does not remove settings details; active work cannot be recovered',async()=>{
- const session={id:'chat',status:'working',error:'failed'},act=async()=>({accepted:true});let root;
+ const session={id:'chat',status:'working',error:'failed',failure:{category:'context_limit'}},act=async()=>({accepted:true});let root;
  await renderAct(async()=>{root=create(React.createElement(ConversationError,{session,act,state:{attention:{items:[{id:'session:chat',read:true}]}}}))});
  assert.equal(root.toJSON(),null);
  await renderAct(async()=>root.update(React.createElement(ConversationDetails,{session,act,initiallyOpen:true})));
@@ -54,21 +54,20 @@ test('dismissing a stopped connection acknowledges only its exact error and neve
 test('error banner opens recorded details through a shared action without retrying work',async()=>{
  const calls=[];
  let root;await renderAct(async()=>{root=create(React.createElement(ConversationError,{session:{id:'chat',error:'failed'},state:{},act:async(name,args)=>{calls.push({name,args});return {accepted:true}}}))});
- assert.equal(root.root.findAllByType('button').length,1);assert.equal(root.toJSON().props.className,'a-alert');
- await renderAct(async()=>root.root.findByProps({'data-action':'view.update'}).props.onClick());
+ assert.equal(root.root.findAllByType('button').length,2);assert.equal(root.toJSON().props.className,'a-alert');
+ await renderAct(async()=>root.root.findAllByProps({'data-action':'view.update'})[0].props.onClick());
  assert.deepEqual(calls,[{name:'view.update',args:{patch:{panel:'chat-error'}}}]);
  await renderAct(async()=>root.unmount());
 });
 
-test('context-limit recovery alert shares active-work guard and cannot invoke recovery',async()=>{
+test('context-limit notice opens details, never creates a recovery copy from the composer',async()=>{
  const calls=[],act=async(name,args)=>{calls.push({name,args});return {accepted:true}};
  const session={id:'chat',status:'error',error:'context limit',workers:[{status:'working'}],
   failure:{category:'context_limit',summary:'Context limit',guidance:'Create a recovery copy.'}};
  let root;await renderAct(async()=>{root=create(React.createElement(ConversationError,{session,act,state:{attention:{items:[]}}}))});
- const recovery=root.root.findByProps({'data-action':'session.recover'});
- assert.equal(recovery.props.disabled,true);
- await renderAct(async()=>recovery.props.onClick());
- assert.deepEqual(calls,[]);
+ assert.equal(root.root.findAllByProps({'data-action':'session.recover'}).length,0);
+ await renderAct(async()=>root.root.findAllByProps({'data-action':'view.update'})[0].props.onClick());
+ assert.deepEqual(calls,[{name:'view.update',args:{patch:{panel:'chat-error'}}}]);
  await renderAct(async()=>root.unmount());
 });
 
@@ -180,13 +179,15 @@ for(const category of ['unknown','worker_startup','worker_exit','worker_communic
   try{
    await renderAct(async()=>{root=create(React.createElement(ConversationError,{session,state,act}))});
    assert.deepEqual(calls,[]);
-   assert.deepEqual(root.root.findAllByType('button').map(button=>button.props['data-action']),['view.update','attention.read']);
+   assert.deepEqual(root.root.findAllByType('button').map(button=>button.props['data-action']),['view.update','view.update','attention.read']);
    const rendered=JSON.stringify(root.toJSON());
    assert.doesNotMatch(rendered,/Continue conversation|Could not send the continuation|Please continue from where/);
-   if(category==='worker_startup')assert.match(rendered,/This attempt did not send your message\. If it is marked Not sent, use Retry on that saved message\./);
+   assert.match(rendered,/If a message is marked Not sent, use its Retry/);
+   assert.match(rendered,/If delivery is not confirmed, check its delivery before sending it again/);
    for(const button of root.root.findAllByType('button'))await renderAct(async()=>button.props.onClick());
    assert.deepEqual(calls,[
     {name:'view.update',args:{patch:{panel:'chat-error'}}},
+    {name:'view.update',args:{patch:{panel:'feedback'}}},
     {name:'attention.read',args:{ids:['session:chat'],fingerprints:{'session:chat':'recorded-failure'}}}
    ]);
    assert.deepEqual({session,state},before);
@@ -194,3 +195,41 @@ for(const category of ['unknown','worker_startup','worker_exit','worker_communic
   }finally{await renderAct(async()=>root?.unmount())}
  });
 }
+
+test('completed response and later runtime events alone never produce a false stopped-turn alert',async()=>{
+ let root;const calls=[];
+ const session={id:'chat',status:'idle',runtimeEvents:[{type:'runtime-error',message:'activation error'}],messages:[{role:'assistant',text:'Finished'}]};
+ await renderAct(async()=>{root=create(React.createElement(ConversationError,{session,state:{},act:(...args)=>calls.push(args)}))});
+ assert.equal(root.toJSON(),null);assert.deepEqual(calls,[]);
+ await renderAct(async()=>root.unmount());
+});
+
+test('recovery copies are exceptional, not an ordinary runtime-error or safety-stop remedy',async()=>{
+ const act=async()=>({accepted:true}),session={id:'chat',status:'idle'};let root;
+ for(const category of ['unknown','worker_startup','worker_exit','worker_communication','computer_capture_stop','authentication']){
+  await renderAct(async()=>{root=create(React.createElement(ConversationDetails,{session:{...session,failure:{category}},act,focused:true}))});
+  assert.equal(root.root.findAllByProps({'data-action':'session.recover'}).length,0,category);
+  assert.match(JSON.stringify(root.toJSON()),/Local diagnostics can contain chat titles, workspace paths/);
+  await renderAct(async()=>root.unmount());
+ }
+ for(const category of ['context_limit','context_compaction','invalid_image']){
+  await renderAct(async()=>{root=create(React.createElement(ConversationDetails,{session:{...session,failure:{category}},act,focused:true}))});
+  assert.equal(root.root.findAllByProps({'data-action':'session.recover'}).length,1,category);
+  assert.match(JSON.stringify(root.toJSON()),/If this history can no longer be used/);
+  await renderAct(async()=>root.unmount());
+ }
+});
+
+test('credential and model selection failures open their specific controls without starting work',async()=>{
+ for(const [category,label,patch] of [
+  ['authentication','AI connections',{panel:'settings',settingsSection:'setup',settingsExpanded:['ai-connections']}],
+  ['provider_selection','Model & tools',{panel:'chat-models'}],
+ ]){
+  const calls=[],session={id:'chat',failure:{category,guidance:'Review the selected connection.'}};let root;
+  await renderAct(async()=>{root=create(React.createElement(ConversationError,{session,state:{},act:(...args)=>calls.push(args)}))});
+  assert.match(JSON.stringify(root.toJSON()),/Review the selected connection/);
+  await renderAct(async()=>root.root.findAllByType('button').find(button=>button.children.join('')===label).props.onClick());
+  assert.deepEqual(calls,[['view.update',{patch}]]);
+  await renderAct(async()=>root.unmount());
+ }
+});
