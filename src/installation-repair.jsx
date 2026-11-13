@@ -26,6 +26,7 @@ function readReconciliation(){try{return JSON.parse(sessionStorage.getItem(recon
 export function installationRepairClosedWithoutReplacement(operation){
  return !!(id(operation?.operationId)&&id(operation.previewId)&&operation.status==='failed'&&operation.stage==='reconciled-no-effect'&&operation.reinstalled===false&&operation.healthVerified===false&&operation.serviceState==='running'&&operation.reconciliation?.noReplacement===true&&Number.isFinite(operation.reconciliation.verifiedAt)&&operation.reconciliation.verifiedAt>0&&typeof operation.reconciliation.hostInstanceId==='string'&&!!operation.reconciliation.hostInstanceId);
 }
+const pendingRepairCompleted=(operation,pending)=>!!(pending&&operation?.operationId===pending.operationId&&operation.previewId===pending.previewId&&installationRepairHealthy(operation));
 function Reconciliation({operation,target,act,onReceipt,onPending}){
  const [pending,setPending]=React.useState(readReconciliation);
  const [busy,setBusy]=React.useState(false),[notice,setNotice]=React.useState('');
@@ -43,7 +44,8 @@ function Reconciliation({operation,target,act,onReceipt,onPending}){
   onPending(value);
  };
  const proven=found=>found?.operationId===operation.operationId&&found.previewId===operation.previewId&&installationRepairClosedWithoutReplacement(found)&&(!waiting||found.reconciliation.hostInstanceId===pending.hostInstanceId);
- React.useEffect(()=>{if(waiting&&proven(operation)){try{save(null)}catch{}}},[waiting,operation]);
+ const completed=found=>found?.operationId===operation.operationId&&found.previewId===operation.previewId&&installationRepairHealthy(found);
+ React.useEffect(()=>{if(waiting&&(proven(operation)||pendingRepairCompleted(operation,pending))){try{save(null)}catch{}}},[waiting,operation]);
  async function run(inspectOnly=false){
   if(!mounted.current||flight.current||inspectOnly&&!waiting||!inspectOnly&&(!eligible||waiting||active.current!==key||generation.current!==renderedGeneration))return;
   if(!inspectOnly)generation.current++;
@@ -58,7 +60,11 @@ function Reconciliation({operation,target,act,onReceipt,onPending}){
    if(!mounted.current||active.current!==requestKey)return;
    const found=inspectOnly?response?.result?.operation:response?.result;
    const expectedHost=inspectOnly?pending.hostInstanceId:target.hostInstanceId;
-   if(response?.accepted===true&&proven(found)&&found.reconciliation.hostInstanceId===expectedHost){
+   if(response?.accepted===true&&completed(found)){
+    // The original helper may finish while reconciliation is refused or its
+    // response is lost. Its authenticated successor can have a new host ID.
+    onReceipt(found);save(null);setNotice('The original repair completed and is verified healthy. This is not a no-replacement reconciliation result.');
+   }else if(response?.accepted===true&&proven(found)&&found.reconciliation.hostInstanceId===expectedHost){
     onReceipt(found);save(null);setNotice('The backend proved no installation replacement and closed this repair. This is not a repaired-installation health result. Nothing was installed or restarted.');
    }else setNotice('No positive no-replacement settlement was confirmed. The repair remains held. Check its retained status; do not repeat the repair or reconciliation.');
   }catch(error){
@@ -157,8 +163,9 @@ export function InstallationRepair({state,act}){
  operationRef.current=operation;
  const anotherOperation=candidate&&intent&&candidate.previewId!==intent.previewId&&!settled(candidate);
  const closedWithoutReplacement=installationRepairClosedWithoutReplacement(operation)&&(!reconcilePending||reconcilePending.operationId===operation.operationId&&reconcilePending.previewId===operation.previewId&&reconcilePending.hostInstanceId===operation.reconciliation.hostInstanceId);
- const reconciliationHeld=!!reconcilePending&&!closedWithoutReplacement;
- const blocked=reconciliationHeld||!!intent&&!settled(operation)||!!operation&&!settled(operation)||!!candidate&&!settled(candidate);
+ const reconciliationHeld=!!reconcilePending&&!closedWithoutReplacement&&!pendingRepairCompleted(operation,reconcilePending);
+ const currentRepairHealthy=operation?.operationId===candidate?.operationId&&operation?.previewId===candidate?.previewId&&installationRepairHealthy(operation);
+ const blocked=reconciliationHeld||!!intent&&!settled(operation)||!!operation&&!settled(operation)||!!candidate&&!settled(candidate)&&!currentRepairHealthy;
  const healthy=installationRepairHealthy(operation);
  React.useLayoutEffect(()=>{current.current=key;setAcknowledged(false);return()=>{current.current=null}},[key]);
  React.useEffect(()=>{alive.current=true;return()=>{alive.current=false}},[]);
