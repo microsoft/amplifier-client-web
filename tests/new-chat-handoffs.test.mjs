@@ -126,12 +126,15 @@ test('accepted and cancelled receipts with missing or empty phases stay actionab
  const dispatch=async(action,args)=>{calls.push(action);return {accepted:true,result:{...incomplete.find(receipt=>receipt.requestId===args.requestId),revision:4}}};
  await act(async()=>{root=create(view(state(incomplete),dispatch))});
  assert.deepEqual(activeIds(),incomplete.map(receipt=>receipt.requestId));
+ const olderCompletePhases=incomplete.map(receipt=>({...receipt,status:'unknown',
+  creation:receipt.status==='accepted'?'created':'not_started',delivery:receipt.status==='accepted'?'accepted':'not_started'}));
+ await act(async()=>root.update(view(state(olderCompletePhases),dispatch)));
  for(const receipt of incomplete){
   const card=root.root.findByProps({'data-handoff-id':receipt.requestId});
   const check=card.findByProps({'data-action':'session.handoff.read'});
   await act(async()=>check.props.onClick());
  }
- assert.deepEqual(activeIds(),incomplete.map(receipt=>receipt.requestId),'An accepted action envelope cannot complete missing phases');
+ assert.deepEqual(activeIds(),incomplete.map(receipt=>receipt.requestId),'Neither an accepted envelope nor older stream phases can complete an incomplete exact read');
  assert.ok(calls.every(action=>action==='session.handoff.read'));
  assert.equal(calls.length,incomplete.length);
 });
@@ -146,6 +149,34 @@ test('manual read removes locally without waiting for a parent snapshot; older s
  assert.deepEqual(calls,[{action:'session.handoff.read',args:{requestId:'request'},options:{feedback:false}}]);
  await act(async()=>root.update(view(state(unknown),dispatch)));
  assert.equal(root.toJSON(),null);assert.equal(calls.length,1);
+});
+
+for(const status of ['accepted','cancelled'])test(`exact ${status} settlement survives omission before stale pending returns`,async()=>{
+ const pending={...row,revision:8},calls=[];
+ const settled={...accepted,revision:9,status,text:'Evicted exact brief',message:'Evicted exact feedback',
+  ...(status==='cancelled'?{creation:'not_started',delivery:'not_started',targetSessionId:null}:{})};
+ const dispatch=async action=>{
+  calls.push(action);
+  if(action.endsWith('.confirm'))throw Error('Lost confirmation');
+  return {accepted:true,result:settled};
+ };
+ await act(async()=>{root=create(view(state(pending),dispatch))});
+ await act(async()=>button('session.handoff.confirm').props.onClick());
+ await act(async()=>button('session.handoff.read').props.onClick());
+ assert.equal(root.toJSON(),null,'Exact revision 9 settles ahead of stream revision 8');
+ for(let cycle=0;cycle<2;cycle++){
+  await act(async()=>root.update(view(state([]),dispatch)));
+  assert.equal(root.toJSON(),null,'Omission renders no shell');
+  await act(async()=>root.update(view(state(pending),dispatch)));
+  assert.equal(root.toJSON(),null,'Older pending receipt cannot resurrect after omission');
+ }
+ for(const revision of [9,10]){
+  await act(async()=>root.update(view(state({...pending,revision,status:'unknown',message:'Stream uncertainty'}),dispatch)));
+  assert.deepEqual(activeIds(),['request'],'Equal or newer stream receipt wins over the compact witness');
+  assert.ok(button('session.handoff.read'));
+  assert.doesNotMatch(text(),/Evicted exact brief|Evicted exact feedback|Lost confirmation/);
+ }
+ assert.deepEqual(calls,['session.handoff.confirm','session.handoff.read'],'Omission and restoration never replay or poll');
 });
 
 test('a late older read cannot hide a newer stream failure; equal revisions also favor the stream',async()=>{
@@ -243,7 +274,7 @@ test('Open chat keeps its scoped navigation fence until acceptance, refusal or u
  assert.deepEqual(activeIds(),['request']);assert.doesNotMatch(text(),/Late refusal/);
 });
 
-test('rotating bounded projection discards old local reads and errors rather than retaining briefs',async()=>{
+test('rotating projection retains scalar settlement ordering without old briefs or errors',async()=>{
  const entries=Array.from({length:24},(_,index)=>({...accepted,requestId:`rotating-${index}`,revision:2,status:'unknown',delivery:'unknown',text:`Projected brief ${index}`}));
  const calls=[];
  const dispatch=async(action,args)=>{
@@ -258,10 +289,12 @@ test('rotating bounded projection discards old local reads and errors rather tha
   for(const read of reads)await act(async()=>read.props.onClick());
  }
  assert.equal(calls.length,24);
- // Returning the same IDs with older stream rows must not revive evicted local
- // receipts, retained full briefs, errors or a false settlement.
+ // Older rows cannot undo exact settlement, but the omitted full brief and error
+ // must not reappear when an equal/newer stream receipt becomes actionable.
  for(let offset=0;offset<entries.length;offset+=4){
   await act(async()=>root.update(view(state(entries.slice(offset,offset+4)),dispatch)));
+  assert.deepEqual(activeIds(),offset===0?['rotating-0']:[]);
+  await act(async()=>root.update(view(state(entries.slice(offset,offset+4).map(entry=>({...entry,revision:101}))),dispatch)));
   assert.deepEqual(activeIds(),entries.slice(offset,offset+4).map(entry=>entry.requestId));
   assert.doesNotMatch(text(),/Local-only returned brief|Old local error/);
  }

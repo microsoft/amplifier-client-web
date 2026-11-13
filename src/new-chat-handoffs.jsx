@@ -9,6 +9,15 @@ function isSettled(receipt){
  return false;
 }
 
+// Omission is not a newer receipt. Retain only scalar settlement ordering and
+// safety flags in this source view, never the evicted brief or old feedback.
+function omittedInteraction({read,unconfirmed,busy}){
+ return {
+  ...(isSettled(read||{})?{read:{revision:read.revision,status:read.status,creation:read.creation,delivery:read.delivery,targetSessionId:read.targetSessionId??null}}:{}),
+  ...(unconfirmed?{unconfirmed:true}:{}),...(busy?{busy:true}:{}),
+ };
+}
+
 function HandoffCard({receipt,interaction={},perform,open}){
  const {busy=false,error='',unconfirmed=false}=interaction;
  const pending=receipt.status==='pending';
@@ -41,24 +50,29 @@ function HandoffList({rows,dispatch}){
  useLayoutEffect(()=>{
   projected.current=new Set(rows.map(row=>row.requestId));
   setInteractions(previous=>{
-   const kept=Object.entries(previous).flatMap(([id,interaction])=>
-    projected.current.has(id)||running.current.has(id)?[[id,interaction]]:interaction.unconfirmed?[[id,{unconfirmed:true}]]:[]);
+   const kept=Object.entries(previous).flatMap(([id,interaction])=>{
+    const retained=projected.current.has(id)||running.current.has(id)?interaction:omittedInteraction(interaction);
+    return Object.keys(retained).length?[[id,retained]]:[];
+   });
    return kept.length===Object.keys(previous).length&&kept.every(([id,interaction])=>interaction===previous[id])?previous:Object.fromEntries(kept);
   });
  },[rows]);
  const entries=rows.map(row=>{
   const interaction=interactions[row.requestId]||{},read=interaction.read;
-  const receipt=read&&read.revision>row.revision?read:row;
+  // Only a compact witness borrows display fields; a full exact read must not
+  // inherit missing phases from an older stream row.
+  const receipt=read&&read.revision>row.revision?(read.requestId?read:{...row,...read}):row;
   return {receipt,interaction};
  }).filter(({receipt,interaction})=>!isSettled(receipt)||interaction.busy||interaction.error||interaction.unconfirmed);
  const update=(id,patch)=>{
   if(!mounted.current)return;
   setInteractions(previous=>{
    const prior=previous[id]||{},next={...prior,...(typeof patch==='function'?patch(prior):patch)};
-   // Omission does not confirm a mutation. Keep only its uncertainty/duplicate
-   // fence, never a late returned brief or error for an evicted row.
+   // A late result must not restore an evicted receipt body. Preserve an already
+   // observed settlement witness and the current uncertainty/duplicate fences.
    if(!projected.current.has(id)){
-    if(running.current.has(id)||next.unconfirmed)return {...previous,[id]:{busy:next.busy,unconfirmed:next.unconfirmed}};
+    const retained=omittedInteraction({...prior,busy:next.busy,unconfirmed:next.unconfirmed});
+    if(Object.keys(retained).length)return {...previous,[id]:retained};
     if(!Object.hasOwn(previous,id))return previous;
     const kept={...previous};delete kept[id];return kept;
    }
