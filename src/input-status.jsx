@@ -32,6 +32,6 @@ export function InputStatus({message,connected=true,current=true,act}){
   </summary>
   <span className="a-input-status-detail">{status.reason&&<>{status.reason} </>}{explanation}</span>
   {status.phase==='failed'&&status.failure&&<ConversationFailure session={{}} failure={status.failure}/>}
-  {status.phase==='failed'&&act&&<button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{panel:'feedback'}})}>Report a problem</button>}
+  {status.phase==='failed'&&act&&<><p className="a-caption">Reporting previews current chat diagnostics, not this saved request. Include the recorded details above yourself if needed; they are not attached automatically.</p><button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{panel:'feedback'}})}>Report a problem</button></>}
  </details>;
 }

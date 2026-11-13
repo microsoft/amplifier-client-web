@@ -46,9 +46,9 @@ export function ConversationFailure({session,failure=session.failure,moduleFailu
  const date=Number.isFinite(at)&&at>0?new Date(at*1000):null;
  const kind=failure?.errorType;
  return <section aria-label="Recorded error details">
-  <p><strong>{moduleFailures.length?'Some parts of this chat could not load':unknown?'A request was interrupted.':failure.summary}</strong></p>
+  <p><strong>{moduleFailures.length?'Some parts of this chat could not load':unknown?'Recorded problem':failure.summary}</strong></p>
   <p>{moduleFailures.length?'Review the affected components below.':unknown?'The cause is not available in the saved details. Nothing is automatically sent again.':failure.guidance}</p>
-  {date&&Number.isFinite(date.getTime())&&<p>Occurred <time dateTime={date.toISOString()}>{date.toLocaleString()}</time></p>}
+  {date&&Number.isFinite(date.getTime())&&<p>Recorded <time dateTime={date.toISOString()}>{date.toLocaleString()}</time></p>}
   {moduleFailures.length>0&&<ul>{moduleFailures.map((row,index)=><li key={index}><strong>{row.module}</strong>: {row.guidance}</li>)}</ul>}
   <details><summary>Technical details</summary>
    {kind&&!['str','dict','Error'].includes(kind)&&<p>Error type: <code>{kind}</code></p>}
@@ -127,16 +127,32 @@ export function ConversationDetails({session,act,focused=false,open}){
 }
 
 export function ConversationError({state,session,act}){
+ const [recovering,setRecovering]=useState(false),[error,setError]=useState('');
+ const inFlight=useRef(false);
+ useEffect(()=>setError(''),[session?.id,session?.failure?.recordedAt]);
  if(!session?.failure&&!session?.error)return session?.recovery?<p className="a-hint">Recovery copy · Readable history retained. Old tool and image payloads remain in the original conversation. No work was replayed.</p>:null;
  const item=state.attention?.items?.find(row=>row.id==='session:'+session.id);
  const failure=session.failure;
  if(item?.read)return null;
+ const recoverable=['context_limit','context_compaction','invalid_image'].includes(failure?.category),working=recoveryUnsafe(session);
+ async function recover(){
+  if(inFlight.current||working||!recoverable)return;
+  inFlight.current=true;setRecovering(true);setError('');
+  try{const response=await act('session.recover',{id:session.id});if(response?.accepted!==true)throw Error('Could not create the recovery copy.')}
+  catch(error){setError(error.message)}finally{inFlight.current=false;setRecovering(false)}
+ }
  const exceptional=['context_limit','context_compaction','invalid_image','computer_capture_stop','authentication','provider_selection','bundle_configuration','runtime_dependency'].includes(failure?.category);
- return <div className="a-alert" role="alert" data-part="conversation-trouble"><span><strong>{failure?.summary||'A request was interrupted.'}</strong> {exceptional?failure.guidance:'Your saved messages are kept. You can send a new instruction when you’re ready.'} If a message is marked Not sent, use its Retry. If delivery is not confirmed, check its delivery before sending it again.</span>
-  <button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{panel:'chat-error'}})}>Technical details</button>
-  <button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{panel:'feedback'}})}>Report a problem</button>
+ const requestBound=!!(failure?.generationId||failure?.inputId||failure?.inputIds?.length);
+ return <div className="a-alert" role="alert" data-part="conversation-trouble"><span><strong>{failure?.summary||'Something needs attention.'}</strong> {exceptional?failure.guidance:requestBound?'You can send a new instruction when you’re ready.':'Your saved messages are kept. Review the details below.'}</span>
+  {recoverable&&<button type="button" className="a-link" data-action="session.recover" disabled={recovering||working} onClick={recover}>{recovering?'Creating recovery copy…':'Create recovery copy'}</button>}
   {failure?.category==='authentication'&&<button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:settingsPatch('ai-connections')})}>AI connections</button>}
   {failure?.category==='provider_selection'&&<button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{panel:'chat-models'}})}>Model &amp; tools</button>}
+  <details><summary>Details &amp; reporting</summary>
+   {recoverable&&<p>A recovery copy keeps readable text, not old tool calls or image payloads. Safety stops remain; nothing is replayed.</p>}
+   <button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{panel:'chat-error'}})}>Technical details</button>
+   <button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{panel:'feedback'}})}>Report a problem</button>
+  </details>
+  {error&&<p role="alert">{error}</p>}
   {item&&<button type="button" aria-label="Dismiss conversation error" data-action="attention.read" onClick={()=>readItems(act,[item])}><X/></button>}
  </div>;
 }

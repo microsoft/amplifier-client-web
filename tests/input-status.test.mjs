@@ -78,6 +78,7 @@ test('exact request-local failure details remain available without replay or cur
  await act(async()=>{root=create(React.createElement(InputStatus,{message:row,current:false,act:(...args)=>calls.push(args)}))});
  const text=JSON.stringify(root.toJSON());
  assert.match(text,/This request failed/);assert.match(text,/generation-one/);assert.match(text,/Technical details/);
+ assert.match(text,/Reporting previews current chat diagnostics, not this saved request/);
  assert.equal(root.root.findAllByType('button').length,1);
  await act(async()=>root.root.findByType('button').props.onClick());
  assert.deepEqual(calls,[['view.update',{patch:{panel:'feedback'}}]]);

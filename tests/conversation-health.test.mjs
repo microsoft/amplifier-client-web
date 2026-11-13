@@ -60,14 +60,15 @@ test('error banner opens recorded details through a shared action without retryi
  await renderAct(async()=>root.unmount());
 });
 
-test('context-limit notice opens details, never creates a recovery copy from the composer',async()=>{
+test('context-limit recovery shares active-work guard and cannot bypass a working owner',async()=>{
  const calls=[],act=async(name,args)=>{calls.push({name,args});return {accepted:true}};
  const session={id:'chat',status:'error',error:'context limit',workers:[{status:'working'}],
   failure:{category:'context_limit',summary:'Context limit',guidance:'Create a recovery copy.'}};
  let root;await renderAct(async()=>{root=create(React.createElement(ConversationError,{session,act,state:{attention:{items:[]}}}))});
- assert.equal(root.root.findAllByProps({'data-action':'session.recover'}).length,0);
- await renderAct(async()=>root.root.findAllByProps({'data-action':'view.update'})[0].props.onClick());
- assert.deepEqual(calls,[{name:'view.update',args:{patch:{panel:'chat-error'}}}]);
+ const recovery=root.root.findByProps({'data-action':'session.recover'});
+ assert.equal(recovery.props.disabled,true);
+ await renderAct(async()=>recovery.props.onClick());
+ assert.deepEqual(calls,[]);
  await renderAct(async()=>root.unmount());
 });
 
@@ -182,8 +183,7 @@ for(const category of ['unknown','worker_startup','worker_exit','worker_communic
    assert.deepEqual(root.root.findAllByType('button').map(button=>button.props['data-action']),['view.update','view.update','attention.read']);
    const rendered=JSON.stringify(root.toJSON());
    assert.doesNotMatch(rendered,/Continue conversation|Could not send the continuation|Please continue from where/);
-   assert.match(rendered,/If a message is marked Not sent, use its Retry/);
-   assert.match(rendered,/If delivery is not confirmed, check its delivery before sending it again/);
+   assert.doesNotMatch(rendered,/Not sent|check its delivery|A request was interrupted/);
    for(const button of root.root.findAllByType('button'))await renderAct(async()=>button.props.onClick());
    assert.deepEqual(calls,[
     {name:'view.update',args:{patch:{panel:'chat-error'}}},
