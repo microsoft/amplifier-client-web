@@ -31,8 +31,8 @@ async function fixture({selected='builtin',items=[builtin,custom],save,compact=f
  const calls=[],routes=[],focus=[];
  const dispatch=async(action,args,meta)=>{
   if(action==='workspace.starters.list'){if(failReload&&listReads++)throw Error('List unavailable');return ok(catalog)}
-  assert.equal(action,'workspace.starters.save','Copy must save the edited draft, not duplicate the stored definition');
   calls.push(structuredClone({action,args,meta}));
+  assert.equal(action,'workspace.starters.save','Copy must save the edited draft, not duplicate or remove the stored definition');
   const response=save?await save(args,meta,calls.length):ok({...args.starter,id:args.id||'saved-copy',revision:args.id?args.expectedRevision+1:1,builtIn:false});
   if(response?.accepted&&response.result?.id){
    catalog={...catalog,items:[...catalog.items.filter(row=>row.id!==response.result.id),response.result]};

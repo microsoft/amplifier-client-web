@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import React,{act as renderAct,useLayoutEffect} from 'react';
 import {create} from 'react-test-renderer';
 import {createServer} from 'vite';
-const server=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
+const server=await createServer({configFile:false,server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
 const {SettingsDraftProvider,useSettingsDraft,useSettingsDrafts,useGuardedSettingsPanel,useGuardedSettingsDraft}=await server.ssrLoadModule('/src/settings-drafts.jsx');
 const {useSettingsHistory}=await server.ssrLoadModule('/src/settings-layout.jsx');
 const {settingsTrail,settingsBaseNavigation}=await server.ssrLoadModule('/src/settings-mobile.js');
