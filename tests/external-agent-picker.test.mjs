@@ -33,7 +33,7 @@ test('a missing saved choice stays unavailable until the user explicitly chooses
  try{
   await act(async()=>{root=create(React.createElement(ExternalAgentPicker,{state,act:dispatch}))});
   assert.equal(root.root.findByType('select').props.value,'removed');
-  assert.match(JSON.stringify(root.toJSON()),/removed — unavailable/);
+  assert.equal(root.root.findAllByType('option').find(node=>node.props.value==='removed').children.join(''),'removed — unavailable');
   assert.equal(calls.length,1);
   await act(async()=>root.root.findByType('select').props.onChange({target:{value:''}}));
   assert.deepEqual(calls[1][1].patch.newSessionDraft,{...state.view.newSessionDraft,externalAgentId:''});
@@ -56,7 +56,7 @@ test('refresh and host changes ignore a late catalog and never replace the selec
   assert.doesNotMatch(JSON.stringify(root.toJSON()),/My Instance/);
   await act(async()=>requests[2].resolve(result([])));
   assert.equal(root.root.findByType('select').props.value,'remote');
-  assert.match(JSON.stringify(root.toJSON()),/remote — unavailable/);
+  assert.equal(root.root.findAllByType('option').find(node=>node.props.value==='remote').children.join(''),'remote — unavailable');
   assert.equal(requests.length,3);assert.ok(requests.every(row=>row.action==='externalAgents.list'));
  }finally{await act(async()=>root?.unmount())}
 });
