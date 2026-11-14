@@ -41,7 +41,7 @@ import {appAppearanceState} from './app-appearance-state';
 import {homePatch} from './adaptive-work.js';
 import {SettingsExperience} from './settings-experience';
 import {useGuardedSettingsPanel,useGuardedSettingsSession} from './settings-drafts';
-import {useMessageOutbox,outboxMessages,outboxMatches} from './message-outbox';
+import {useMessageOutbox,outboxMessages,outboxMatches,ClosedDeliveryItems} from './message-outbox';
 import {checkedDelivery,deliveryRecovery,deliveryScope,deliveryTargetMatches,nativeDeliverySource,retainedDeliveryTarget,freshRetrySource} from './pending-delivery-checks';
 import {clientId,clientUrl,attachClient,draftJournal} from './api';
 import {checkpointSurfaces} from './surface-checkpoint';
@@ -932,14 +932,14 @@ function App(){
  }
  function discardMessage(message){
   const entry=outbox.current.current.find(row=>row.id===message.localDelivery?.id);
-  if(!entry||entry.status!=='failed'||deliveries.current.has(entry.id))return;
-  const saved=latest.current?.sessions?.find(row=>row.id===entry.sessionId)?.messages?.some(row=>row.inputId===entry.commandId);
-  if(saved)return;
-  outbox.update(entry.id,null);
-  if(latest.current?.view?.messageEdit?.messageId===message.id)act('view.update',{patch:{messageEdit:null}});
+  if(!entry||!['failed','unknown'].includes(entry.status)||deliveries.current.has(entry.id))return;
+  const owner=latest.current?.sessions?.find(row=>row.id===entry.sessionId),saved=owner?.messages?.find(row=>row.inputId===entry.commandId);
+  if(!deliveryTargetMatches(latest.current,{scope:entry.scope},entry.sessionId)||['sending','queued','queued_for_update'].includes(saved?.delivery?.status)||
+   ['working','starting','running','stopping'].includes(owner?.status)&&owner?.execution?.currentTurnId===entry.commandId)return;
+  outbox.update(entry.id,{closed:true});
  }
  async function retryMessage(message,text){
-  const previous=outbox.current.current.find(row=>row.id===(message.localDelivery?.id||message.id));if(!previous||previous.status==='sending'||!deliveryTargetMatches(latest.current,{scope:previous.scope},previous.sessionId))return;
+  const previous=outbox.current.current.find(row=>row.id===(message.localDelivery?.id||message.id));if(!previous||previous.closed||previous.status==='sending'||!deliveryTargetMatches(latest.current,{scope:previous.scope},previous.sessionId))return;
   if(previous.document&&text!==undefined){setError('Retry this quoted message unchanged, or discard it and compose a correction.');return;}
   if(previous.status==='unknown'&&text!==undefined)return;
   if(previous.status==='unknown'&&(previous.expectedGenerationId!==undefined||previous.allowNextTurn!==undefined)){setError('This earlier submission is still uncertain and cannot be sent again here. Use Check delivery for its original receipt. The saved message was kept.');return;}
@@ -1146,6 +1146,7 @@ function App(){
    <ArchiveNotice value={archiveValue}/>
    {error&&<div className="a-alert" role="alert"><span>{error}</span><button type="button" aria-label="Dismiss error" onClick={()=>setError('')}><X/></button></div>}
    {(Object.hasOwn(chatPageTitles,panel)||panel==='runtime')&&<ChatPages key={session?.id||'draft'} page={panel} state={state} session={session} act={act} dispatch={dispatch} open={open} working={working} questionReviewState={questionReviewState} computerControls={<VoiceVisualControls sessionId={session?.id} visual={computerVisual} client={computerClient} dispatch={dispatch} onError={reportError}/>}/>}
+   {panel==='session-details'&&<ClosedDeliveryItems entries={outbox.entries} sessionId={session?.id} scope={outboxSource} reopen={id=>outbox.update(id,{closed:false})}/>}
     {panel==='coordination'&&<CoordinationPanel key={session?.id} dispatch={dispatch} sessionId={session?.id} session={session} onOpenChat={id=>selectWorkspaceChat(dispatch,id,target=>latest.current?.selectedSessionId===target&&latest.current?.view?.panel==='coordination')}/>}
    {panel==='subagent-history'&&<SubagentHistory state={state} session={session} act={act}/>}
    {panel==='automation'&&<AutomationHub state={state} dispatch={dispatch} isCurrent={id=>latest.current?.selectedSessionId===id&&pendingView.current.apply(latest.current)?.view?.panel==='automation'}/>}
