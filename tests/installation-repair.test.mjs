@@ -437,10 +437,13 @@ test('pending reconciliation retains exact identity across unrelated or absent p
   assert.equal(calls.filter(([name])=>name.endsWith('Reconcile')).length,1);
   assert.equal(calls.some(([name])=>name.endsWith('Confirm')||name.endsWith('Verify')),false);
   found=noReplacement;await act(()=>reconciliationStatus(root).props.onClick());
-  assert.match(content(root),/backend proved no installation replacement/);
   assert.doesNotMatch(content(root),/Installation repair verified healthy/);
   assert.equal(storage.get('amplifier.installation-repair-reconciliation.v1'),'null');
   if(projected){
+   assert.match(content(root),/backend proved no installation replacement/);
+   assert.match(content(root),new RegExp(`closed repair operation ${operation.operationId} \\(preview ${operation.previewId}\\)`));
+   assert.doesNotMatch(content(root),/closed this repair/);
+   assert.doesNotMatch(content(root),new RegExp(`closed repair operation ${projected.operationId}`));
    assert.equal(byAction(root,'Preview').props.disabled,true,'another current repair remains held');
    assert.match(content(root),/Repair outcome unknown/);
   }else assert.match(content(root),/Repair closed without installation replacement/);

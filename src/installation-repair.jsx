@@ -62,9 +62,9 @@ function Reconciliation({operation,target,pending,act,onReceipt,onPending}){
    if(response?.accepted===true&&completed(found)){
     // The original helper may finish while reconciliation is refused or its
     // response is lost. Its authenticated successor can have a new host ID.
-    onReceipt(found);save(null);setNotice('The original repair completed and is verified healthy. This is not a no-replacement reconciliation result.');
+    onReceipt(found);save(null);setNotice(`The original repair operation ${found.operationId} (preview ${found.previewId}) completed and is verified healthy. This is not a no-replacement reconciliation result.`);
    }else if(response?.accepted===true&&proven(found)&&found.reconciliation.hostInstanceId===expectedHost){
-    onReceipt(found);save(null);setNotice('The backend proved no installation replacement and closed this repair. This is not a repaired-installation health result. Nothing was installed or restarted.');
+    onReceipt(found);save(null);setNotice(`The backend proved no installation replacement and closed repair operation ${found.operationId} (preview ${found.previewId}). This is not a repaired-installation health result. Nothing was installed or restarted.`);
    }else setNotice('No positive no-replacement settlement was confirmed. The repair remains held. Check its retained status; do not repeat the repair or reconciliation.');
   }catch(error){
    if(!mounted.current||active.current!==requestKey)return;
