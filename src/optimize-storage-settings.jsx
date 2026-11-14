@@ -15,7 +15,7 @@ export function OptimizeStorageSettings({act,sessionId,hostId,active=true,naviga
  // A receipt from another host is never a retry or an execution target here.
  const storageKey=`amplifier-optimize-storage-v1:${hostId||'unidentified'}`;
  const [local,setLocal]=useState(()=>readLocal(storageKey)),[policy,setPolicy]=useState(null),[draft,setDraft]=useState(null);
- const [scope,setScope]=useState(sessionId?'current':'all'),[extractImages,setExtractImages]=useState(true);
+ const [scope,setScope]=useState('current'),[extractImages,setExtractImages]=useState(true);
  const [operation,setOperation]=useState(null),[confirmExpiry,setConfirmExpiry]=useState(false);
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const identity=JSON.stringify([hostId,sessionId,active,scope,extractImages,draft,operation?.operationId,operation?.revision,confirmExpiry]),currentIdentity=useRef(identity);
@@ -23,7 +23,8 @@ export function OptimizeStorageSettings({act,sessionId,hostId,active=true,naviga
  action.current=act;localRef.current=local;currentIdentity.current=identity;
  const pending=local.pending,dirty=!!draft&&!!policy&&!sameOptimizePolicy(draft,policy);
  const valid=draft&&validKeepHours(draft.requestKeepHours)&&validKeepHours(draft.responseKeepHours);
- const running=optimizeRunning(operation?.status),blocked=busy||!!pending||!!local.recoveryError||!active||!hostId;
+ const canCreateCommand=typeof globalThis.crypto?.randomUUID==='function';
+ const running=optimizeRunning(operation?.status),blocked=busy||!!pending||!!local.recoveryError||!active||!hostId||!canCreateCommand;
  useSettingsDraft(`optimize-storage:${hostId}`,{label:'Optimize saved session storage',dirty:dirty||!!pending,review:()=>navigate(page),discard:()=>{if(pending||busy)return false;setDraft(policy);return true}});
 
  function retain(value){
@@ -122,7 +123,12 @@ export function OptimizeStorageSettings({act,sessionId,hostId,active=true,naviga
   if(lock.current||blocked||localRef.current.pending||localRef.current.recoveryError||currentIdentity.current!==identity)return;
   const saved=readLocal(storageKey);
   if(saved.pending||saved.recoveryError){localRef.current=saved;setLocal(saved);setError('A saved optimization command needs reconciliation before new storage changes. Nothing was submitted.');return}
-  const command={id:crypto.randomUUID(),action:prefix+name,args};
+  let command;
+  try{
+   const id=globalThis.crypto.randomUUID();
+   if(typeof id!=='string'||!id)throw Error('No command identity');
+   command={id,action:prefix+name,args};
+  }catch{setError('A secure command identity could not be created. Nothing was submitted. Use HTTPS or a trusted localhost connection to make storage changes. Your saved recovery references are kept.');return}
   if(!retain({...localRef.current,pending:command}))return;
   lock.current=true;setBusy(true);setError('');setNotice('');const version=generation.current;
   try{
@@ -148,12 +154,13 @@ export function OptimizeStorageSettings({act,sessionId,hostId,active=true,naviga
  return <section className="a-settings-section" aria-label="Optimize saved session storage">
   <h4>Optimize saved session storage</h4>
   <p>Review saved conversation storage without deleting chats. Extracting supported inline images keeps their original bytes in session-owned assets. Expiring raw request or response diagnostics is a separate, destructive choice.</p>
-  <p className="a-caption">This is a manual operation, not automatic cleanup. Existing 12-hour request-only schedules and seven-day inactivity rules stay unchanged. Response expiry is never enabled for you. Publishing or opening this page does not start cleanup.</p>
+  <p className="a-caption">This is a manual operation, not automatic cleanup. Existing schedules and inactivity rules stay unchanged, including any configured 12-hour request-only schedule or seven-day inactivity rule. This page does not establish that those timers are configured on this host. Response expiry is never enabled for you. Publishing or opening this page does not start cleanup.</p>
   {busy&&<p role="status">Reading or submitting saved storage work…</p>}
   {error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}
   {local.recoveryError&&<p role="alert">{local.recoveryError}</p>}
   {draft&&policy&&draft.revision!==policy.revision&&<p role="alert">Manual choices changed elsewhere. Your edits are kept. Discard them to use the current saved choices before saving again.</p>}
   {!hostId&&<p role="alert">Host identity is unavailable. Storage changes are disabled.</p>}
+  {!canCreateCommand&&<p role="alert">A secure command identity is unavailable in this browser context. Storage changes are disabled. Use HTTPS or a trusted localhost connection. Your saved recovery references are kept.</p>}
   <fieldset disabled={blocked||!policy||running}>
    <legend>Manual diagnostic expiry choices</legend>
    <p>Save these choices before previewing. They do not run expiry, change schedules or remove recovery copies.</p>
@@ -172,9 +179,10 @@ export function OptimizeStorageSettings({act,sessionId,hostId,active=true,naviga
     <option value="workspace" disabled={!sessionId}>Current workspace and its workers</option>
     <option value="all">All owned saved sessions and workers</option>
    </select></label>
+   {!sessionId&&<p>Select a conversation to use the current or workspace scope, or explicitly choose all owned saved sessions. The scope is not widened automatically.</p>}
    <label><input type="checkbox" checked={extractImages} onChange={e=>{setExtractImages(e.target.checked);setConfirmExpiry(false)}}/> Extract supported inline images without discarding their pixels</label>
    <p className="a-caption">Unknown formats, missing ownership, offline writers, malformed records and recovery holds remain protected and are reported. No automatic bulk migration is performed.</p>
-   <button type="button" className="a-soft" disabled={dirty||!valid||scope!=='all'&&!sessionId||!extractImages&&!expirySelected(policy)} onClick={()=>mutate('preview',{...optimizeScopeArgs(scope,sessionId),extractImages,policyRevision:policy.revision})}>Preview saved storage optimization</button>
+   <button type="button" className="a-soft" disabled={dirty||!valid||scope!=='all'&&!sessionId||!extractImages&&!expirySelected(policy)} onClick={()=>{if(scope!=='all'&&!sessionId)return;mutate('preview',{...optimizeScopeArgs(scope,sessionId),extractImages,policyRevision:policy.revision})}}>Preview saved storage optimization</button>
    {dirty&&<p>Save or discard your diagnostic expiry edits before previewing.</p>}
   </fieldset>
   {pending&&<div role="status"><p>The outcome of <code>{pending.action}</code> is unconfirmed. Its command identity is retained in this browser. It has not been repeated. Other storage changes are disabled until its exact outcome can be reconciled.</p><code>{pending.id}</code><button type="button" className="a-soft" disabled={busy||!active} onClick={reconcile}>Read exact optimization command outcome</button></div>}

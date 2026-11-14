@@ -4,7 +4,7 @@ import React,{act} from 'react';
 import {create} from 'react-test-renderer';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {createServer} from 'vite';
-import {validKeepHours,optimizeScopeArgs,optimizeCutoff} from '../src/optimize-storage.js';
+import {validKeepHours,optimizeScopeArgs,optimizeCutoff,expirySelected} from '../src/optimize-storage.js';
 
 const server=await createServer({configFile:false,server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
 const {OptimizeStorageSettings}=await server.ssrLoadModule('/src/optimize-storage-settings.jsx');
@@ -44,6 +44,8 @@ test('manual choices validate safe integer hours and scope never guesses a conve
  assert.equal(optimizeCutoff(null),'Not selected — diagnostics retained');
  assert.match(optimizeCutoff(undefined),/Not reported/);
  assert.equal(optimizeCutoff('2026-11-01T01:00:00+01:00'),'2026-11-01T00:00:00.000Z');
+ for(const value of [undefined,null,{},policy])assert.equal(expirySelected(value),false);
+ for(const value of [{requestKeepHours:12},{responseKeepHours:168}])assert.equal(expirySelected(value),true);
 });
 
 test('opening the native section only reads; scopes and expiry are labeled and never automatic',async()=>{
@@ -53,7 +55,8 @@ test('opening the native section only reads; scopes and expiry are labeled and n
   assert.equal(root.root.findByType('select').props.value,'current');
   assert.equal(checkbox(root,' Expire raw request diagnostics during this manual optimization').props.checked,false);
   assert.equal(checkbox(root,' Expire raw response diagnostics during this manual optimization').props.checked,false);
-  assert.match(content(root),/12-hour request-only schedules/);
+  assert.match(content(root),/any configured 12-hour request-only schedule/);
+  assert.match(content(root),/does not establish that those timers are configured on this host/);
   assert.match(content(root),/does not start cleanup/);
   assert.equal(root.root.findByProps({'aria-label':'Optimize saved session storage'}).type,'section');
  }finally{await act(async()=>root.unmount())}
@@ -84,6 +87,8 @@ test('preview freezes current scope and applies nondestructive extraction with e
   assert.match(content(root),/Not measured/);assert.match(content(root),/Worker sessions/);
   assert.match(content(root),/Malformed/);assert.match(content(root),/Changed since preview/);
   await act(async()=>click(root,'Apply image extraction'));
+  assert.equal(calls[3].name,prefix+'apply');
+  assert.equal(typeof calls[3].args.confirmExpiry,'boolean');
   assert.deepEqual(calls[3].args,{operationId:'operation-1',expectedRevision:2,confirmExpiry:false});
   assert.notEqual(calls[2].meta.id,calls[3].meta.id);
   assert.match(content(root),/acceptance alone is not completion/);
@@ -236,14 +241,43 @@ test('host change cannot show a late result or borrow pending command from anoth
  }finally{await act(async()=>root.unmount())}
 });
 
-test('scope defaults all without conversation; absent host identity disables mutation',async()=>{
+test('scope does not widen without conversation; absent host identity disables mutation',async()=>{
  const {dispatch,calls}=host();const root=await mount(dispatch,{hostId:null,sessionId:null});
  try{
-  assert.equal(root.root.findByType('select').props.value,'all');
+  assert.equal(root.root.findByType('select').props.value,'current');
   assert.equal(disabled(button(root,'Preview saved storage optimization')),true);
   await act(async()=>click(root,'Preview saved storage optimization'));
   assert.equal(calls.length,2);
   assert.match(content(root),/Host identity is unavailable/);
+ }finally{await act(async()=>root.unmount())}
+});
+
+test('current and workspace scopes stay disabled without a conversation until all is explicitly selected',async()=>{
+ const {dispatch,calls}=host();const root=await mount(dispatch,{sessionId:null});
+ try{
+  const select=root.root.findByType('select');
+  assert.equal(select.props.value,'current');
+  for(const value of ['current','workspace'])assert.equal(select.findAllByType('option').find(option=>option.props.value===value).props.disabled,true);
+  assert.equal(disabled(button(root,'Preview saved storage optimization')),true);
+  await act(async()=>click(root,'Preview saved storage optimization'));
+  assert.equal(calls.length,2);
+  assert.match(content(root),/scope is not widened automatically/);
+  await act(async()=>select.props.onChange({target:{value:'all'}}));
+  await act(async()=>click(root,'Preview saved storage optimization'));
+  assert.deepEqual(calls[2].args,{scope:'all',extractImages:true,policyRevision:1});
+  assert.equal(calls[2].name,prefix+'preview');
+ }finally{await act(async()=>root.unmount())}
+});
+
+test('losing selected conversation does not silently widen an existing workspace scope',async()=>{
+ const {dispatch,calls}=host();const root=await mount(dispatch);
+ try{
+  await act(async()=>root.root.findByType('select').props.onChange({target:{value:'workspace'}}));
+  await act(async()=>root.update(React.createElement(OptimizeStorageSettings,{...props,sessionId:null,act:dispatch})));
+  assert.equal(root.root.findByType('select').props.value,'workspace');
+  assert.equal(disabled(button(root,'Preview saved storage optimization')),true);
+  await act(async()=>click(root,'Preview saved storage optimization'));
+  assert.equal(calls.length,2);
  }finally{await act(async()=>root.unmount())}
 });
 
@@ -305,5 +339,79 @@ test('reconciled historical policy save reads current choices instead of rolling
   assert.equal(checkbox(root,' Expire raw response diagnostics during this manual optimization').props.checked,true);
   assert.equal(root.root.findByProps({type:'number'}).props.value,48);
   assert.equal(calls.filter(call=>call.name===prefix+'policy.read').length,2);
+ }finally{await act(async()=>root.unmount())}
+});
+
+test('missing or failing secure ID generation visibly prevents any new effect or recovery overwrite',async()=>{
+ const descriptor=Object.getOwnPropertyDescriptor(globalThis,'crypto');
+ try{
+  for(const cryptoValue of [undefined,{}, {randomUUID:()=>{throw Error('Unavailable')}}]){
+   store.clear();
+   Object.defineProperty(globalThis,'crypto',{configurable:true,value:cryptoValue});
+   const {dispatch,calls}=host();const root=await mount(dispatch);
+   try{
+    if(!cryptoValue?.randomUUID){
+     assert.equal(disabled(button(root,'Preview saved storage optimization')),true);
+     assert.match(content(root),/secure command identity is unavailable/);
+    }
+    await act(async()=>click(root,'Preview saved storage optimization'));
+    assert.equal(calls.length,2);
+    assert.equal(store.has(key),false);
+    assert.match(content(root),/HTTPS or a trusted localhost/);
+   }finally{await act(async()=>root.unmount())}
+  }
+ }finally{Object.defineProperty(globalThis,'crypto',descriptor)}
+});
+
+test('missing secure ID does not discard an existing unknown command or disable its editor read controls',async()=>{
+ const descriptor=Object.getOwnPropertyDescriptor(globalThis,'crypto');
+ const saved={pending:{id:'retained-command',action:prefix+'preview',args:{scope:'current',sessionId:'chat'}}};
+ store.set(key,JSON.stringify(saved));
+ Object.defineProperty(globalThis,'crypto',{configurable:true,value:undefined});
+ const calls=[];
+ const peer=async(name,args)=>{
+  calls.push({name,args});
+  if(name===prefix+'policy.read')return ok(policy);
+  return ok(args.commandId?{commandId:args.commandId,status:'unknown',result:null}:{operation:null});
+ };
+ let root;
+ try{
+  root=await mount(peer);
+  assert.equal(disabled(button(root,'Read exact optimization command outcome')),false);
+  await act(async()=>click(root,'Read exact optimization command outcome'));
+  assert.deepEqual(calls.at(-1),{name:prefix+'read',args:{commandId:'retained-command'}});
+  assert.deepEqual(JSON.parse(store.get(key)),saved);
+  assert.ok(calls.every(call=>[prefix+'read',prefix+'policy.read'].includes(call.name)));
+ }finally{await act(async()=>root?.unmount());Object.defineProperty(globalThis,'crypto',descriptor)}
+});
+
+test('read-only recovery retries exact command and CURRENT policy/operation without replay after peer failure',async()=>{
+ const saved={pending:{id:'lost-apply',action:prefix+'apply',args:{operationId:'operation-1',expectedRevision:2,confirmExpiry:false}},operationId:'operation-1'};
+ store.set(key,JSON.stringify(saved));
+ const calls=[];let commandReads=0;
+ const peer=async(name,args,meta)=>{
+  calls.push({name,args,meta});
+  assert.ok([prefix+'policy.read',prefix+'read'].includes(name),'Recovery must not dispatch a mutation');
+  if(name===prefix+'policy.read')return ok({...policy,revision:7});
+  if(args.commandId){
+   commandReads++;
+   assert.deepEqual(args,{commandId:'lost-apply'});
+   return ok({commandId:args.commandId,status:'recorded',result:operation({status:'applying',canApply:false})});
+  }
+  if(commandReads===1)throw Error('Current operation read interrupted');
+  return ok(operation({revision:9,status:'completed',canApply:false}));
+ };
+ const root=await mount(peer);
+ try{
+  await act(async()=>click(root,'Read exact optimization command outcome'));
+  assert.deepEqual(JSON.parse(store.get(key)),saved);
+  assert.match(content(root),/Current operation read interrupted/);
+  await act(async()=>click(root,'Read exact optimization command outcome'));
+  assert.equal(commandReads,2);
+  assert.deepEqual(JSON.parse(store.get(key)),{operationId:'operation-1'});
+  assert.match(content(root),/completed/);
+  assert.ok(calls.filter(call=>call.args.operationId).every(call=>call.args.operationId==='operation-1'&&call.args.limit===50));
+  assert.equal(calls.filter(call=>call.name===prefix+'policy.read').length,3,'Both recovery attempts read CURRENT policy');
+  assert.ok(calls.every(call=>!call.meta.id),'No new effect command is created by these read-only controls');
  }finally{await act(async()=>root.unmount())}
 });

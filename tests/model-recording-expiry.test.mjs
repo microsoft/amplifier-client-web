@@ -45,6 +45,8 @@ test('expiry does not suppress the other direction or alter genuine missing-reco
   await act(async()=>root.update(render({...base,requestRecordingExpired:marker,responseDetail:reference,responseRecording:recording})));
   assert.equal(root.root.findAllByProps({'aria-label':'Expired request recording'}).length,1);
   const response=root.root.findByProps({'aria-label':'Recorded response'});
+  assert.match(text(root),/Extracted images remain references, not embedded files/);
+  assert.match(text(root),/not a self-contained media archive/);
   assert.equal(response.findAllByType('a').length,1);
   assert.equal(buttons(root,'Open recording settings').length,0);
   assert.ok(response.findAllByType('button').some(button=>button.props['aria-expanded']===false));

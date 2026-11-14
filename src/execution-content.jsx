@@ -1,7 +1,7 @@
 import React,{useEffect,useMemo,useState} from 'react';
 import {Check,Circle,Copy,LoaderCircle} from 'lucide-react';
 import {request,download,clientUrl} from './api';
-import {providerRecordExport} from './provider-record-export';
+import {providerRecordExport,providerRecordMediaNote} from './provider-record-export';
 import {readDetail} from './detail-read';
 import {UsageDetails} from './usage-details.jsx';
 import {useShellContext} from './shell/runtime';
@@ -102,6 +102,7 @@ function AvailableModelPayload({node,field,act}){
  const reference=node[field+'Detail'],capture=node[field+'Capture'],recording=node[field+'Recording'],label=field[0].toUpperCase()+field.slice(1);
  if(!reference)return <p className="a-caption">{isRunning(node)?`Waiting for a linked ${field} recording…`:node.observationWindow?`This event has no ${field} payload.`:`This call’s ${field} recording isn’t available here.`} {!isRunning(node)&&field==='request'&&!node.observationWindow&&<>Recording settings save automatically and apply when a supported runtime next prepares. They cannot create recordings for past calls. {act&&<button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:settingsPatch('diagnostics')})}>Open recording settings</button>}</>}</p>;
  return <section className="a-model-payload" aria-label={`Recorded ${field}`}>
+  <p className="a-caption">{providerRecordMediaNote}</p>
   {recording&&<><a className="a-link" download href={clientUrl('/api/conversation/provider-recording?'+new URLSearchParams({sessionId:reference.sessionId,id:reference.id,field,digest:recording.sha256,...(reference.windowKey?{windowKey:reference.windowKey}:{})}))}>Download {recording.truncated?'partial':'full'} recorded {field} (JSON)</a><small>Redacted provider event · {(recording.bytes/1024/1024).toFixed(1)} MB{recording.truncated?' · Capture limit reached; some content is omitted.':''}</small></>}
   <button type="button" className="a-link a-execution-request-toggle" aria-expanded={open} onClick={()=>setOpen(!open)}>{open?'Hide':'View'} {field}{!open&&Number.isFinite(reference.length)&&` · ${reference.length.toLocaleString()} characters`}</button>
   {open&&<>
