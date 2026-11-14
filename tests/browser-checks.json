@@ -2,6 +2,11 @@
   "schemaVersion": 1,
   "scenarios": [
     {
+      "id": "shared-controls",
+      "command": ["node", "tests/shared-controls-browser.mjs"],
+      "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/shared-controls"}
+    },
+    {
       "id": "installation-repair",
       "command": ["node", "tests/installation-repair-browser.mjs"],
       "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/installation-repair"}
