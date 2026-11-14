@@ -224,3 +224,19 @@ test('local close replaces cosmetic dismissal, never sends, and suppresses autom
  assert.match(text(root.toJSON()),/Sending/);assert.equal(button(root,'Close delivery item'),undefined);
  await act(async()=>root.unmount());
 });
+
+test('closing does not wait for a passive check or let its late reply reopen the item',async()=>{
+ let root,finish,closed=false;const calls=[];
+ const props={message:{id:'local-pending',inputId:'pending-original',text:'Retain'},session:{id:'pending-chat',status:'idle',messages:[]},
+  delivery:{status:'unknown'},localDelivery:{id:'local-pending',commandId:'pending-original',status:'unknown'},
+  recovery:{scope:'pending-source',connection:'host'},
+  dispatch:async()=>{calls.push('check');return new Promise(resolve=>{finish=resolve})},
+  discard:()=>{closed=true;root.update(React.createElement(MessageDelivery,{...props,localDelivery:{...props.localDelivery,closed:true}}))}};
+ await act(async()=>{root=create(React.createElement(MessageDelivery,props))});
+ assert.deepEqual(calls,['check']);assert.equal(button(root,'Close delivery item').props.disabled,false);
+ await act(async()=>button(root,'Close delivery item').props.onClick());
+ assert.equal(closed,true);assert.equal(root.toJSON(),null);
+ await act(async()=>finish({accepted:true,result:{sessionId:'pending-chat',inputId:'pending-original',delivery:'unknown'}}));
+ assert.equal(root.toJSON(),null);assert.deepEqual(calls,['check']);
+ await act(async()=>root.unmount());
+});

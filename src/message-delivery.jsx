@@ -95,7 +95,7 @@ function DeliveryWarning({message,session,delivery,localDelivery,dispatch,retry,
    {delivery.status==='failed'?<button type="button" className="a-link" data-action="conversation.send" disabled={pending||blocked} onClick={()=>session.messages?.some(row=>row.inputId===inputId)?resend():retry(message)}><RotateCcw/>Retry</button>:<button type="button" className="a-link" data-action="conversation.delivery" disabled={pending||!inputId} onClick={check}><RotateCcw/>{pending?'Checking…':'Check delivery'}</button>}
   </>}</span>
   {!sending&&delivery.error&&<p role="alert" className="a-delivery-detail">{delivery.error}</p>}
-  {closeable&&<button type="button" className="a-link" disabled={pending} title="Keep the original submission in Chat info without resending or confirming delivery." onClick={()=>{if(!pending)discard?.(message)}}>Close delivery item</button>}
+  {closeable&&<button type="button" className="a-link" disabled={submitting} title="Keep the original submission in Chat info without resending or confirming delivery." onClick={()=>{if(!submitting)discard?.(message)}}>Close delivery item</button>}
   {report?.message&&<p role="status" className="a-delivery-detail">{report.message}</p>}
   {error&&<p role="alert" className="a-delivery-detail">{error}</p>}
   {!sending&&report&&!['accepted','sending','held','queued_for_update'].includes(report.delivery)&&!confirm&&
