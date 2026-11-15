@@ -7,6 +7,14 @@
       "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/work-hierarchy"}
     },
     {
+      "id": "settings-action-spacing",
+      "command": ["node", "tests/settings-action-spacing-browser.mjs"],
+      "env": {
+        "AMPLIFIER_TEST_APPEARANCES": "{root}/output/browser-checks/appearance-cases.json",
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/settings-action-spacing"
+      }
+    },
+    {
       "id": "shared-controls",
       "command": ["node", "tests/shared-controls-browser.mjs"],
       "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/shared-controls"}
