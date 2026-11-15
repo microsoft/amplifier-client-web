@@ -49,7 +49,7 @@
 #amp-one .a-settings-experience[data-compact=true] .a-order-editor .a-order-grip{touch-action:none;cursor:grab}
 #amp-one .a-settings-experience[data-compact=true] .a-order-item{padding:8px;gap:8px}
 #amp-one .a-settings-experience[data-compact=true] .a-order-arrows{display:none}
-#amp-one .a-settings-experience[data-compact=true] .a-order-item select{width:68px;min-width:calc(3ch + 50px);min-height:48px}
+#amp-one .a-settings-experience[data-compact=true] .a-order-item select{width:68px;min-width:min(100%,calc(3ch + 54px));min-height:48px}
 #amp-one .a-settings-experience[data-compact=true] .a-order-copy small{font-size:12px}
 #amp-one .a-settings-experience[data-settings-detail=true] [data-part=provider-settings]>.a-settings-row,#amp-one .a-settings-experience[data-settings-detail=true] [data-part=provider-settings]>.a-collection-toolbar,
 #amp-one .a-settings-experience[data-settings-detail=true] .a-bundle-pane [data-settings-page=app-bundles] .a-settings-page-body>.a-settings-section>.a-settings-row,#amp-one .a-settings-experience[data-settings-detail=true] .a-bundle-pane [data-settings-page=app-bundles] .a-settings-page-body>.a-settings-section>.a-collection-toolbar{display:none}

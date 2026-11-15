@@ -217,14 +217,27 @@ try{
    const native=page.locator('#native');
    await native.focus();await native.press('ArrowDown');await native.press('Tab');
    await expect(native,'Native keyboard selection survives decoration').toHaveValue('two');
-   const numericClearance=async()=>{
+   const numericClearance=async checkpoint=>{
     const numeric=await page.getByRole('combobox',{name:'Ordered position'}).evaluate(node=>{
      const s=getComputedStyle(node),canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');ctx.font=s.font;
-     return {available:node.clientWidth-parseFloat(s.paddingInlineStart)-parseFloat(s.paddingInlineEnd),needed:ctx.measureText(node.selectedOptions[0].textContent).width};
+     const parent=node.parentElement,box=node.getBoundingClientRect(),bounds=parent.getBoundingClientRect();
+     return {available:node.clientWidth-parseFloat(s.paddingInlineStart)-parseFloat(s.paddingInlineEnd),needed:ctx.measureText(node.selectedOptions[0].textContent).width,
+      font:s.font,direction:s.direction,box:{left:box.left,right:box.right},parent:{left:bounds.left,right:bounds.right}};
     });
     assert.ok(numeric.available>=numeric.needed,'Multi-digit position remains readable before the chevron: '+JSON.stringify(numeric));
+    assert.ok(numeric.available>=Math.ceil(numeric.needed)+2,'Multi-digit position retains rounding/paint reserve: '+JSON.stringify(numeric));
+    assert.ok(numeric.box.left>=numeric.parent.left&&numeric.box.right<=numeric.parent.right,'Intrinsic select stays inside its narrow row');
+    metrics.push({label,checkpoint,numericClearance:numeric});
    };
-   await numericClearance();
+   await numericClearance('inherited-font');
+   // Fractional glyph advance is not an assertion tolerance. Exercise actual
+   // font-relative sizing in the same desktop/compact, RTL and contrast scenes.
+   const numericSelect=page.getByRole('combobox',{name:'Ordered position'});
+   for(const font of ['14.25px serif','16.5px monospace']){
+    await numericSelect.evaluate((node,font)=>{node.style.font=font},font);
+    await numericClearance(font);
+   }
+   await numericSelect.evaluate(node=>node.style.removeProperty('font'));
    const history=page.getByRole('region',{name:'History'}),retry=history.getByRole('button',{name:'Try again'});
    const statusGeometry=async()=>{
     for(const row of await history.locator('.a-history-status:has(>svg)').all()){
@@ -257,7 +270,7 @@ try{
    if(width===320){
     await page.locator('#amp-one').evaluate(node=>node.style.setProperty('--a-text-base','24px'));
     await page.getByRole('combobox',{name:'Ordered position'}).evaluate(node=>{node.style.fontSize='24px'});
-    await numericClearance();
+    await numericClearance('enlarged-24px');
     await page.evaluate(()=>window.updateHistory({status:'retrying'},{historyError:'Could not read this saved message window. Original files are unchanged. '.repeat(4)}));
     await statusGeometry();
    }
