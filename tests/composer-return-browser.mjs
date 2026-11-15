@@ -154,7 +154,17 @@ try{
    await expect(choice).toHaveValue('newline');await expect(composer).toHaveDraft('Preference retains this draft');
    await page.getByRole('button',{name:/^Close (settings|panel)$/}).last().click();
    await expect(composer).toHaveAccessibleDescription('Return adds a new line. Use Send to send.');
-   await composer.press('End');await composer.press('Enter');await page.keyboard.type('Still writing');
+   // End stops at a visual line after the narrow-width reflow. This journey
+   // appends to the entire draft, not to whichever wrapped line kept the caret.
+   await composer.press('Control+End');
+   assert.equal(await composer.evaluate(node=>{
+    const selection=getSelection();
+    if(!selection?.isCollapsed||!node.contains(selection.focusNode))return false;
+    const tail=document.createRange();tail.selectNodeContents(node);
+    tail.setStart(selection.focusNode,selection.focusOffset);
+    return tail.toString()==='';
+   }),true,'Document-end navigation leaves no draft text after the caret');
+   await composer.press('Enter');await page.keyboard.type('Still writing');
    await expect(composer).toHaveDraft('Preference retains this draft\n\nStill writing');
    assert.equal(sends().length,beforePreference);
    // Explicit keyboard activation of Send still uses the existing guarded
