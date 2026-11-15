@@ -10,7 +10,7 @@
       "id": "settings-action-spacing",
       "command": ["node", "tests/settings-action-spacing-browser.mjs"],
       "env": {
-        "AMPLIFIER_TEST_APPEARANCES": "{root}/output/browser-checks/appearance-cases.json",
+        "AMPLIFIER_TEST_APPEARANCES": "{root}/tests/fixtures/appearance-cases.json",
         "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/settings-action-spacing"
       }
     },
