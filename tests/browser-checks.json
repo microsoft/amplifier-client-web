@@ -7,6 +7,11 @@
       "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/shared-controls"}
     },
     {
+      "id": "composer-return-mounted",
+      "command": ["node", "tests/composer-return-mounted-browser.mjs"],
+      "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/composer-return-mounted"}
+    },
+    {
       "id": "composer-return",
       "command": ["node", "tests/composer-return-browser.mjs"],
       "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/composer-return"}
