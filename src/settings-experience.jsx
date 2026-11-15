@@ -49,7 +49,7 @@ export function SettingsExperience({state,session,act,dispatch,open,close=()=>ac
  useEffect(()=>{
   // A committed Review can already have focused a visible dirty editor in its
   // layout effect. Page orientation must not replace that deliberate target.
-  if(!drafts.takeReviewFocus()){
+  if(!drafts.takeReviewFocus(navigation.preserveReviewScroll)){
    heading.current?.focus({preventScroll:true});
    if(!compact&&body.current)body.current.scrollTop=0;
   }

@@ -2,11 +2,12 @@
 // native Tab traversal and actual portals are owned by the browser journey.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import React,{act} from 'react';
+import React,{act,useEffect} from 'react';
 import {create} from 'react-test-renderer';
 import {createServer} from 'vite';
 const vite=await createServer({configFile:false,server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
 const {useSettingsDrafts,useSettingsDraft,SettingsDraftProvider}=await vite.ssrLoadModule('/src/settings-drafts.jsx');
+const {useSettingsHistory}=await vite.ssrLoadModule('/src/settings-layout.jsx');
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 globalThis.window={addEventListener(){},removeEventListener(){}};
 test.after(()=>vite.close());
@@ -70,7 +71,9 @@ test('same-page Review focuses the editor, never saves or discards',async()=>{
  try{
   const {pending}=await f.open();await f.settle('Review and save');
   assert.equal(await pending,false);assert.deepEqual(calls,['review']);assert.equal(f.doc.activeElement,f.editor);
-  assert.equal(f.guard.takeReviewFocus(),true,'page orientation can preserve only this explicit committed review focus');
+  const targets=[];
+  assert.equal(f.guard.takeReviewFocus(target=>targets.push(target)),true,'page orientation can preserve only this explicit committed review focus');
+  assert.deepEqual(targets,[f.editor],'only the explicit active Review target can yield navigation scroll ownership');
   assert.equal(f.guard.takeReviewFocus(),false,'review ownership is consumed, not a global focus override');
   assert.equal(f.guard.hasUnsaved(),true);
  }finally{await f.unmount()}
@@ -172,4 +175,54 @@ test('refused review navigation falls back once when its receipt settles, never 
   f.editor.hidden=false;f.doc.activeElement=f.doc.body;await f.render();
   assert.equal(f.doc.activeElement,f.doc.body);
  }finally{await f.unmount()}
+});
+
+for(const movedFocus of [false,true])test('Review coordinates the existing history frame; newer focus='+movedFocus,async()=>{
+ const previous={requestAnimationFrame:globalThis.requestAnimationFrame,cancelAnimationFrame:globalThis.cancelAnimationFrame};
+ const frames=new Map();let next=0,root,guard,navigation,page='external-agents',visit='one';
+ globalThis.requestAnimationFrame=fn=>{frames.set(++next,fn);return next};
+ globalThis.cancelAnimationFrame=id=>frames.delete(id);
+ const flush=()=>{const pending=[...frames.values()];frames.clear();pending.forEach(fn=>fn())};
+ const d=dom(),ownerRef={current:d.owner},body={current:{scrollTop:0}};
+ const focus=d.editor.focus.bind(d.editor);
+ d.editor.focus=()=>{focus();body.current.scrollTop=100}; // Native focus reveal, not a geometry assertion.
+ function Draft(){
+  useSettingsDraft('private',{label:'Private draft',dirty:true,review:()=>show('external-agents'),reviewTarget:()=>d.editor,discard:()=>false});
+  return null;
+ }
+ function Frame(){
+  guard=useSettingsDrafts({ownerRef});
+  navigation=useSettingsHistory({compact:false,trail:[{key:page}],view:{settingsRootVisit:visit},
+   body,act:()=>{},close:()=>{},confirmClose:guard.confirmClose,hasUnsaved:guard.hasUnsaved});
+  // Same order as SettingsExperience: history schedules its frame first, then
+  // page orientation consumes the layout-committed explicit Review target.
+  useEffect(()=>{guard.takeReviewFocus(navigation.preserveReviewScroll)},[page,visit]);
+  return React.createElement(SettingsDraftProvider,{value:guard.context},React.createElement(Draft),guard.dialog);
+ }
+ function show(value){page=value;root.update(React.createElement(Frame))}
+ try{
+  await act(async()=>{root=create(React.createElement(Frame),{createNodeMock:element=>element.props.role==='alertdialog'?(d.prompt=d.node('prompt')):null})});
+  flush();body.current.scrollTop=600;navigation.rememberScroll();
+  await act(async()=>show('privacy'));flush();assert.equal(body.current.scrollTop,0);
+  d.doc.activeElement=d.trigger;
+  await act(async()=>{void guard.confirmClose()});
+  d.doc.activeElement=d.node('prompt-button',d.prompt);
+  await act(async()=>root.root.findAllByType('button').find(node=>node.children.includes('Review and save')).props.onClick());
+  assert.equal(d.doc.activeElement,d.editor);assert.equal(body.current.scrollTop,100);
+  assert.equal(frames.size,1,'Exercise the real pending history restore, not a synchronous surrogate');
+  const newer=d.node('newer-owner');
+  if(movedFocus)newer.focus();
+  flush();
+  assert.equal(body.current.scrollTop,movedFocus?600:100,'Only still-active explicit Review may supersede the saved history position');
+  assert.equal(d.doc.activeElement,movedFocus?newer:d.editor,'History must never move unrelated focus');
+  body.current.scrollTop=730;navigation.rememberScroll();
+  await act(async()=>show('privacy'));flush();
+  await act(async()=>show('external-agents'));flush();
+  assert.equal(body.current.scrollTop,730,'Later ordinary Back/Forward-style level changes keep their saved scroll restoration');
+  visit='fresh';await act(async()=>root.update(React.createElement(Frame)));flush();
+  assert.equal(body.current.scrollTop,0,'A later new root visit is not suppressed by a stale Review marker');
+ }finally{
+  if(root)await act(async()=>root.unmount());
+  Object.assign(globalThis,previous);
+ }
 });

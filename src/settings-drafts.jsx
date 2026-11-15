@@ -100,9 +100,11 @@ export function useSettingsDrafts({ownerRef:providedOwner,scope=null}={}){
   doc.addEventListener('focusin',cancel);
   return()=>doc.removeEventListener('focusin',cancel);
  },[prompt]);
- const takeReviewFocus=useCallback(()=>{
+ const takeReviewFocus=useCallback(onReviewFocus=>{
   const target=reviewedFocus.current;reviewedFocus.current=null;
-  return inOwner(target,options.current.ownerRef.current)&&usableFocus(target)&&target.ownerDocument.activeElement===target;
+  const focused=inOwner(target,options.current.ownerRef.current)&&usableFocus(target)&&target.ownerDocument.activeElement===target;
+  if(focused)onReviewFocus?.(target);
+  return focused;
  },[]);
  useEffect(()=>{
   if(!count)return;

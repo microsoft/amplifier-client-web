@@ -54,10 +54,11 @@ function ActualSettings({mode}){
   if(name==='view.update'){setState(current=>({...current,view:{...current.view,...args.patch}}));return {accepted:true}};
   return dispatch(name,args);
  };
+ const content=<><header className="a-dialog-head"><button type="button" id="test-close-settings" onClick={()=>navigation.current.confirmClose()}>Attempt close</button></header>
+  <SettingsExperience state={state} act={act} dispatch={act} navigationRef={navigation}/></>;
  return <><button id="background">Background action</button>
-  <div className={mode==='modal'?'a-dialog':'a-canvas-panel'} data-testid="surface">
-   <button type="button" id="test-close-settings" onClick={()=>navigation.current.confirmClose()}>Attempt close</button>
-   <SettingsExperience state={state} act={act} dispatch={act} navigationRef={navigation}/>
+  <div className={mode==='modal'?'a-overlay a-settings-overlay a-settings-redesign-overlay':'a-canvas-panel'} data-testid="surface">
+   {mode==='modal'?<section className="a-dialog wide">{content}</section>:content}
   </div>
  </>;
 }
@@ -89,7 +90,7 @@ try{
   const editor=page.getByRole('textbox',{name:'Name',exact:true});
   // Modal's actual outer header can invoke the guard. Canvas uses the actual
   // Settings mobile Close, or its current editor at desktop, not a foreign pane.
-  const trigger=scene.mode==='workspace'?page.locator('#close-settings'):scene.mode==='modal'?page.locator('#test-close-settings'):
+  const trigger=scene.mode==='workspace'?page.locator('#close-settings'):scene.mode==='modal'&&scene.width===1280?page.locator('#test-close-settings'):
    scene.width===390?page.getByRole('button',{name:'Close settings',exact:true}):editor;
   await editor.fill('Synthetic private draft');
   for(const choice of ['Keep settings open','Escape','Review and save']){
@@ -122,6 +123,20 @@ try{
    // Actual SettingsExperience keeps this dirty editor mounted while another
    // page is visible. Review navigation must reveal it and not lose its focus
    // to the production page-heading effect.
+   let savedScroll;
+   if(scene.mode==='modal'&&scene.width===390){
+    // Establish the actual compact scroll-owner/history conflict, not merely
+    // a retained editor at scrollTop zero. No synthetic field or scroll fix.
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    savedScroll=await editor.evaluate(node=>{
+     const content=node.closest('.a-settings-content');content.scrollTop=content.scrollHeight;
+     content.dispatchEvent(new Event('scroll'));
+     const field=node.getBoundingClientRect(),area=content.getBoundingClientRect();
+     return {top:content.scrollTop,nameAbove:field.bottom<=area.top};
+    });
+    assert.ok(savedScroll.top>0,'The retained draft must save a genuine nonzero history position');
+    assert.equal(savedScroll.nameAbove,true,'Saved scroll must hide Name above the actual content viewport');
+   }
    await page.evaluate(()=>window.showSettingsPage('privacy'));
    await expect(editor).toBeHidden();
    await page.evaluate(()=>{void window.confirmActualSettings()});
@@ -129,9 +144,18 @@ try{
    await expect(prompt).toBeVisible();await prompt.getByRole('button',{name:'Review and save'}).press('Enter');
    await expect(prompt).toHaveCount(0);await expect(editor).toBeVisible();
    await expect(editor).toBeFocused();
-   assert.equal(await editor.evaluate(node=>{const r=node.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight}),true,'Review navigation must not scroll its focused editor out of view');
+   // Observe beyond the existing history rAF, rather than only the earlier
+   // layout-effect focus checkpoint that could conceal a subsequent scroll.
+   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+   await expect(editor).toBeFocused();
+   const reviewed=await editor.evaluate(node=>{
+    const r=node.getBoundingClientRect(),content=node.closest('.a-settings-content'),area=content.getBoundingClientRect();
+    return {visible:r.top>=0&&r.bottom<=innerHeight&&r.top>=area.top&&r.bottom<=area.bottom,scrollTop:content.scrollTop};
+   });
+   assert.equal(reviewed.visible,true,'Review navigation history must not scroll its focused editor out of view');
+   if(savedScroll)assert.ok(reviewed.scrollTop<savedScroll.top,'Explicit Review must supersede the saved lower history position');
    await expect(editor).toHaveValue('Synthetic private draft');
-   metrics.push({...scene,choice:'Review from retained hidden page',focused:await page.evaluate(()=>({tag:document.activeElement.tagName,id:document.activeElement.id}))});
+   metrics.push({...scene,choice:'Review from retained hidden page',savedScroll,reviewed,focused:await page.evaluate(()=>({tag:document.activeElement.tagName,id:document.activeElement.id}))});
   }
   assert.deepEqual(await page.evaluate(()=>window.calls),[{name:'externalAgents.list',args:{}}],'No save/recover/launch/shared draft action');
   await page.close();page=null;
