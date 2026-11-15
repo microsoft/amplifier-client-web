@@ -28,6 +28,9 @@ import '/src/canvas-workspace.css';
 import '/src/context-inspector.css';
 window.calls=[];
 const catalog={items:[{id:'one',revision:1,name:'Synthetic starter',description:'',instructions:'',bundle:'',repositories:[],scratch:false,trackResources:false,rootGit:false}],bundles:[]};
+// Enough real rows to exercise the production desktop scroll owner and sticky
+// first-child search, rather than a computed outline in an unclipped mock row.
+catalog.items.push(...Array.from({length:12},(_,index)=>({...catalog.items[0],id:'extra-'+index,name:'Extra starter '+index})));
 const act=async(action,args)=>{
  window.calls.push({action,args});
  if(action==='workspace.starters.list')return {accepted:true,result:catalog};
@@ -86,6 +89,38 @@ let vite,browser,page,failure;
 await mkdir(artifacts,{recursive:true});
 function gap(a,b){return Math.max(b.left-a.right,a.left-b.right,b.top-a.bottom,a.top-b.bottom)}
 async function rect(locator){return locator.evaluate(node=>{const r=node.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height}})}
+async function searchFocusPaint(wrapper,checkpoint,{desktop=false}={}){
+ const geometry=await wrapper.evaluate(node=>{
+  const css=getComputedStyle(node),rect=node.getBoundingClientRect();
+  const width=parseFloat(css.outlineWidth),offset=parseFloat(css.outlineOffset),outset=width+offset;
+  // The outer paint envelope includes both the outline thickness and offset.
+  // A solid computed outline alone says nothing about clipping by ancestors.
+  const paint={left:rect.left-outset,right:rect.right+outset,top:rect.top-outset,bottom:rect.bottom+outset};
+  const ancestors=[];
+  for(let parent=node.parentElement;parent;parent=parent.parentElement){
+   const style=getComputedStyle(parent),box=parent.getBoundingClientRect();
+   const clips=value=>['auto','scroll','hidden','clip'].includes(value);
+   if(!clips(style.overflowX)&&!clips(style.overflowY))continue;
+   ancestors.push({className:parent.className,overflowX:style.overflowX,overflowY:style.overflowY,
+    clipsX:clips(style.overflowX),clipsY:clips(style.overflowY),scrollTop:parent.scrollTop,
+    left:box.left+parent.clientLeft,top:box.top+parent.clientTop,
+    right:box.left+parent.clientLeft+parent.clientWidth,bottom:box.top+parent.clientTop+parent.clientHeight});
+  }
+  return {width,offset,style:css.outlineStyle,paint,ancestors,collectionMounted:!!node.closest('.a-collection')};
+ });
+ assert.equal(geometry.style,'solid');assert.ok(geometry.width>=2,'Focus remains visibly substantial');
+ assert.ok(geometry.collectionMounted,'Real collection is mounted, not an isolated search');
+ if(desktop){
+  assert.ok(geometry.ancestors.some(row=>row.className.split(' ').includes('a-collection')),'Real desktop collection clips its contents');
+  assert.ok(geometry.ancestors.some(row=>row.className==='a-collection-list'&&row.overflowY==='auto'),'Production desktop list owns scrolling');
+ }
+ for(const ancestor of geometry.ancestors){
+  const {paint}=geometry,tolerance=.5;
+  if(ancestor.clipsX)assert.ok(paint.left>=ancestor.left-tolerance&&paint.right<=ancestor.right+tolerance,'Complete horizontal outline paint is inside '+JSON.stringify({checkpoint,paint,ancestor}));
+  if(ancestor.clipsY)assert.ok(paint.top>=ancestor.top-tolerance&&paint.bottom<=ancestor.bottom+tolerance,'Complete vertical outline paint is inside '+JSON.stringify({checkpoint,paint,ancestor}));
+ }
+ metrics.push({checkpoint,searchFocusPaint:geometry});
+}
 async function choiceGeometry(locator,dir,firstLine=true){
  const geometry=await locator.evaluate(node=>{
   const input=node.querySelector('input'),walker=document.createTreeWalker(node,NodeFilter.SHOW_TEXT);
@@ -109,7 +144,7 @@ try{
    configureServer(server){server.middlewares.use((req,res,next)=>{
     if(req.url!=='/shared-controls')return next();
     res.setHeader('Content-Type','text/html');
-    res.end('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{height:auto!important;overflow:auto!important;margin:0}#amp-one{padding:16px;min-height:100vh}#fixture{display:grid;gap:24px;max-width:900px;margin:auto}#fixture>.a-dialog{width:100%;max-height:none;overflow:visible}#fixture>section{min-width:0}#fixture .a-collection{grid-template-columns:minmax(0,1fr)}</style><main id="amp-one"><div id="fixture"></div></main><script type="module" src="/shared-controls.jsx"></script>');
+    res.end('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{height:auto!important;overflow:auto!important;margin:0}#amp-one{padding:16px;min-height:100vh}#fixture{display:grid;gap:24px;max-width:900px;margin:auto}#fixture>.a-dialog{width:100%;max-height:none;overflow:visible}#fixture>section{min-width:0}</style><main id="amp-one"><div id="fixture"></div></main><script type="module" src="/shared-controls.jsx"></script>');
    })}
   }]});
  await vite.listen();browser=await chromium.launch({headless:true});
@@ -127,6 +162,16 @@ try{
    assert.ok(gap(icon,field)>=6,'Search icon separated from input');
    await search.focus();await expect(search).toHaveCSS('outline-style','none');
    await expect(wrapper).toHaveCSS('outline-style','solid');
+   const focusLabel=[width,dir,scheme,forced?'forced':'normal'].join('-');
+   await searchFocusPaint(wrapper,focusLabel+'-top',{desktop:width>=960});
+   if(width>=960){
+    const list=page.locator('[data-part=workspace-starters] .a-collection-list');
+    const scrolled=await list.evaluate(node=>{node.scrollTop=100;return node.scrollTop});
+    assert.ok(scrolled>0,'Populated production collection actually scrolls');
+    await expect(wrapper).toHaveCSS('position','sticky');
+    await searchFocusPaint(wrapper,focusLabel+'-scrolled',{desktop:true});
+    await list.evaluate(node=>{node.scrollTop=0});
+   }
    if(width<960)await page.getByRole('button',{name:/Synthetic starter/}).click();
    await expect(page.getByRole('textbox',{name:'Starter name'})).toBeVisible();
    for(const detail of await page.locator('.a-starter-options').all())await detail.evaluate(node=>{node.open=true});
