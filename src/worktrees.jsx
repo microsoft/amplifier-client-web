@@ -4,15 +4,15 @@ import {IntegrationEvidence} from './integration-evidence';
 const moveLabels={waiting:'Waiting to move',moving:'Moving',moved:'Moved',not_moved:'Not moved',needs_recovery:'Needs recovery'};
 const continuationLabels={waiting:'Waiting to continue',backpressured:'Waiting to continue',enqueued:'Continuation queued',suppressed:'Continuation not sent'};
 function WorktreeMoveReceipt({row,sessionId,act}){
- const inFlight=useRef(false),[checking,setChecking]=useState(false),[notice,setNotice]=useState(''),[error,setError]=useState('');
+ const inFlight=useRef(false),[checking,setChecking]=useState(false),[notice,setNotice]=useState(null),[error,setError]=useState('');
  const check=async()=>{
   if(inFlight.current)return;
-  inFlight.current=true;setChecking(true);setNotice('');setError('');
+  inFlight.current=true;setChecking(true);setNotice(null);setError('');
   try{
    const response=await act('worktree.check',{sessionId,id:row.id},{propagateError:true});
    if(!response?.accepted||response.result?.id!==row.id)throw Error(response?.error||'No confirmed response. The saved move status is unchanged.');
    // The host projection owns placement. A check result must not overwrite it.
-   setNotice(response.result.displayState==='needs_recovery'?'Move check: Needs recovery. '+response.result.detail:'Move checked. The saved move status updates here.');
+   setNotice({revision:response.result.revision,text:response.result.displayState==='needs_recovery'?'Move check: Needs recovery. '+response.result.detail:'Move checked. The saved move status updates here.'});
   }catch(e){setError(e.message||'Could not check the move. The saved move status is unchanged.')}
   finally{inFlight.current=false;setChecking(false)}
  };
@@ -25,7 +25,7 @@ function WorktreeMoveReceipt({row,sessionId,act}){
   <button className="a-soft" data-action="worktree.check" aria-disabled={checking} onClick={check}>Check move</button>
   <p className="a-caption">Checks this move without starting another move or sending work.</p>
   {checking&&<p role="status">Checking move…</p>}
-  {notice&&<p role="status">{notice}</p>}
+  {notice&&notice.revision>=row.revision&&<p role="status">{notice.text}</p>}
   {error&&<p role="alert">{error}</p>}
  </article>;
 }

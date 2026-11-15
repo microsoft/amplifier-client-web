@@ -81,10 +81,23 @@ test('canonical update during a check retains the guard and late receipt never r
  await update(session(receipt({revision:3,displayState:'moved',continuation:{status:'enqueued'}}),{workingDirectory:'/fixture/copy'}));
  assert.equal(button(root),originalButton);assert.equal(button(root).props['aria-disabled'],true);
  await act(()=>{void button(root).props.onClick()});assert.equal(calls.length,1);
- await act(async()=>{finish({accepted:true,result:receipt({revision:1,displayState:'waiting'})});await pending});
+  await act(async()=>{finish({accepted:true,result:receipt({revision:1,displayState:'needs_recovery',detail:'Obsolete owner warning.'})});await pending});
  assert.equal(root.root.findByProps({'data-part':'move-status'}).children[0],'Moved');
  assert.equal(root.root.findByProps({'data-part':'execution-directory'}).children[0],'/fixture/copy');
- assert.match(content(root),/Continuation queued/);assert.equal(JSON.stringify(original),before);await act(()=>root.unmount());
+ assert.match(content(root),/Continuation queued/);assert.doesNotMatch(content(root),/Needs recovery|Obsolete owner warning/);
+ assert.equal(JSON.stringify(original),before);await act(()=>root.unmount());
+});
+
+test('a newer canonical row supersedes earlier check feedback without remounting the button',async()=>{
+ const {root,update,calls}=await mount(session(receipt()),()=>({accepted:true,result:receipt({revision:2,displayState:'needs_recovery',detail:'Owner evidence is unavailable.'})}));
+ const originalButton=button(root);
+ await act(()=>button(root).props.onClick());
+ assert.match(content(root),/Move check: Needs recovery/);
+ await update(session(receipt({revision:3,displayState:'moved'}),{workingDirectory:'/fixture/copy'}));
+ assert.equal(button(root),originalButton);assert.equal(button(root).props['aria-disabled'],false);
+ assert.doesNotMatch(content(root),/Needs recovery|Owner evidence is unavailable/);
+ assert.equal(root.root.findByProps({'data-part':'move-status'}).children[0],'Moved');
+ assert.equal(calls.length,1);await act(()=>root.unmount());
 });
 
 test('not moved keeps source and retry uses only existing backend-unfenced Move',async()=>{
