@@ -15,6 +15,11 @@
       }
     },
     {
+      "id": "worktree-move",
+      "command": ["node", "tests/worktree-move-browser.mjs"],
+      "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/worktree-move"}
+    },
+    {
       "id": "shared-controls",
       "command": ["node", "tests/shared-controls-browser.mjs"],
       "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/shared-controls"}
