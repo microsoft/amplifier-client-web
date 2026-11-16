@@ -225,6 +225,7 @@ function ExternalApprovalCard({approval,sessionId,act}){
   <strong>{approval.title||'Approval requested'}</strong>
   <p>Requested by {approval.agentLabel||'the external agent'}.</p>
   <p>{approval.prompt||approval.message||approval.description}</p>
+  {approval.details!=null&&<pre>{typeof approval.details==='string'?approval.details:JSON.stringify(approval.details,null,2)}</pre>}
   {approval.policyDescription&&<p>{approval.policyDescription}</p>}
   {remembered&&<p className="a-caption">{approval.policyDescription
    ?'Always choices apply to matching requests for this agent across chats. Review or revoke them in the agent’s approval settings.'
