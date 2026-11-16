@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import React,{act as renderAct} from 'react';
 import {create} from 'react-test-renderer';
 import {createServer} from 'vite';
-const server=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
+// Watcher timers must not survive the fake-clock resets used by these SSR checks.
+const server=await createServer({configFile:false,server:{middlewareMode:true,hmr:false,watch:null},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
 const {ChatFileAccess,readPermissionCompletion}=await server.ssrLoadModule('/src/chat-file-access.jsx');
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 test.after(()=>server.close());

@@ -2,6 +2,11 @@
   "schemaVersion": 1,
   "scenarios": [
     {
+      "id": "attachment-preview",
+      "command": ["node", "tests/attachment-preview-browser.mjs"],
+      "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/attachment-preview"}
+    },
+    {
       "id": "work-hierarchy",
       "command": ["node", "tests/work-hierarchy-browser.mjs"],
       "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/work-hierarchy"}
