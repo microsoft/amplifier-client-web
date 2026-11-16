@@ -13,6 +13,7 @@ function App(){
  const [state,setState]=useState(initial),[draft,setDraft]=useState(''),[props,setProps]=useState({}),[blocked,setBlocked]=useState(false),[composing,setComposing]=useState(false),[connected,setConnected]=useState(true);
  const live=useRef(null),editorRef=useRef(null),quoteApi=useRef(null),sends=useRef([]),calls=useRef([]),selection=useRef({...config}),pending=useRef(false),sequence=useRef(1);
  const attempts=useRef(new Map()),source=useRef(1),held=useRef([]),holdStatus=useRef(false),holdModels=useRef(false),modelReads=useRef([]),stagedId=useRef(null);
+ const pendingMetadata=useRef(false);
  live.current={...state,view:{...state.view,draft}};
  const act=useRef(async(action,args,meta={})=>{
   if(meta.suggestionIsCurrent&&!meta.suggestionIsCurrent())return {accepted:false};
@@ -23,7 +24,10 @@ function App(){
    return result();
   }
   if(action==='providers.configureSuggestions'){selection.current={...args,revision:'config2'};return {accepted:true,result:{suggestionModels:selection.current,configurationChanged:true}}}
-  if(action.endsWith('request'))attempts.current.set(args.requestId,{source:source.current,expiresAt:Date.now()+60000});
+  if(action.endsWith('request')){
+   attempts.current.set(args.requestId,{source:source.current,expiresAt:Date.now()+60000});
+   if(pendingMetadata.current)setTimeout(()=>setState(current=>({...current,revision:(current.revision||0)+1,sessions:current.sessions.map(session=>({...session,messagesRevision:(session.messagesRevision||0)+1,historyRevision:(session.historyRevision||0)+1,messageWindow:{...session.messageWindow,revision:'acknowledged',beforeCursor:'refreshed-cursor'},messages:session.messages.map(row=>({...row,revision:(row.revision||0)+1,updatedAt:Date.now()}))}))})),100);
+  }
   const response=()=>({accepted:true,result:{requestId:args.requestId,sessionId:args.sessionId,status:action.endsWith('cancel')?'cancelled':attempts.current.get(args.requestId)?.source!==source.current?'stale':pending.current?'pending':'ready',suggestion:'**literal** @participant /not-a-command',sourceKey:'source:'+args.sessionId+':'+source.current,configRevision:selection.current.revision,expiresAt:attempts.current.get(args.requestId)?.expiresAt}});
   if(action.endsWith('status')&&holdStatus.current)return new Promise(resolve=>held.current.push(()=>resolve(response())));
   return response();
@@ -32,6 +36,8 @@ function App(){
  useLayoutEffect(()=>{
   window.suggestionFixture={
    setProps,setBlocked,setState,setConnected,setPending:value=>{pending.current=value},
+   pendingMetadata:value=>{pendingMetadata.current=value},
+   refreshMetadata:()=>setState(current=>({...current,sessions:current.sessions.map(session=>({...session,messageWindow:{...session.messageWindow,revision:Date.now(),beforeCursor:'bookkeeping-only'},messages:session.messages.map(row=>({...row,updatedAt:Date.now()}))}))})),
    deferModels:()=>{holdModels.current=true;setState(current=>({...current,configurationRevision:(current.configurationRevision||0)+1}))},
    releaseModels:()=>{holdModels.current=false;for(const resolve of modelReads.current.splice(0))resolve()},
    stage(phase){
@@ -43,7 +49,7 @@ function App(){
    rerender:()=>setState(current=>({...current,fixtureRevision:(current.fixtureRevision||0)+1})),
    holdStatus:value=>{holdStatus.current=value},
    releaseStatus:()=>{holdStatus.current=false;for(const resolve of held.current.splice(0))resolve()},
-   editEarlier:({remove=false,publish=true}={})=>{source.current++;if(publish)setState(current=>({...current,sessions:[{...current.sessions[0],messages:remove?current.sessions[0].messages.slice(1):current.sessions[0].messages.map((row,index)=>index?row:{...row,text:'Edited earlier request.'})}]}))},
+   editEarlier:({remove=false,publish=true}={})=>{source.current++;if(publish)setState(current=>({...current,sessions:[{...current.sessions[0],messages:remove?current.sessions[0].messages.slice(1):current.sessions[0].messages.map((row,index)=>index?row:{...row,text:'Edited earlier request '+source.current})}]}))},
    replaceSource:()=>setState(current=>({...current,sessions:[{...current.sessions[0],runtimeSessionId:'cold-native-source'}]})),
    newChat:()=>setState(current=>({...current,selectedSessionId:null})),
    reopen:()=>setState(current=>({...current,selectedSessionId:'one'})),

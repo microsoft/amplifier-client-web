@@ -52,6 +52,29 @@ if(process.argv.includes('--preflight')){
   await expect(ghost).toBeVisible();
   await editor.focus();await editor.press('Escape');await expect(ghost).toHaveCount(0);assert.equal((await snapshot()).draft,'');
   assert.equal((await snapshot()).calls.filter(row=>row.action==='session.suggestion.request').length,2,'one manual source plus one genuinely new response');
+  const statusesBeforeMetadata=(await snapshot()).calls.filter(row=>row.action==='session.suggestion.status').length;
+  const requestsBeforeMetadata=(await snapshot()).calls.filter(row=>row.action==='session.suggestion.request').length;
+  await page.evaluate(()=>{window.suggestionFixture.setPending(true);window.suggestionFixture.pendingMetadata(true);window.suggestionFixture.response()});
+  await expect.poll(async()=>(await snapshot()).calls.filter(row=>row.action==='session.suggestion.request').length).toBe(requestsBeforeMetadata+1);
+  const metadataAttempt=(await snapshot()).calls.filter(row=>row.action==='session.suggestion.request').at(-1).args.requestId;
+  await expect.poll(async()=>(await snapshot()).calls.filter(row=>row.action==='session.suggestion.status').length).toBeGreaterThan(statusesBeforeMetadata);
+  assert.equal((await snapshot()).calls.filter(row=>row.action==='session.suggestion.cancel'&&row.args.requestId===metadataAttempt).length,0,'Same-content acknowledgement metadata must not cancel this attempt');
+  assert.equal((await snapshot()).calls.filter(row=>row.action==='session.suggestion.status').at(-1).args.requestId,metadataAttempt);
+  await page.evaluate(()=>{window.suggestionFixture.setPending(false);window.suggestionFixture.pendingMetadata(false)});
+  await expect(ghost).toBeVisible();
+  await page.evaluate(()=>window.suggestionFixture.refreshMetadata());await expect(ghost).toBeVisible();
+  await editor.focus();await editor.press('Escape');await expect(ghost).toHaveCount(0);
+  report.pendingMetadata={sameAttemptPolled:true,noPrematureCancel:true,readyReached:true};
+  // The same narrow content/source fence must still cancel a pending attempt
+  // when an actual earlier message changes.
+  const beforeEditRequests=(await snapshot()).calls.filter(row=>row.action==='session.suggestion.request').length;
+  await page.evaluate(()=>{window.suggestionFixture.setPending(true);window.suggestionFixture.response()});
+  await expect.poll(async()=>(await snapshot()).calls.filter(row=>row.action==='session.suggestion.request').length).toBe(beforeEditRequests+1);
+  const editedAttempt=(await snapshot()).calls.filter(row=>row.action==='session.suggestion.request').at(-1).args.requestId;
+  await page.evaluate(()=>window.suggestionFixture.editEarlier());
+  await expect.poll(async()=>(await snapshot()).calls.filter(row=>row.action==='session.suggestion.cancel'&&row.args.requestId===editedAttempt).length).toBe(1);
+  await page.evaluate(()=>window.suggestionFixture.setPending(false));await expect(ghost).toHaveCount(0);
+  report.pendingMetadata.realEditStillCancels=true;
   await page.evaluate(()=>window.suggestionFixture.response());await expect(ghost).toBeVisible();
   await ghost.click();await expect.poll(async()=>(await snapshot()).draft.length).toBeGreaterThan(0);
   await editor.press('ControlOrMeta+z');await expect.poll(async()=>(await snapshot()).draft).toBe('');
@@ -108,7 +131,7 @@ if(process.argv.includes('--preflight')){
   await page.evaluate(()=>window.suggestionFixture.holdStatus(true));
   const statusesBeforeSuccess=(await snapshot()).calls.filter(row=>row.action==='session.suggestion.status').length;
   await editor.focus();await editor.press('Tab');await expect(ghost).toHaveAttribute('aria-busy','true');
-  await page.evaluate(()=>window.suggestionFixture.rerender());
+  await page.evaluate(()=>{window.suggestionFixture.rerender();window.suggestionFixture.refreshMetadata()});
   assert.equal((await snapshot()).draft,'');
   await page.evaluate(()=>window.suggestionFixture.releaseStatus());
   await expect.poll(async()=>(await snapshot()).doc.content[0].content?.[0]?.text).toBe('**literal** @participant /not-a-command');

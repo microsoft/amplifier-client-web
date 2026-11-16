@@ -208,3 +208,39 @@ test('a projected unsent draft also discards dormant completion before being cle
  const f=lifecycle();f.observe();f.user();f.observe();f.interim();f.observe();
  f.state.view.draft='another thought';assert.equal(f.observe(),null);f.finish();f.state.view.draft='';assert.equal(f.observe(),null);
 });
+test('pending attempt survives unchanged transcript with refreshed window and row bookkeeping',()=>{
+ const h=harness(),args=h.request();h.controller.receive(args,{...h.result(args),status:'pending'});
+ const before=suggestionWitness(h.state).key;
+ Object.assign(h.state.sessions[0],{messagesRevision:2,historyRevision:4,sharedHistoryOffset:7,messageWindow:{revision:'ack',offset:3,total:9,beforeCursor:'cursor',afterCursor:'new'}});
+ Object.assign(h.state.sessions[0].messages[0],{revision:6,updatedAt:123,reactions:[{emoji:'x'}]});
+ h.state.revision=99;h.observe();
+ assert.equal(suggestionWitness(h.state).key,before);
+ assert.equal(h.controller.requestCurrent(args),true);
+ assert.equal(h.controller.nextRequest(),null);
+ assert.equal(h.controller.receive(args,h.result(args)),true);
+ assert.equal(h.controller.candidate().text,'Try this');
+});
+test('true earlier transcript edits invalidate the pending request despite unchanged assistant tail',()=>{
+ for(const mutate of [rows=>{rows[0].text='Changed'},rows=>rows.shift(),rows=>{rows[0].role='assistant'},rows=>{rows[0].id='replacement'}]){
+  const h=harness();h.state.sessions[0].messages.unshift({id:'user',role:'user',text:'Original'});
+  const args=h.request();h.controller.receive(args,{...h.result(args),status:'pending'});
+  mutate(h.state.sessions[0].messages);h.observe();
+  assert.equal(h.controller.requestCurrent(args),false);assert.equal(h.controller.receive(args,h.result(args)),false);assert.equal(h.controller.candidate(),null);
+ }
+});
+test('each bookkeeping field independently preserves the current attempt and ready candidate',async()=>{
+ for(const mutate of [
+  session=>{session.messageWindow={revision:'ack'}},
+  session=>{session.messageWindow={beforeCursor:'cursor',afterCursor:'other',total:50,offset:2}},
+  session=>{session.messagesRevision=5},
+  session=>{session.historyRevision=8},
+  session=>{session.sharedHistoryOffset=6},
+  session=>{session.messages[0].revision=4},
+  session=>{session.messages[0].updatedAt=1000},
+ ]){
+  const h=harness(),args=h.request();h.controller.receive(args,{...h.result(args),status:'pending'});mutate(h.state.sessions[0]);h.observe();
+  assert.equal(h.controller.requestCurrent(args),true);h.controller.receive(args,h.result(args));
+  const ghost=h.controller.candidate();let finish;h.readStatus(()=>new Promise(resolve=>{finish=resolve}));const validating=ghost.validate();
+  mutate(h.state.sessions[0]);h.observe();finish(h.result(args));const claim=await validating;assert.ok(claim);assert.equal(claim(),true);
+ }
+});

@@ -22,18 +22,19 @@ export function suggestionEligible(state){
 // Only a committed, visible assistant tail can witness a request. Do not use
 // streaming text, local outbox rows, native context, or agent/runtime snapshots.
 function visibleTranscriptWitness(session){
- const messages=session.messages||[],window=session.messageWindow||{},rows=[];
+ const messages=session.messages||[],rows=[];
  const encoder=new TextEncoder(),decoder=new TextDecoder();
  let remaining=24*1024;
  for(let index=messages.length-1;index>=Math.max(0,messages.length-100)&&remaining>0;index--){
   const row=messages[index],text=typeof row.text==='string'?row.text:'',bytes=encoder.encode(text.slice(0,remaining)).subarray(0,remaining),prefix=decoder.decode(bytes);
-  rows.push([row.id,row.role,row.agentId,row.participantId,row.recipientAgentId,row.revision,row.updatedAt,!!row.textDetail,text.length,prefix]);
+  rows.push([row.id,row.role,row.agentId,row.participantId,row.recipientAgentId,!!row.textDetail,text.length,prefix]);
   remaining-=bytes.length;
  }
- // Bounded known-visible prefix, not a digest of unbounded history. Server
- // status revalidates the actual source, including edits outside this window.
- return [messages.length,session.messagesRevision,session.historyRevision,session.sharedHistoryOffset,
-  window.revision,window.total,window.offset,window.beforeCursor,window.afterCursor,rows];
+ // Only known-visible content and identity belong here. Window cursors, generic
+ // revision counters and row timestamps can change on request acknowledgement
+ // without any transcript edit; making them attempt identity cancels live work.
+ // Server status still revalidates the actual source, including omitted edits.
+ return [messages.length,rows];
 }
 export function suggestionWitness(state){
  const session=state?.sessions?.find(row=>row.id===state.selectedSessionId),tail=session?.messages?.at(-1);
