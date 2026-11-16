@@ -6,8 +6,8 @@ connects to a Unified host over HTTP, server-sent events, and WebSockets; the ho
 runs agents and stores conversation history.
 
 **To use Amplifier, install [Unified](https://github.com/microsoft/amplifier-unified#readme).**
-This repository is for developers working on its web client. It is currently private;
-source changes here do not automatically update a Unified installation.
+This repository is for developers working on its web client. Source changes here
+do not automatically update a Unified installation.
 
 ## Get started
 
@@ -71,7 +71,7 @@ Roles: Experience. Supports: Conversation.
 
 ![Ecosystem roles and component relationships](docs/ecosystem-map.svg)
 
-[Open the map](docs/ecosystem-map.svg) · [Product page source (private)](docs/product/index.html) · [Map guide](https://github.com/microsoft/amplifier-constellation/blob/main/docs/ecosystem-maps.md)
+[Product page](https://microsoft.github.io/amplifier-constellation/projects/amplifier-client-web/) · [Open the map](docs/ecosystem-map.svg) · [Map guide](https://github.com/microsoft/amplifier-constellation/blob/main/docs/ecosystem-maps.md)
 
 <details>
 <summary>The five shared building blocks</summary>
