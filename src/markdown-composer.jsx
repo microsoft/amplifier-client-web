@@ -20,7 +20,7 @@ export function MarkdownComposer({value,document:documentValue,onChange,onSend,o
  const host=useRef(null),editor=useRef(null),latest=useRef(null),published=useRef(value),publishedDocument=useRef(documentValue);
  const toolbar=useRef(null),refresh=useRef(()=>{}),dismissed=useRef(null);
  const insertionMode=useRef('caret');
- const composing=useRef(false),epoch=useRef(0),[editorEpoch,setEditorEpoch]=useState(0),previewId=useId(),suggestionPreview=useRef(null);
+ const composing=useRef(false),epoch=useRef(0),[editorEpoch,setEditorEpoch]=useState(0),previewId=useId(),suggestionPreview=useRef(null),acceptance=useRef(null),[validatingSuggestion,setValidatingSuggestion]=useState(false);
  const suggestionVisible=()=>{
   const node=suggestionPreview.current;if(document.hidden||!node?.getClientRects().length)return false;
   for(let parent=node;parent;parent=parent.parentElement){const style=getComputedStyle(parent);if(style.visibility==='hidden'||style.visibility==='collapse'||style.opacity==='0')return false}
@@ -28,12 +28,24 @@ export function MarkdownComposer({value,document:documentValue,onChange,onSend,o
  };
  const invalidateSuggestion=()=>{epoch.current++;setEditorEpoch(epoch.current);latest.current.onSuggestionSupersede?.()};
  const acceptSuggestion=(candidate,expectedEpoch)=>{
-  const view=editor.current,current=latest.current;
-  if(!view||!candidate||candidate!==current.suggestion||epoch.current!==expectedEpoch||composing.current||view.composing||current.disabled||current.readOnly||!suggestionVisible()||!suggestionEditorEmpty(view.state.doc)||!suggestionText(candidate.text))return false;
-  // Claim rechecks current principal/source/config/outbox synchronously. There
-  // must be no await between that check and the editor transaction.
-  if(!candidate.claim())return false;
-  return insertComposerSuggestion(view,candidate.text);
+  const view=editor.current;
+  if(acceptance.current)return true;
+  const editableCurrent=()=>editor.current===view&&view&&candidate&&candidate===latest.current.suggestion&&epoch.current===expectedEpoch&&!composing.current&&!view.composing&&!latest.current.disabled&&!latest.current.readOnly&&suggestionVisible()&&suggestionEditorEmpty(view.state.doc)&&!!suggestionText(candidate.text);
+  if(!editableCurrent()||!candidate.available())return false;
+  const token={view,focus:document.activeElement};acceptance.current=token;setValidatingSuggestion(true);
+  void (async()=>{
+   try{
+    const claim=await candidate.validate();
+    if(acceptance.current!==token||!editableCurrent()||document.activeElement!==token.focus||!claim)return;
+    // Recheck every local/editor fence after the host read. No await is allowed
+    // between this one-use claim and the literal, undoable insertion.
+    if(claim())insertComposerSuggestion(view,candidate.text);
+   }finally{
+    if(acceptance.current===token){acceptance.current=null;setValidatingSuggestion(false)}
+    if(editor.current===view){candidate.dismiss();setEditorEpoch(epoch.current)}
+   }
+  })();
+  return true;
  };
  const {mode:returnMode}=useComposerReturn(),ownReturnHelpId=useId(),returnHelpId=providedReturnHelpId??ownReturnHelpId;
  const [selection,setSelection]=useState(null),[linkOpen,setLinkOpen]=useState(false),[link,setLink]=useState(''),[linkError,setLinkError]=useState('');
@@ -62,6 +74,7 @@ export function MarkdownComposer({value,document:documentValue,onChange,onSend,o
    },
    handleKeyDown(view,event){
     if(!editable()||composingReturn(view,event))return false;
+    if(acceptance.current&&(plainSuggestionTab(event)||event.key==='Enter')){event.preventDefault();return true}
     const candidate=latest.current.suggestion;
     if(candidate&&suggestionEditorEmpty(view.state.doc)&&candidate.available()){
      if(plainSuggestionTab(event)&&view.hasFocus()&&view.dom.getClientRects().length&&acceptSuggestion(candidate,epoch.current)){event.preventDefault();return true}
@@ -83,9 +96,11 @@ export function MarkdownComposer({value,document:documentValue,onChange,onSend,o
     // keymaps (whose Enter binding would otherwise split a paragraph).
     // DOM handlers do not prevent the native default merely by returning true.
     keydown(view,event){
+     if(acceptance.current&&!composingReturn(view,event)&&(plainSuggestionTab(event)||event.key==='Enter')){event.preventDefault();return true}
      return returnEvents.observeKeyDown(view,event);
     },
     beforeinput(view,event){
+     if(acceptance.current&&!composingReturn(view,event)&&event.cancelable&&['insertParagraph','insertLineBreak'].includes(event.inputType)){event.preventDefault();return true}
      invalidateSuggestion();
      // Bare editing events are never consent to send, even on desktop.
      return returnEvents.beforeInput(view,event);
@@ -125,6 +140,7 @@ export function MarkdownComposer({value,document:documentValue,onChange,onSend,o
   const remember=()=>{usedCaret=true;};
   view.dom.addEventListener('focus',remember);
   if(quoteApi)quoteApi.current={
+   suggestionValidating:()=>!!acceptance.current,
    capture:()=>({doc:view.state.doc,mode:insertionMode.current,pos:usedCaret&&insertionMode.current==='caret'?view.state.selection.to:view.state.doc.content.size}),
    insert:(quote,target)=>{if(!alive||!editable())throw Error('The composer changed. Add the quote again.');insertQuote(view,quote,target);usedCaret=true;},
    document:()=>composerSendDocument(view.state.doc,!!publishedDocument.current),
@@ -148,7 +164,7 @@ export function MarkdownComposer({value,document:documentValue,onChange,onSend,o
   view.dom.dataset.empty=String(!latest.current.value);
   resizeComposer(view.dom);
   const stopLayout=observeComposerLayout(view.dom);
-  return()=>{alive=false;latest.current.onComposing?.(false);stopLayout();view.dom.removeEventListener('focus',remember);if(quoteApi)quoteApi.current=null;resizeObserver.disconnect();cancelAnimationFrame(frame);refresh.current=()=>{};document.removeEventListener('selectionchange',schedule);document.removeEventListener('focusin',schedule);window.removeEventListener('resize',schedule);window.removeEventListener('scroll',schedule,true);view.destroy();editor.current=null;if(editorRef.current===view.dom)editorRef.current=null;};
+  return()=>{alive=false;acceptance.current=null;latest.current.onComposing?.(false);stopLayout();view.dom.removeEventListener('focus',remember);if(quoteApi)quoteApi.current=null;resizeObserver.disconnect();cancelAnimationFrame(frame);refresh.current=()=>{};document.removeEventListener('selectionchange',schedule);document.removeEventListener('focusin',schedule);window.removeEventListener('resize',schedule);window.removeEventListener('scroll',schedule,true);view.destroy();editor.current=null;if(editorRef.current===view.dom)editorRef.current=null;};
  },[]);
  useLayoutEffect(()=>{
   const view=editor.current;if(!view)return;
@@ -165,7 +181,7 @@ export function MarkdownComposer({value,document:documentValue,onChange,onSend,o
  const dismiss=()=>{const view=editor.current;dismissed.current=view.state.selection.from+':'+view.state.selection.to;setSelection(null);setLinkOpen(false);view.focus();};
  const mark=name=>toggleComposerMark(editor.current,name);
  const ghost=suggestion&&suggestion.available()&&!disabled&&!readOnly&&!composing.current&&editor.current&&suggestionEditorEmpty(editor.current.state.doc)&&suggestionText(suggestion.text)?suggestion:null;
- return <><div className="a-suggestion-editor" data-suggestion-visible={!!ghost}><div className="a-markdown-composer-host" ref={host}/>{ghost&&<div className="a-composer-suggestion" data-private="true" ref={suggestionPreview}><span className="a-composer-suggestion-text" id={previewId}>{ghost.text}</span><button type="button" className="a-link" aria-label="Use suggested message" aria-describedby={previewId} onMouseDown={event=>event.preventDefault()} onClick={()=>acceptSuggestion(ghost,editorEpoch)}>Use suggestion <kbd>Tab</kbd></button></div>}</div>{providedReturnHelpId==null&&<ComposerReturnHelp id={returnHelpId}/>}{documentValue?.segments?.some(part=>part.type==='quote')&&<label className="a-caption">Add quotes <select aria-label="Quote insertion" defaultValue="caret" onChange={event=>{insertionMode.current=event.target.value;}}><option value="caret">At remembered caret</option><option value="append">At end</option></select></label>}{selection&&!disabled&&!readOnly&&createPortal(
+ return <><div className="a-suggestion-editor" data-suggestion-visible={!!ghost} data-suggestion-validating={validatingSuggestion}><div className="a-markdown-composer-host" ref={host}/>{ghost&&<div className="a-composer-suggestion" data-private="true" ref={suggestionPreview}><span className="a-composer-suggestion-text" id={previewId}>{ghost.text}</span><button type="button" className="a-link" aria-label="Use suggested message" aria-describedby={previewId} aria-busy={validatingSuggestion} aria-disabled={validatingSuggestion} onMouseDown={event=>event.preventDefault()} onClick={()=>acceptSuggestion(ghost,editorEpoch)}>{validatingSuggestion?'Checking suggestion…':<>Use suggestion <kbd>Tab</kbd></>}</button></div>}</div>{providedReturnHelpId==null&&<ComposerReturnHelp id={returnHelpId}/>}{documentValue?.segments?.some(part=>part.type==='quote')&&<label className="a-caption">Add quotes <select aria-label="Quote insertion" defaultValue="caret" onChange={event=>{insertionMode.current=event.target.value;}}><option value="caret">At remembered caret</option><option value="append">At end</option></select></label>}{selection&&!disabled&&!readOnly&&createPortal(
   <div className="a-composer-format" ref={toolbar} style={{left:selection.left,top:selection.top}} onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();dismiss();}}}>
    <div role="toolbar" aria-label="Format selected text" className="a-composer-format-row">
     <button type="button" aria-label="Link" disabled={selection.literal} title="Link (Ctrl/⌘ K)" aria-pressed={selection.link} onMouseDown={e=>e.preventDefault()} onClick={openLink}><Link size={18}/></button>

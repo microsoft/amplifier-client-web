@@ -6,12 +6,13 @@ import {undo,redo} from 'prosemirror-history';
 
 const frame=()=>({client:{hostInstanceId:'host',historyScope:'principal'},selectedSessionId:'s',view:{},sessions:[{id:'s',status:'idle',messages:[{id:'a',role:'assistant',text:'Done.'}]}]});
 function harness(){
- let state=frame(),eligible=true,revision='model1',time=100,sequence=0;
- const controller=createSuggestionController({readState:()=>state,canUse:()=>eligible,now:()=>time,requestId:()=>String(++sequence)});
+ let state=frame(),eligible=true,revision='model1',time=100,sequence=0,statusPatch={},statusReader=null;
+ const result=args=>({requestId:args.requestId,sessionId:args.sessionId,status:'ready',suggestion:'Try this',sourceKey:'source',configRevision:'model1'});
+ const statusCalls=[];
+ const controller=createSuggestionController({readState:()=>state,canUse:()=>eligible,readStatus:async(args,current)=>{statusCalls.push(args);return statusReader?statusReader(args,current):{...result(args),...statusPatch}},now:()=>time,requestId:()=>String(++sequence)});
  const observe=()=>controller.observe(state,revision,eligible&&suggestionEligible(state));
  const request=()=>{observe();return controller.nextRequest()};
- const result=args=>({requestId:args.requestId,sessionId:args.sessionId,status:'ready',suggestion:'Try this',sourceKey:'source',configRevision:'model1'});
- return {controller,request,result,observe,get state(){return state},set state(next){state=next},disable(){eligible=false;observe()},revision(next){revision=next;observe()},advance(){time+=60001}};
+ return {controller,request,result,observe,statusCalls,status:patch=>{statusPatch=patch},readStatus:read=>{statusReader=read},get state(){return state},set state(next){state=next},disable(){eligible=false;observe()},revision(next){revision=next;observe()},advance(ms=60001){time+=ms}};
 }
 test('one short single-line plain text or null; reject control and directional text',()=>{
  for(const text of ['',null,{},'a\nb','a\tb','a\u0085b','a\u2028b','a\u202eb','a'.repeat(241)])assert.equal(suggestionText(text),null);
@@ -34,12 +35,15 @@ test('eligibility suppresses edits, quotes, uploads and work without requiring n
  for(const patch of [{draft:' '},{messageEdit:{}},{messageReply:{}},{panel:'settings'},{settingsCanvas:true},{draftDocument:{segments:[{type:'quote'}]}}]){const state=frame();Object.assign(state.view,patch);assert.equal(suggestionEligible(state),false)}
  for(const patch of [{status:'working'},{status:'stopped'},{status:'stopping'},{status:'error'},{historyLoading:true},{workspaceAvailable:false},{ownership:{status:'yielded'}},{draftAttachments:[{id:'f'}]},{workers:[{status:'queued'}]}]){const state=frame();Object.assign(state.sessions[0],patch);assert.equal(suggestionEligible(state),false)}
 });
-test('one request, private preview, one synchronous claim, never a send',()=>{
+test('one request, private preview, exact status validation then one synchronous claim, never a send',async()=>{
  const h=harness(),args=h.request();assert.equal(args.expectedLastMessageId,'a');assert.equal(h.request(),null);
  assert.equal(h.controller.receive(args,{...h.result(args),status:'pending'}),true);
  assert.equal(h.controller.receive(args,h.result(args)),true);
  const ghost=h.controller.candidate();assert.equal(ghost.text,'Try this');assert.equal(h.state.view.draft,undefined);
- assert.equal(ghost.claim(),true);assert.equal(ghost.claim(),false);assert.equal(h.controller.candidate(),null);assert.equal(h.request(),null);
+ assert.equal(ghost.claim,undefined,'No unchecked claim path');
+ const claim=await ghost.validate();
+ assert.deepEqual(h.statusCalls,[{sessionId:args.sessionId,requestId:args.requestId}]);
+ assert.equal(claim(),true);assert.equal(claim(),false);assert.equal(h.controller.candidate(),null);assert.equal(h.request(),null);
 });
 test('dismissal and expiry do not regenerate for the same witness',()=>{
  for(const expire of [false,true]){const h=harness(),args=h.request();h.controller.receive(args,h.result(args));const ghost=h.controller.candidate();expire?h.advance():ghost.dismiss();assert.equal(ghost.available(),false);assert.equal(h.controller.candidate(),null);assert.equal(h.request(),null)}
@@ -49,8 +53,8 @@ test('late responses cannot revive after typing, disable, source/config changes 
   const h=harness(),args=h.request();mutate(h);h.observe();assert.equal(h.controller.receive(args,h.result(args)),false);assert.equal(h.controller.candidate(),null);
  }
 });
-test('callbacks and acceptance recheck live state even before the next render',()=>{
- const h=harness(),args=h.request();h.controller.receive(args,h.result(args));const ghost=h.controller.candidate();h.state.view.draft='typed';assert.equal(ghost.claim(),false);
+test('callbacks and acceptance recheck live state even before the next render',async()=>{
+ const h=harness(),args=h.request();h.controller.receive(args,h.result(args));const ghost=h.controller.candidate(),claim=await ghost.validate();h.state.view.draft='typed';assert.equal(claim(),false);
 });
 test('responses must bind exact request, session and server last-message witness',()=>{
  for(const patch of [{requestId:'other'},{sessionId:'other'},{sourceKey:null},{configRevision:'other'},{suggestion:'bad\nline'},{status:'failed'}]){
@@ -99,4 +103,51 @@ test('manual edits after acceptance have their own Undo boundary',()=>{
  assert.ok(undo(view.state,view.dispatch));assert.equal(view.state.doc.textContent,'');
  assert.ok(redo(view.state,view.dispatch));assert.equal(view.state.doc.textContent,'Suggestion');
  assert.ok(redo(view.state,view.dispatch));assert.equal(view.state.doc.textContent,'Suggestion edited');
+});
+test('ready candidates hide on an earlier visible edit or removal with the same assistant tail',async()=>{
+ for(const remove of [false,true]){
+  const h=harness();h.state.sessions[0].messages.unshift({id:'u',role:'user',text:'Original instructions'});
+  const args=h.request();h.controller.receive(args,h.result(args));const ghost=h.controller.candidate();
+  if(remove)h.state.sessions[0].messages.shift();else h.state.sessions[0].messages[0].text='Changed instructions';
+  assert.equal(ghost.available(),false);assert.equal(await ghost.validate(),null);assert.deepEqual(h.statusCalls,[]);
+ }
+});
+test('the local transcript witness inspects at most 100 rows and bounded text, not whole history',()=>{
+ const h=harness(),messages=Array.from({length:1000},(_,i)=>({id:String(i),role:'user',get text(){if(i<901)throw Error('Unbounded history read');return 'row'}}));
+ messages.push({id:'a',role:'assistant',text:'Done.'});h.state.sessions[0].messages=messages;
+ const witness=suggestionWitness(h.state);assert.ok(witness);assert.ok(witness.key.length<30000);
+});
+test('host acceptance revalidation refuses edits outside the known visible prefix and every non-ready outcome',async()=>{
+ for(const status of ['stale','expired','cancelled','pending','disabled','failed','timeout']){
+  const h=harness(),args=h.request();h.controller.receive(args,h.result(args));const ghost=h.controller.candidate();h.status({status});
+  assert.equal(await ghost.validate(),null);assert.equal(h.statusCalls.length,1);
+ }
+});
+test('host acceptance revalidation requires the exact source/config/request/session/text',async()=>{
+ for(const patch of [{sourceKey:'replaced-native-source'},{sourceKey:undefined},{configRevision:'new-config'},{configRevision:undefined},{requestId:'other'},{requestId:undefined},{sessionId:'other'},{sessionId:undefined},{suggestion:'replacement'},{suggestion:' Try this '},{expiresAt:NaN},{expiresAt:100}]){
+  const h=harness(),args=h.request();h.controller.receive(args,h.result(args));h.status(patch);
+  assert.equal(await h.controller.candidate().validate(),null);
+ }
+});
+test('status read failure or missing receipt never produces a claim',async()=>{
+ for(const read of [async()=>null,async()=>false,async()=>{throw Error('read interrupted')}]){
+  const h=harness(),args=h.request();h.controller.receive(args,h.result(args));h.readStatus(read);
+  assert.equal(await h.controller.candidate().validate(),null);assert.equal(h.statusCalls.length,1);
+ }
+});
+test('acceptance status is one explicit read; all local changes while waiting forbid the one-use claim',async()=>{
+ for(const mutate of [h=>h.state.sessions[0].messages.unshift({id:'u',role:'user',text:'new'}),h=>{h.state.sessions[0].runtimeSessionId='cold-replacement'},h=>{h.state.view.draft='typed'},h=>{h.state.selectedSessionId=null},h=>{h.state.client.historyScope='signed-out'},h=>h.disable(),h=>h.advance()]){
+  const h=harness(),args=h.request();h.controller.receive(args,h.result(args));let finish;
+  h.readStatus(()=>new Promise(resolve=>{finish=resolve}));
+  const ghost=h.controller.candidate(),checking=ghost.validate();
+  assert.equal(await ghost.validate(),null,'No duplicate validation');
+  mutate(h);finish(h.result(args));assert.equal(await checking,null);assert.equal(h.statusCalls.length,1);
+ }
+});
+test('delayed ready and validation responses cannot extend admission-based or server expiry',async()=>{
+ const h=harness(),args=h.request();h.advance(59900);assert.equal(h.controller.receive(args,{...h.result(args),expiresAt:9999999}),true);
+ const ghost=h.controller.candidate();assert.equal(ghost.expiresAt,60100);
+ let finish;h.readStatus(()=>new Promise(resolve=>{finish=resolve}));const checking=ghost.validate();h.advance(101);finish(h.result(args));assert.equal(await checking,null);
+ const shorter=harness(),next=shorter.request();shorter.controller.receive(next,{...shorter.result(next),expiresAt:500});assert.equal(shorter.controller.candidate().expiresAt,500);shorter.advance(401);assert.equal(shorter.controller.candidate(),null);
+ const expired=harness(),late=expired.request();expired.advance();assert.equal(expired.controller.receive(late,expired.result(late)),false);
 });

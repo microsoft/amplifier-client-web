@@ -7,8 +7,11 @@ import {useSuggestionModels} from './suggestion-model-settings.jsx';
 export function useTranscriptSuggestion({state,readState,act,blocked,canUse,recipient}){
  const scope=suggestionScope(state),[enabled]=useSuggestionPreference(scope),data=useSuggestionModels(state,act),config=data.suggestionModels;
  const [visible,setVisible]=useState(()=>!document.hidden),[manual,setManual]=useState(null),[,refresh]=useState(0),live=useRef(null),controller=useRef(null),seen=useRef(new Map()),armed=useRef(new Set()),previousRecipient=useRef(recipient),previousSession=useRef(null);
- live.current={readState,canUse,enabled,scope,blocked,config};
- if(!controller.current)controller.current=createSuggestionController({readState:()=>live.current.readState(),canUse:()=>{
+ live.current={readState,canUse,enabled,scope,blocked,config,act};
+ if(!controller.current)controller.current=createSuggestionController({readState:()=>live.current.readState(),readStatus:async(args,current)=>{
+  const receipt=await live.current.act('session.suggestion.status',args,{feedback:false,suggestionIsCurrent:current,signal:AbortSignal.timeout(5000)});
+  return receipt?.accepted===true?receipt.result:null;
+ },canUse:()=>{
   const current=live.current;
   return !document.hidden&&current.enabled&&suggestionPreference(current.scope)&&current.config?.enabled===true&&!current.blocked&&current.canUse();
  }});

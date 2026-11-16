@@ -21,16 +21,30 @@ export function suggestionEligible(state){
 }
 // Only a committed, visible assistant tail can witness a request. Do not use
 // streaming text, local outbox rows, native context, or agent/runtime snapshots.
+function visibleTranscriptWitness(session){
+ const messages=session.messages||[],window=session.messageWindow||{},rows=[];
+ const encoder=new TextEncoder(),decoder=new TextDecoder();
+ let remaining=24*1024;
+ for(let index=messages.length-1;index>=Math.max(0,messages.length-100)&&remaining>0;index--){
+  const row=messages[index],text=typeof row.text==='string'?row.text:'',bytes=encoder.encode(text.slice(0,remaining)).subarray(0,remaining),prefix=decoder.decode(bytes);
+  rows.push([row.id,row.role,row.agentId,row.participantId,row.recipientAgentId,row.revision,row.updatedAt,!!row.textDetail,text.length,prefix]);
+  remaining-=bytes.length;
+ }
+ // Bounded known-visible prefix, not a digest of unbounded history. Server
+ // status revalidates the actual source, including edits outside this window.
+ return [messages.length,session.messagesRevision,session.historyRevision,session.sharedHistoryOffset,
+  window.revision,window.total,window.offset,window.beforeCursor,window.afterCursor,rows];
+}
 export function suggestionWitness(state){
  const session=state?.sessions?.find(row=>row.id===state.selectedSessionId),tail=session?.messages?.at(-1);
  if(!suggestionScope(state)||!session||tail?.role!=='assistant'||!tail.id||!tail.text?.trim()||tail.streaming||tail.localDelivery||tail.textDetail)return null;
- return {sessionId:session.id,lastMessageId:tail.id,key:JSON.stringify([suggestionScope(state),deliveryScope(state,session),session.id,state.configurationRevision??0,session.nextMessageRevision??0,session.interruptionRevision??0,tail.id,tail.text])};
+ return {sessionId:session.id,lastMessageId:tail.id,key:JSON.stringify([suggestionScope(state),deliveryScope(state,session),session.id,state.configurationRevision??0,session.nextMessageRevision??0,session.interruptionRevision??0,visibleTranscriptWitness(session)])};
 }
 
 // One request per source/configuration. Invalidated or dismissed work cannot
 // revive on refocus, Undo, navigation back, or an old asynchronous callback.
 // Transport is deliberately injected: this controller never sends a draft.
-export function createSuggestionController({readState,canUse=()=>true,now=Date.now,requestId=()=>crypto.randomUUID()}){
+export function createSuggestionController({readState,canUse=()=>true,readStatus,now=Date.now,requestId=()=>crypto.randomUUID()}){
  let scope=null,current=null,epoch=0,candidate=null,request=null;
  const spent=new Set();
  const remember=key=>{spent.add(key);while(spent.size>128)spent.delete(spent.values().next().value)};
@@ -49,7 +63,7 @@ export function createSuggestionController({readState,canUse=()=>true,now=Date.n
   attempted:()=>!current?.key||spent.has(current.key),
   nextRequest(){
    if(!current?.eligible||!current.witness||!canUse()||spent.has(current.key)||request||candidate)return null;
-   remember(current.key);request={key:current.key,epoch,args:{sessionId:current.witness.sessionId,requestId:requestId(),expectedLastMessageId:current.witness.lastMessageId}};
+   remember(current.key);request={key:current.key,epoch,expiresAt:now()+60000,args:{sessionId:current.witness.sessionId,requestId:requestId(),expectedLastMessageId:current.witness.lastMessageId}};
    return request.args;
   },
   requestCurrent(args){return !!request&&request.args===args&&request.epoch===epoch&&current.eligible&&canUse()&&suggestionEligible(readState())&&suggestionWitness(readState())?.key===current.witness.key},
@@ -57,16 +71,43 @@ export function createSuggestionController({readState,canUse=()=>true,now=Date.n
    if(!this.requestCurrent(args)||result?.requestId!==args.requestId||result?.sessionId!==args.sessionId)return false;
    if(result.configRevision!==current.configRevision||typeof result.sourceKey!=='string'||!result.sourceKey||request.sourceKey&&request.sourceKey!==result.sourceKey){request=null;return false}
    request.sourceKey=result.sourceKey;
+   if(result.expiresAt!=null){
+    if(!Number.isFinite(result.expiresAt)){request=null;return false}
+    request.expiresAt=Math.min(request.expiresAt,result.expiresAt);
+   }
+   if(request.expiresAt<=now()){request=null;return false}
    if(result.status==='pending')return true;
    if(result.status!=='ready'||!suggestionText(result.suggestion)){request=null;return false}
-   candidate={text:suggestionText(result.suggestion),epoch,expiresAt:now()+60000};request=null;return true;
+   candidate={text:suggestionText(result.suggestion),epoch,expiresAt:request.expiresAt,args:{sessionId:args.sessionId,requestId:args.requestId},sourceKey:result.sourceKey,configRevision:result.configRevision,validating:false,api:null};request=null;return true;
   },
   candidate(){
    if(!available())return null;
    const saved=candidate;
-   return {text:saved.text,expiresAt:saved.expiresAt,available:()=>candidate===saved&&available(),
-    claim(){if(candidate!==saved||!available())return false;invalidate();return true},
-    dismiss:invalidate};
+   if(!saved.api)saved.api={text:saved.text,expiresAt:saved.expiresAt,available:()=>candidate===saved&&available(),
+    async validate(){
+     if(candidate!==saved||!available()||saved.validating||!readStatus)return null;
+     saved.validating=true;
+     const current=()=>candidate===saved&&available();
+     try{
+      // An explicit acceptance gesture buys one read of this exact attempt,
+      // never inference, retries, source repair or a replacement candidate.
+      const result=await readStatus(saved.args,current);
+      if(!current())return null;
+      if(result?.status!=='ready'||result.requestId!==saved.args.requestId||result.sessionId!==saved.args.sessionId||result.sourceKey!==saved.sourceKey||result.configRevision!==saved.configRevision||result.suggestion!==saved.text)return null;
+      if(result.expiresAt!=null){
+       if(!Number.isFinite(result.expiresAt))return null;
+       saved.expiresAt=Math.min(saved.expiresAt,result.expiresAt);
+      }
+      if(!current())return null;
+      let used=false;
+      // Keep the final local checks and editor insertion in one synchronous
+      // continuation after the host read; this permit cannot be replayed.
+      return ()=>{if(used||!current())return false;used=true;invalidate();return true};
+     }catch{return null}
+     finally{saved.validating=false}
+    },
+    dismiss:()=>{if(candidate===saved)invalidate()}};
+   return saved.api;
   },
   invalidate,
   reset(){invalidate();scope=null;current=null;spent.clear()},

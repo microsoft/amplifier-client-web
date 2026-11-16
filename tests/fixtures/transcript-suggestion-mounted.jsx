@@ -8,22 +8,31 @@ import '../../src/reference.css';
 import '../../src/transcript-suggestion.css';
 
 const config={enabled:true,provider:'cheap',model:'cheap-model',transcriptMode:'last_n',humanTurns:6,revision:'config1'};
-const initial={client:{hostInstanceId:'fixture',historyScope:'principal'},selectedSessionId:'one',view:{},sessions:[{id:'one',status:'idle',messages:[{id:'answer1',role:'assistant',text:'A visible answer.'}]}]};
+const initial={client:{hostInstanceId:'fixture',historyScope:'principal'},selectedSessionId:'one',view:{},sessions:[{id:'one',status:'idle',messages:[{id:'user1',role:'user',text:'An earlier request.'},{id:'answer1',role:'assistant',text:'A visible answer.'}]}]};
 function App(){
  const [state,setState]=useState(initial),[draft,setDraft]=useState(''),[props,setProps]=useState({}),[blocked,setBlocked]=useState(false),[composing,setComposing]=useState(false);
  const live=useRef(null),editorRef=useRef(null),quoteApi=useRef(null),sends=useRef([]),calls=useRef([]),selection=useRef({...config}),pending=useRef(false),sequence=useRef(1);
+ const attempts=useRef(new Map()),source=useRef(1),held=useRef([]),holdStatus=useRef(false);
  live.current={...state,view:{...state.view,draft}};
  const act=useRef(async(action,args,meta={})=>{
   if(meta.suggestionIsCurrent&&!meta.suggestionIsCurrent())return {accepted:false};
   calls.current.push({action,args});
   if(action==='providers.suggestionModels')return {accepted:true,result:{suggestionModels:selection.current,providers:[{id:'cheap',label:'Fixture connection',models:['cheap-model']}]}};
   if(action==='providers.configureSuggestions'){selection.current={...args,revision:'config2'};return {accepted:true,result:{suggestionModels:selection.current,configurationChanged:true}}}
-  return {accepted:true,result:{requestId:args.requestId,sessionId:args.sessionId,status:action.endsWith('cancel')?'cancelled':pending.current?'pending':'ready',suggestion:'**literal** @participant /not-a-command',sourceKey:'source:'+args.sessionId,configRevision:selection.current.revision}};
+  if(action.endsWith('request'))attempts.current.set(args.requestId,{source:source.current,expiresAt:Date.now()+60000});
+  const response=()=>({accepted:true,result:{requestId:args.requestId,sessionId:args.sessionId,status:action.endsWith('cancel')?'cancelled':attempts.current.get(args.requestId)?.source!==source.current?'stale':pending.current?'pending':'ready',suggestion:'**literal** @participant /not-a-command',sourceKey:'source:'+args.sessionId+':'+source.current,configRevision:selection.current.revision,expiresAt:attempts.current.get(args.requestId)?.expiresAt}});
+  if(action.endsWith('status')&&holdStatus.current)return new Promise(resolve=>held.current.push(()=>resolve(response())));
+  return response();
  }).current;
  const suggestion=useTranscriptSuggestion({state:live.current,readState:()=>live.current,act,blocked:blocked||composing,canUse:()=>!live.current.view.draft});
  useLayoutEffect(()=>{
   window.suggestionFixture={
    setProps,setBlocked,setState,setPending:value=>{pending.current=value},
+   rerender:()=>setState(current=>({...current,fixtureRevision:(current.fixtureRevision||0)+1})),
+   holdStatus:value=>{holdStatus.current=value},
+   releaseStatus:()=>{holdStatus.current=false;for(const resolve of held.current.splice(0))resolve()},
+   editEarlier:({remove=false,publish=true}={})=>{source.current++;if(publish)setState(current=>({...current,sessions:[{...current.sessions[0],messages:remove?current.sessions[0].messages.slice(1):current.sessions[0].messages.map((row,index)=>index?row:{...row,text:'Edited earlier request.'})}]}))},
+   replaceSource:()=>setState(current=>({...current,sessions:[{...current.sessions[0],runtimeSessionId:'cold-native-source'}]})),
    newChat:()=>setState(current=>({...current,selectedSessionId:null})),
    reopen:()=>setState(current=>({...current,selectedSessionId:'one'})),
    configChange:()=>{selection.current={...selection.current,revision:'config-external',model:'other-model'};setState(current=>({...current,configurationRevision:(current.configurationRevision||0)+1}))},
@@ -31,9 +40,10 @@ function App(){
    response(){const id=++sequence.current;setState(current=>({...current,sessions:[{...current.sessions[0],status:'working',messages:[...current.sessions[0].messages,{id:'user'+id,role:'user',text:'Next'}]}]}));setTimeout(()=>setState(current=>({...current,sessions:[{...current.sessions[0],status:'idle',messages:[...current.sessions[0].messages,{id:'answer'+id,role:'assistant',text:'Next answer'}]}]})),50)},
   };
  },[]);
- return <><form onSubmit={event=>event.preventDefault()}>
-  <MarkdownComposer value={draft} editorRef={editorRef} quoteApi={quoteApi} onChange={text=>{suggestion.supersede();setDraft(text)}} onSend={()=>sends.current.push(draft)} onFiles={()=>{}} suggestion={suggestion.ghost} onSuggestionSupersede={suggestion.supersede} onComposing={setComposing} {...props}/>
+ return <><form onSubmit={event=>{event.preventDefault();if(!quoteApi.current?.suggestionValidating())sends.current.push('form submit')}}>
+  <MarkdownComposer value={draft} editorRef={editorRef} quoteApi={quoteApi} onChange={text=>{suggestion.supersede();setDraft(text)}} onSend={()=>{if(!quoteApi.current?.suggestionValidating())sends.current.push(draft)}} onFiles={()=>{}} suggestion={suggestion.ghost} onSuggestionSupersede={suggestion.supersede} onComposing={setComposing} {...props}/>
   {suggestion.canRequest&&<button type="button" onClick={suggestion.request}>Suggest a prompt</button>}
+  <button type="submit">Send fixture</button>
  </form><SuggestionSettings state={state} act={act} navigate={()=>{}}/></>;
 }
 createRoot(document.getElementById('fixture')).render(<App/>);

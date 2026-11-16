@@ -62,8 +62,9 @@ if(process.argv.includes('--preflight')){
   await page.evaluate(()=>window.suggestionFixture.response());await expect(ghost).toBeVisible();
   await page.evaluate(()=>window.suggestionFixture.setProps({readOnly:true}));await expect(ghost).toHaveCount(0);
   await page.evaluate(()=>window.suggestionFixture.setProps({readOnly:false}));await expect(ghost).toHaveCount(0);
+  const pollsBefore=(await snapshot()).calls.filter(row=>row.action==='session.suggestion.status').length;
   await page.evaluate(()=>{window.suggestionFixture.setPending(true);window.suggestionFixture.response()});
-  await expect.poll(async()=>(await snapshot()).calls.filter(row=>row.action==='session.suggestion.status').length).toBeGreaterThan(0);
+  await expect.poll(async()=>(await snapshot()).calls.filter(row=>row.action==='session.suggestion.status').length).toBeGreaterThan(pollsBefore);
   await editor.focus();await editor.pressSequentially('mine');
   await page.evaluate(()=>window.suggestionFixture.setPending(false));
   await page.waitForTimeout(450);await expect(ghost).toHaveCount(0);
@@ -84,6 +85,56 @@ if(process.argv.includes('--preflight')){
   await page.getByRole('button',{name:'Suggest a prompt'}).click();await expect(ghost).toBeVisible();
   await page.getByLabel('Show suggestions in this browser tab').uncheck();await expect(ghost).toHaveCount(0);
   await page.getByLabel('Show suggestions in this browser tab').check();await expect(ghost).toHaveCount(0);
+  // Same assistant tail, earlier known-visible edits/removals: hide locally.
+  for(const remove of [false,true]){
+   await page.evaluate(()=>window.suggestionFixture.response());await expect(ghost).toBeVisible();
+   await page.evaluate(remove=>window.suggestionFixture.editEarlier({remove}),remove);await expect(ghost).toHaveCount(0);
+   assert.equal((await snapshot()).draft,'');
+  }
+  // An omitted/server-only edit is found by explicit acceptance's exact status
+  // read, never by a hidden inference or source-repair request.
+  await page.evaluate(()=>window.suggestionFixture.response());await expect(ghost).toBeVisible();
+  const requestsBeforeValidation=(await snapshot()).calls.filter(row=>row.action==='session.suggestion.request').length;
+  const statusesBeforeValidation=(await snapshot()).calls.filter(row=>row.action==='session.suggestion.status').length;
+  await page.evaluate(()=>window.suggestionFixture.editEarlier({publish:false}));
+  await editor.focus();await editor.press('Tab');await expect(ghost).toHaveCount(0);
+  assert.equal((await snapshot()).draft,'');
+  assert.equal((await snapshot()).calls.filter(row=>row.action==='session.suggestion.status').length,statusesBeforeValidation+1);
+  assert.equal((await snapshot()).calls.filter(row=>row.action==='session.suggestion.request').length,requestsBeforeValidation);
+  // A benign rerender preserves the stable candidate handle across the read.
+  await page.evaluate(()=>window.suggestionFixture.response());await expect(ghost).toBeVisible();
+  await page.evaluate(()=>window.suggestionFixture.holdStatus(true));
+  const statusesBeforeSuccess=(await snapshot()).calls.filter(row=>row.action==='session.suggestion.status').length;
+  await editor.focus();await editor.press('Tab');await expect(ghost).toHaveAttribute('aria-busy','true');
+  await page.evaluate(()=>window.suggestionFixture.rerender());
+  assert.equal((await snapshot()).draft,'');
+  await page.evaluate(()=>window.suggestionFixture.releaseStatus());
+  await expect.poll(async()=>(await snapshot()).doc.content[0].content?.[0]?.text).toBe('**literal** @participant /not-a-command');
+  assert.equal((await snapshot()).calls.filter(row=>row.action==='session.suggestion.status').length,statusesBeforeSuccess+1);
+  await editor.press('ControlOrMeta+z');await expect.poll(async()=>(await snapshot()).draft).toBe('');
+  // Validation pending owns this one gesture; repeated Tab/Return/submission
+  // cannot accept twice or send, and a cold native source cannot receive it.
+  await page.evaluate(()=>window.suggestionFixture.response());await expect(ghost).toBeVisible();
+  await page.evaluate(()=>window.suggestionFixture.holdStatus(true));
+  const statusesBeforeHold=(await snapshot()).calls.filter(row=>row.action==='session.suggestion.status').length;
+  await editor.focus();await editor.press('Tab');await expect(ghost).toHaveAttribute('aria-busy','true');
+  await editor.press('Tab');await editor.press('Enter');
+  await page.locator('form').evaluate(node=>node.requestSubmit());
+  assert.equal((await snapshot()).calls.filter(row=>row.action==='session.suggestion.status').length,statusesBeforeHold+1);
+  assert.equal((await snapshot()).draft,'');assert.deepEqual((await snapshot()).sends,[]);
+  await page.evaluate(()=>window.suggestionFixture.replaceSource());await expect(ghost).toHaveCount(0);
+  await page.evaluate(()=>window.suggestionFixture.releaseStatus());await expect(page.locator('[data-suggestion-validating=true]')).toHaveCount(0);
+  assert.equal((await snapshot()).draft,'');
+  // Typing while a successful status reply is delayed remains the user's text.
+  await page.evaluate(()=>window.suggestionFixture.response());await expect(ghost).toBeVisible();
+  await page.evaluate(()=>window.suggestionFixture.holdStatus(true));
+  await editor.focus();await editor.press('Tab');await expect(ghost).toHaveAttribute('aria-busy','true');
+  await editor.pressSequentially('my newer draft');
+  await page.evaluate(()=>window.suggestionFixture.releaseStatus());await expect(page.locator('[data-suggestion-validating=true]')).toHaveCount(0);
+  assert.equal((await snapshot()).doc.content[0].content[0].text,'my newer draft');
+  await editor.press('ControlOrMeta+z');await expect.poll(async()=>(await snapshot()).draft).toBe('');
+  await expect(ghost).toHaveCount(0);
+  report.acceptanceRevalidation={earlierEdit:true,earlierRemoval:true,serverOnlyEdit:true,coldSourceWhilePending:true,repeatedTabReturnSubmitBlocked:true,typingWhilePending:true,benignRerenderSuccess:true,statusOnly:true};
   assert.equal((await snapshot()).calls.filter(row=>row.action==='providers.configureSuggestions').length,0,'discovery/opt-in never saves model settings');
   await page.getByLabel('Suggestion provider connection').selectOption('cheap');
   await page.getByLabel('Suggestion model',{exact:true}).fill('explicit-cheap-model');

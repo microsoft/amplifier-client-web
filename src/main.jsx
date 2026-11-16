@@ -966,6 +966,7 @@ function App(){
   await deliver(next);
  }
  async function send(e){
+  if(quoteApi.current?.suggestionValidating?.()){e?.preventDefault();return}
   dictationControl.current?.cancel();
   e?.preventDefault();if(referenceDraftLock.current)return;if((!draft.trim()&&!availableAttachments.length)||uploadCount.current||busy||newChatPending||historyPending||executionUnavailable)return;
   preserveOtherDraft(session?.id??null);
