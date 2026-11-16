@@ -17,7 +17,7 @@ function App(){
  const act=useRef(async(action,args,meta={})=>{
   if(meta.suggestionIsCurrent&&!meta.suggestionIsCurrent())return {accepted:false};
   calls.current.push({action,args});
-  if(action==='providers.suggestionModels')return {accepted:true,result:{suggestionModels:selection.current,providers:[{id:'cheap',label:'Fixture connection',models:['cheap-model']}]}};
+  if(action==='providers.suggestionModels')return {accepted:true,result:{suggestionModels:selection.current,providers:[{id:'cheap',displayName:'Fixture display name',label:'Legacy label',name:'Legacy name'}]}};
   if(action==='providers.configureSuggestions'){selection.current={...args,revision:'config2'};return {accepted:true,result:{suggestionModels:selection.current,configurationChanged:true}}}
   if(action.endsWith('request'))attempts.current.set(args.requestId,{source:source.current,expiresAt:Date.now()+60000});
   const response=()=>({accepted:true,result:{requestId:args.requestId,sessionId:args.sessionId,status:action.endsWith('cancel')?'cancelled':attempts.current.get(args.requestId)?.source!==source.current?'stale':pending.current?'pending':'ready',suggestion:'**literal** @participant /not-a-command',sourceKey:'source:'+args.sessionId+':'+source.current,configRevision:selection.current.revision,expiresAt:attempts.current.get(args.requestId)?.expiresAt}});

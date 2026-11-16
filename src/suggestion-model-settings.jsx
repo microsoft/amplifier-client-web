@@ -57,7 +57,7 @@ export function SuggestionSettings({state,act,navigate}){
   <p className="a-caption">Off by default. This choice stays on when you start a new chat in this tab. Tab or Use suggestion adds editable text; sending is always separate.</p>
   {!config?<p role="status">Suggestion model settings are unavailable on this host.</p>:<>
    <label><input type="checkbox" checked={value.enabled===true} disabled={busy} onChange={event=>edit({enabled:event.target.checked})}/>Allow app-level suggestions</label>
-   <label>Suggestion provider connection<select aria-label="Suggestion provider connection" disabled={busy} value={value.provider||''} onChange={event=>edit({provider:event.target.value,model:''})}><option value="">Choose a connection</option>{providers.map(row=><option key={row.id} value={row.id}>{row.label||row.name||row.id}</option>)}</select></label>
+   <label>Suggestion provider connection<select aria-label="Suggestion provider connection" disabled={busy} value={value.provider||''} onChange={event=>edit({provider:event.target.value,model:''})}><option value="">Choose a connection</option>{providers.map(row=><option key={row.id} value={row.id}>{row.displayName||row.label||row.name||row.id}</option>)}</select></label>
    <label>Suggestion model<input aria-label="Suggestion model" list="suggestion-model-choices" disabled={busy} value={value.model||''} onChange={event=>edit({model:event.target.value})}/></label>
    <datalist id="suggestion-model-choices">{models.map(model=><option key={model} value={model}/>)}</datalist>
    <p className="a-caption">Uses this connection’s saved account, independently of the chat model. Choose a low-cost model if preferred. No model is selected automatically and there is no fallback.</p>

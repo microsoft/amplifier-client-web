@@ -30,6 +30,8 @@ if(process.argv.includes('--preflight')){
   await page.goto(vite.resolvedUrls.local[0]+'suggestion-mounted');
   await expect(editor).toBeVisible();
   await page.waitForFunction(()=>!!window.suggestionFixture);
+  await expect(page.getByLabel('Suggestion provider connection').locator('option[value="cheap"]')).toHaveText('Fixture display name');
+  await expect(page.locator('#suggestion-model-choices option')).toHaveCount(0);
   await expect(ghost).toHaveCount(0);
   assert.equal((await snapshot()).calls.some(row=>row.action==='session.suggestion.request'),false,'default off sends no suggestion request');
   await page.getByLabel('Show suggestions in this browser tab').check();
