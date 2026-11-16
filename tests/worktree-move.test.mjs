@@ -208,7 +208,7 @@ test('superseded, stale CAS, Stop and unknown deferred receipts never turn into 
 
 test('new choice supersedes displayed intent through projection only; late result cannot restore old Next',async()=>{
  let finish,pending;
- const {root,calls,update}=await mount(session(intent(),{configurationBusy:false}),()=>new Promise(resolve=>{finish=resolve}));
+ const {root,calls,update}=await mount(session(intent({target:'/fixture/other'}),{configurationBusy:false}),()=>new Promise(resolve=>{finish=resolve}));
  const choose=root.root.findByProps({'data-worktree-id':'copy'}).findByProps({'data-action':'worktree.handoff'}).props.onClick;
  await act(()=>{pending=choose();void choose()});
  assert.equal(calls.length,1);assert.match(content(root),/Saving folder choice/);
@@ -222,7 +222,7 @@ test('new choice supersedes displayed intent through projection only; late resul
 });
 
 test('deferred intent does not add a control fence, but actual closing configuration does',async()=>{
- const {root,update,calls}=await mount(session(intent(),{configurationBusy:false,status:'working'}));
+ const {root,update,calls}=await mount(session(intent({target:'/fixture/other'}),{configurationBusy:false,status:'working'}));
  assert.equal(root.root.findByProps({'data-worktree-id':'copy'}).findByProps({'data-action':'worktree.handoff'}).props.disabled,false);
  await update(session(intent({step:'committing',displayState:'moving'}),{configurationBusy:true}));
  const button=root.root.findByProps({'data-worktree-id':'copy'}).findByProps({'data-action':'worktree.handoff'});
@@ -231,12 +231,12 @@ test('deferred intent does not add a control fence, but actual closing configura
 });
 
 test('folder submission error announces refusal and preserves intent without hidden check or retry',async()=>{
- const {root,calls}=await mount(session(intent(),{configurationBusy:false}),()=>({accepted:false,error:'The execution revision changed. Refresh before choosing again.'}));
+ const {root,calls}=await mount(session(intent({target:'/fixture/other'}),{configurationBusy:false}),()=>({accepted:false,error:'The execution revision changed. Refresh before choosing again.'}));
  await act(()=>root.root.findByProps({'data-worktree-id':'copy'}).findByProps({'data-action':'worktree.handoff'}).props.onClick());
  assert.match(content(root),/execution revision changed/);
  assert.equal(root.root.findAllByProps({role:'alert'}).length,1);
  assert.equal(root.root.findByProps({'data-part':'execution-directory'}).children[0],'/fixture/home');
- assert.equal(root.root.findByProps({'data-part':'next-execution-directory'}).children[0],'/fixture/copy');
+ assert.equal(root.root.findByProps({'data-part':'next-execution-directory'}).children[0],'/fixture/other');
  assert.deepEqual(calls.map(call=>call[0]),['worktree.handoff']);await act(()=>root.unmount());
 });
 
@@ -264,4 +264,84 @@ test('reload uses canonical desired choice and mixed historical unknown retains 
  const reloaded=await mount(session(current,{configurationBusy:false}));
  assert.equal(reloaded.root.root.findByProps({'data-part':'next-execution-directory'}).children[0],current.target);
  assert.equal(reloaded.calls.length,0);assert.equal(storage.size,0);await act(()=>reloaded.root.unmount());
+});
+
+test('same Next checkout or home is disabled while a different current folder stays selectable',async()=>{
+ const {root,calls,update}=await mount(session(intent(),{configurationBusy:false}));
+ const choose=()=>root.root.findByProps({'data-worktree-id':'copy'}).findByProps({'data-action':'worktree.handoff'});
+ assert.equal(choose().props.disabled,true);await act(()=>choose().props.onClick());assert.equal(calls.length,0);
+ await update(session(intent({target:'/fixture/home'}),{workingDirectory:'/fixture/copy',configurationBusy:false}));
+ const home=root.root.findAllByProps({'data-action':'worktree.handoff'}).find(node=>node.children.includes('Use home folder next'));
+ assert.equal(home.props.disabled,true);await act(()=>home.props.onClick());assert.equal(calls.length,0);
+ assert.equal(choose().props.disabled,false);await act(()=>root.unmount());
+});
+
+test('Next target cannot be archived or removed while preserving the archive journal',async()=>{
+ const saved=JSON.stringify({action:'worktree.archive',args:{sessionId:'chat',id:'other',expectedRevision:1},id:'original-archive'});
+ storage.set('amplifier-checkout-change:chat',saved);
+ const {root}=await mount(session(intent(),{configurationBusy:false}));
+ const card=root.root.findByProps({'data-worktree-id':'copy'});
+ assert.equal(card.findByProps({'data-action':'worktree.archive'}).props.disabled,true);
+ assert.equal(card.findByProps({'data-action':'worktree.remove'}).props.disabled,true);
+ assert.equal(storage.get('amplifier-checkout-change:chat'),saved);await act(()=>root.unmount());
+});
+
+test('late choice failure after canonical progress never overrides newer folder status',async()=>{
+ for(const error of [new Error('Obsolete transport warning'),null]){
+  let fail,pending;
+  const {root,update,calls}=await mount(session(intent({target:'/fixture/other'}),{configurationBusy:false}),()=>new Promise((resolve,reject)=>{fail=()=>reject(error)}));
+  await act(()=>{pending=root.root.findByProps({'data-worktree-id':'copy'}).findByProps({'data-action':'worktree.handoff'}).props.onClick()});
+  await update(session(intent({id:'new-choice',revision:2,createdAt:30,target:'/fixture/new'}),{configurationBusy:false}));
+  await act(async()=>{fail();await pending});
+  assert.equal(root.root.findAllByProps({role:'alert'}).length,0);
+  assert.doesNotMatch(content(root),/Obsolete transport warning|No confirmed response/);
+  assert.equal(root.root.findByProps({'data-part':'next-execution-directory'}).children[0],'/fixture/new');
+  assert.equal(calls.length,1);await act(()=>root.unmount());
+ }
+});
+
+test('canonical receipt or actual folder progress clears prior choice error and idless notice',async()=>{
+ for(const response of [new Error('Earlier choice error'),{accepted:true,result:{}}]){
+  const {root,update}=await mount(session(intent({target:'/fixture/other'}),{configurationBusy:false}),()=>{if(response instanceof Error)throw response;return response});
+  await act(()=>root.root.findByProps({'data-worktree-id':'copy'}).findByProps({'data-action':'worktree.handoff'}).props.onClick());
+  if(response instanceof Error)assert.match(content(root),/Earlier choice error/);else assert.match(content(root),/Folder choice received/);
+  await update(session(intent({revision:2}),{configurationBusy:false}));
+  assert.doesNotMatch(content(root),/Earlier choice error|Folder choice received/);
+  await act(()=>root.unmount());
+ }
+});
+
+test('SSE before idless HTTP and actual placement before error suppress obsolete local feedback',async()=>{
+ for(const result of [{accepted:true,result:{}},new Error('Late failure')]){
+  let finish,pending;
+  const {root,update}=await mount(session(intent({target:'/fixture/other'}),{configurationBusy:false}),()=>new Promise((resolve,reject)=>{finish=()=>result instanceof Error?reject(result):resolve(result)}));
+  await act(()=>{pending=root.root.findByProps({'data-worktree-id':'copy'}).findByProps({'data-action':'worktree.handoff'}).props.onClick()});
+  await update(session(intent({revision:2,phase:'applied',step:'applied',displayState:'moved'}),{workingDirectory:'/fixture/copy',executionRevision:3,configurationBusy:false}));
+  await act(async()=>{finish();await pending});
+  assert.doesNotMatch(content(root),/Folder choice received|Late failure/);
+  assert.equal(root.root.findAllByProps({role:'alert'}).length,0);
+  await act(()=>root.unmount());
+ }
+});
+
+test('unconfirmed catch uses uncertainty wording, never claims saved state unchanged',async()=>{
+ const {root,calls}=await mount(session(intent({target:'/fixture/other'}),{configurationBusy:false}),()=>{throw null});
+ await act(()=>root.root.findByProps({'data-worktree-id':'copy'}).findByProps({'data-action':'worktree.handoff'}).props.onClick());
+ assert.match(content(root),/No confirmed response/);assert.doesNotMatch(content(root),/saved folder status is unchanged|Could not save/);
+ assert.equal(calls.length,1);await act(()=>root.unmount());
+});
+
+test('only explicit retiring or committing steps claim Changing folder',async()=>{
+ for(const step of [undefined,'unrecognized']){
+  const {root}=await mount(session(intent({step}),{configurationBusy:false}));
+  assert.doesNotMatch(content(root),/Changing folder/);await act(()=>root.unmount());
+ }
+});
+
+test('Inspect busy state does not render Saving folder choice',async()=>{
+ let finish,pending;
+ const {root}=await mount(session(intent(),{configurationBusy:false}),()=>new Promise(resolve=>{finish=resolve}));
+ await act(()=>{pending=root.root.findAllByProps({'data-action':'worktree.inspect'})[0].props.onClick()});
+ assert.doesNotMatch(content(root),/Saving folder choice/);
+ await act(async()=>{finish({accepted:true});await pending});await act(()=>root.unmount());
 });

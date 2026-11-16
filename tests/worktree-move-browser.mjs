@@ -44,7 +44,10 @@ async function runDeferred(){
  await project([intent]);await expect(next()).toHaveText(row.target);await expect(current()).toHaveText(row.source);
  await expect(page.getByText('Folder choice received.',{exact:false})).toHaveCount(0);
  await expect(page.getByText('Folder change is waiting for existing work to settle.',{exact:false})).toBeVisible();
- await expect(choose()).toBeEnabled();await expect(card().getByRole('button')).toHaveCount(0);
+ await expect(choose()).toBeDisabled();await expect(card().getByRole('button')).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'Use home folder next',exact:true})).toBeEnabled();
+ await expect(page.getByRole('button',{name:'Archive and preserve files',exact:true})).toBeDisabled();
+ await expect(page.getByRole('button',{name:'Remove clean checkout',exact:true})).toBeDisabled();
  await expect(page.getByRole('button',{name:'Check move',exact:true})).toHaveCount(0);
  assert.doesNotMatch(await page.locator('[data-part="worktrees"]').innerText(),/next input|next message|Task resumed|Task continued|original-move/);
  await capture('current-next-pending');checkpoint('soft choice does not freeze work or claim next input target');
@@ -57,6 +60,12 @@ async function runDeferred(){
  // Reordered old rows cannot replace the latest canonical desired target.
  await project([newer,old]);await expect(next()).toHaveText(newer.target);await expect(current()).toHaveText(row.source);
  checkpoint('new desired target supersedes stale receipt without a local move');
+ await expect(choose()).toBeEnabled();mode='hold';await choose().focus();await page.keyboard.press('Enter');
+ await expect.poll(()=>report.calls.length).toBe(2);
+ await project([{...newer,revision:2},old]);await held.abort('failed');mode='ok';
+ await expect(choose()).toBeEnabled();await expect(page.locator('[data-part="worktrees"]').getByRole('alert')).toHaveCount(0);
+ await expect(page.getByText('Folder choice received.',{exact:false})).toHaveCount(0);
+ await expect(next()).toHaveText(newer.target);checkpoint('late HTTP failure after newer projection cannot overwrite canonical status');
  await project([{...newer,step:'retiring',displayState:'moving'}],{configurationBusy:true});
  await expect(choose()).toBeDisabled();await expect(current()).toHaveText(row.source);await expect(next()).toHaveText(newer.target);
  await project([{...newer,step:'committing',displayState:'moving'}]);await expect(current()).toHaveText(row.source);
@@ -80,7 +89,7 @@ async function runDeferred(){
  checkpoint('new uncertain placement stays honest and only legacy Check remains keyboard-accessible');
  await page.setViewportSize({width:390,height:844});await current().scrollIntoViewIfNeeded();await capture('deferred-mobile-legacy');
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'No mobile horizontal overflow');
- assert.deepEqual(report.calls.map(call=>call.action),['worktree.handoff','worktree.check']);
+ assert.deepEqual(report.calls.map(call=>call.action),['worktree.handoff','worktree.handoff','worktree.check']);
 }
 if(process.argv.includes('--preflight')){
  await transformWithEsbuild(await readFile(root+fixturePath,'utf8'),fixturePath,{loader:'jsx',jsx:'automatic'});
@@ -105,7 +114,7 @@ if(process.argv.includes('--preflight')){
    assert.equal(new URL(request.url()).pathname,'/api/actions');
    const body=request.postDataJSON();report.calls.push(body);
    if(deferred){
-    assert.deepEqual(body,report.calls.length===1?{action:'worktree.handoff',args:{sessionId:'chat',id:'checkout',expectedExecutionRevision:1},options:{propagateError:true}}:{action:'worktree.check',args:{sessionId:'chat',id:'legacy-unknown'},options:{propagateError:true}},'Only explicit folder choice and legacy Check, no reconcile/Continue/Stop/native calls');
+    assert.deepEqual(body,report.calls.length<=2?{action:'worktree.handoff',args:{sessionId:'chat',id:'checkout',expectedExecutionRevision:1},options:{propagateError:true}}:{action:'worktree.check',args:{sessionId:'chat',id:'legacy-unknown'},options:{propagateError:true}},'Only explicit folder choice and legacy Check, no reconcile/Continue/Stop/native calls');
    }else assert.deepEqual(body,{action:'worktree.check',args:{sessionId:'chat',id:row.id},options:{propagateError:true}},'Only the same receipt may be observed; no handoff/reconcile/Continue/Stop/native calls');
    if(mode==='hold'){held=route;return}
    if(mode==='error')return route.fulfill({json:{accepted:false,error:'Synthetic check unavailable. Saved move unchanged.'}});
