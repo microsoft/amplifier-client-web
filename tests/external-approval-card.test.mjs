@@ -57,6 +57,19 @@ test('generic ACP choices do not claim Instance-wide remembered scope',()=>{
  assert.doesNotMatch(once,/Always|remembered/);
 });
 
+for(const details of [
+ {command:'cat /work/example/settings.json',cwd:'/work/example'},
+ 'Read /work/example/settings.json\nCommand: cat /work/example/settings.json',
+])test(`generic request exposes its actual ${typeof details} details without a scope description`,async()=>{
+ let root;const calls=[];
+ await act(async()=>{root=create(render(request({title:'Read a file',prompt:'Check the settings',policyDescription:undefined,details}),async(...args)=>{calls.push(args);return {accepted:true}}))});
+ try{
+  assert.equal(root.root.findByType('pre').children.join(''),typeof details==='string'?details:JSON.stringify(details,null,2));
+  assert.match(JSON.stringify(root.toJSON()),/cat \/work\/example\/settings.json/);
+  assert.deepEqual(calls,[],'Inspecting actual details grants nothing');
+ }finally{await act(async()=>root.unmount())}
+});
+
 test('rapid repeated clicks and an uncertain response do not submit another decision',async()=>{
  let reject,root;const calls=[];
  const held=new Promise((_,fail)=>{reject=fail});
