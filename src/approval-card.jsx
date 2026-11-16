@@ -195,8 +195,51 @@ export function ApprovalPanel({session,act,dispatch,freshnessKey,canvasDraft}){
 }
 
 export function ApprovalCard({approval,sessionId,act,dispatch,freshnessKey}){
+ if(approval.source==='external')return <ExternalApprovalCard key={JSON.stringify([sessionId,approval.id,approval.requestHash])} {...{approval,sessionId,act}}/>;
  if(approval.id?.startsWith('capability:'))return <CapabilityApprovalCard {...{approval,sessionId,dispatch,freshnessKey}}/>;
  return <NativeApprovalCard {...{approval,sessionId,act}}/>;
+}
+
+function ExternalApprovalCard({approval,sessionId,act}){
+ const [busy,setBusy]=useState(false),[submitted,setSubmitted]=useState(false),[error,setError]=useState('');
+ const mounted=useRef(true),locked=useRef(false),current=useRef(null);
+ useEffect(()=>{mounted.current=true;return()=>{mounted.current=false}},[]);
+ const kinds=['allow_once','allow_always','reject_once','reject_always'],options=approval.options;
+ const valid=typeof approval.requestHash==='string'&&!!approval.requestHash&&Array.isArray(options)&&options.length>0
+  &&options.every(option=>typeof option?.optionId==='string'&&!!option.optionId&&typeof option.name==='string'&&!!option.name.trim()&&kinds.includes(option.kind))
+  &&new Set(options.map(option=>option.optionId)).size===options.length;
+ const pending=approval.status==='pending';
+ const rendered={approval,sessionId};current.current=rendered;
+ const respond=async option=>{
+  if(!mounted.current||current.current!==rendered||locked.current||!pending||!valid)return;
+  locked.current=true;setBusy(true);setSubmitted(true);setError('');
+  try{
+   const result=await act('approval.respond',{sessionId,id:approval.id,
+    decision:option.kind.startsWith('allow_')?'allow':'deny',optionId:option.optionId,expectedRequestHash:approval.requestHash});
+   if(!result?.accepted||result.decisionApplied===false)throw Error(result?.error||'The decision was not confirmed. Check the conversation before trying again; nothing was resent.');
+  }catch(e){if(mounted.current)setError(e.message)}
+  finally{if(mounted.current)setBusy(false)}
+ };
+ const remembered=valid&&options.some(option=>option.kind.endsWith('_always'));
+ return <div data-approval-id={approval.id} aria-busy={busy||undefined}>
+  <strong>{approval.title||'Approval requested'}</strong>
+  <p>Requested by {approval.agentLabel||'the external agent'}.</p>
+  <p>{approval.prompt||approval.message||approval.description}</p>
+  {approval.details!=null&&<pre>{typeof approval.details==='string'?approval.details:JSON.stringify(approval.details,null,2)}</pre>}
+  {approval.policyDescription&&<p>{approval.policyDescription}</p>}
+  {remembered&&<p className="a-caption">{approval.policyDescription
+   ?'Always choices apply to matching requests for this agent across chats. Review or revoke them in the agent’s approval settings.'
+   :'The agent controls how an Always choice is remembered.'}</p>}
+  {approval.authorityLifetime==='conversation'&&<p className="a-caption">An allowed operation remains subject to this conversation’s Stop, revocation and expiry.</p>}
+  {approval.deliveryError&&<p role="status">{approval.deliveryError}</p>}
+  {error&&<p role="alert">{error}</p>}
+  {!valid&&<p role="status">The agent’s approval choices are unavailable. No decision was sent.</p>}
+  {!pending&&<p role="status">This request is no longer awaiting a decision.</p>}
+  {submitted&&!error&&<p role="status">{busy?'Sending your decision…':'Decision sent. Waiting for the agent to continue…'}</p>}
+  <div className="a-dialog-actions">{valid&&options.map(option=><button key={option.optionId}
+   className={option.kind==='allow_once'?'a-primary':'a-soft'} data-action="approval.respond"
+   disabled={!pending||busy||submitted} onClick={()=>respond(option)}>{option.name}</button>)}</div>
+ </div>;
 }
 
 function NativeApprovalCard({approval,sessionId,act}){

@@ -48,3 +48,17 @@ test('global settings works with no chat and saves app scope explicitly',async()
  assert.equal(root.root.findByType('strong').children[0],'Full access');
  await renderAct(async()=>root.unmount());
 });
+
+test('external access explains current-request approval separately from remembered agent policy',async()=>{
+ let root;const calls=[];
+ const act=async(action,args)=>{calls.push([action,args]);return {accepted:true,result:report('external')}};
+ await renderAct(async()=>{root=create(React.createElement(AccessMode,{session:{id:'external',externalAgent:{id:'anchor'}},act}))});
+ try{
+  const text=JSON.stringify(root.toJSON());
+  assert.match(text,/Ask when needed shows the agent’s offered approval choices/);
+  assert.match(text,/Full access uses Allow once when offered/);
+  assert.match(text,/does not save Always choices/);
+  assert.doesNotMatch(text,/Permission prompts are not shown/);
+  assert.deepEqual(calls,[['access.get',{sessionId:'external'}]],'Rendering does not enable Full access or remembered policy');
+ }finally{await renderAct(async()=>root.unmount())}
+});
