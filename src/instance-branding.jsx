@@ -11,10 +11,10 @@ export function InstanceBrandingSettings({state,act,navigate}){
  const saving=useRef(false),selection=useRef(0);
  useEffect(()=>{if(branding){setSaved(branding);if(!dirty)setName(branding.name)}},[branding?.revision,branding?.name]);
  useEffect(()=>()=>{selection.current++},[]);
- useEffect(()=>()=>{if(image)URL.revokeObjectURL(image.url)},[image]);
  useSettingsDraft('instance-name',{dirty:dirty||!!image,label:'App name & icon',review:()=>navigate('instance-branding'),discard:()=>{setName(saved?.name||'');setDirty(false);setImage(null)}});
  async function change(patch,reset=false){
   if(saving.current)return false;
+  if(reset||Object.hasOwn(patch,'image'))selection.current++;
   if(!reset&&dirty&&!Object.hasOwn(patch,'name'))patch={name:name.trim(),...patch};
   saving.current=true;setBusy(true);setError('');setNotice('Updating this server…');
   try{
@@ -35,7 +35,7 @@ export function InstanceBrandingSettings({state,act,navigate}){
   if(!['image/png','image/jpeg','image/webp'].includes(file.type)){setError('Choose a PNG, JPEG, or WebP image.');return}
   try{
    const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(Error('Could not read this image.'));reader.readAsDataURL(file)});
-   if(version===selection.current)setImage({url:URL.createObjectURL(file),data:data.slice(data.indexOf(',')+1)});
+   if(version===selection.current)setImage({url:data,data:data.slice(data.indexOf(',')+1)});
   }catch(error){if(version===selection.current)setError(error.message)}
  }
  const commitName=()=>{if(dirty&&!saving.current)return change({name:name.trim()})};
