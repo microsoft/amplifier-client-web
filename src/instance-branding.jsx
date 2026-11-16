@@ -11,7 +11,7 @@ export function InstanceBrandingSettings({state,act,navigate}){
  const saving=useRef(false),selection=useRef(0);
  useEffect(()=>{if(branding){setSaved(branding);if(!dirty)setName(branding.name)}},[branding?.revision,branding?.name]);
  useEffect(()=>()=>{selection.current++},[]);
- useSettingsDraft('instance-name',{dirty:dirty||!!image,label:'App name & icon',review:()=>navigate('instance-branding'),discard:()=>{setName(saved?.name||'');setDirty(false);setImage(null)}});
+ useSettingsDraft('instance-name',{dirty:dirty||!!image,label:'App name & icon',review:()=>navigate('instance-branding'),discard:()=>{selection.current++;setName(saved?.name||'');setDirty(false);setImage(null)}});
  async function change(patch,reset=false){
   if(saving.current)return false;
   if(reset||Object.hasOwn(patch,'image'))selection.current++;

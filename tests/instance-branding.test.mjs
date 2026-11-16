@@ -84,6 +84,26 @@ test('invalid/oversize local images do not invoke a server action',async()=>{
  }
  assert.equal(calls.length,0);await renderAct(async()=>root.unmount());
 });
+test('upload picker preserves pending name and reset fences a late image read',async()=>{
+ const previous=globalThis.FileReader,readers=[],calls=[];
+ globalThis.FileReader=class{constructor(){readers.push(this)}readAsDataURL(){}};
+ let pending;
+ try{
+  const root=await setup(async(action,args)=>{calls.push({action,args});return {accepted:true,result:{...initial,...args.patch,revision:String(calls.length)}}});
+  await edit(root,'Upload server');
+  await renderAct(async()=>root.root.findByProps({id:'instance-name'}).props.onBlur({relatedTarget:{closest:()=>true}}));
+  await renderAct(async()=>{pending=root.root.findByProps({id:'instance-image'}).props.onChange({target:{files:[{size:10,type:'image/png'}],value:'file'}})});
+  assert.equal(calls.length,0);
+  readers[0].result='data:image/png;base64,AAAA';await renderAct(async()=>{readers[0].onload();await pending});
+  await renderAct(async()=>button(root,'Use this image').props.onClick());
+  assert.deepEqual(calls[0].args,{patch:{name:'Upload server',image:'AAAA'}});
+  await renderAct(async()=>{pending=root.root.findByProps({id:'instance-image'}).props.onChange({target:{files:[{size:10,type:'image/png'}],value:'file'}})});
+  await renderAct(async()=>button(root,'Reset name & icon').props.onClick());
+  readers[1].result='data:image/png;base64,OLD';await renderAct(async()=>{readers[1].onload();await pending});
+  assert.equal(button(root,'Use this image'),undefined,'Late read cannot restore a discarded preview');
+  await renderAct(async()=>root.unmount());
+ }finally{globalThis.FileReader=previous}
+});
 test('mutable install metadata never comes from a service-worker build cache',async()=>{
  const handlers={},fetches=[];
  vm.runInNewContext(readFileSync(new URL('../src/service-worker.js',import.meta.url),'utf8'),{
