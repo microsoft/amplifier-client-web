@@ -16,4 +16,4 @@
 #amp-one.a-approachable-shell .a-work-brand[data-instance-brand] span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #amp-one.a-approachable-shell .a-work-brand[data-instance-brand] img{flex:none;border-radius:5px}
 .a-instance-footer-label{display:block;font-size:12px;color:var(--a-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:5px}
-@media(max-width:600px){#amp-one.a-approachable-shell .a-work-brand[data-instance-brand]{max-width:45vw}.a-instance-preview{padding:12px;gap:12px}}
+@media(max-width:800px){#amp-one.a-approachable-shell .a-work-brand[data-instance-brand]{display:flex;max-width:28vw;border:0;padding-right:0;font-size:12px}.a-instance-preview{padding:12px;gap:12px}}

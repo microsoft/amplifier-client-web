@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
-import {instanceIcon,instanceTitle,updateInstanceHead} from '../src/instance-branding.js';
+import {instanceIcon,instanceTitle,instanceLabel,updateInstanceHead} from '../src/instance-branding.js';
 import React,{act as renderAct} from 'react';
 import {create} from 'react-test-renderer';
 import {createServer} from 'vite';
@@ -19,6 +19,8 @@ async function edit(root,value){await renderAct(async()=>root.root.findByProps({
 test('app title and head metadata react without changing launch identity',()=>{
  assert.equal(instanceTitle(initial,'A chat'),'A chat - Amplifier · demo:8410');
  assert.equal(instanceTitle(initial),initial.name);
+ assert.equal(instanceLabel(initial),'demo:8410');
+ assert.equal(instanceLabel({...initial,name:'My server'}),'My server');
  const nodes=new Map(),icons=[{},{}];
  const document={querySelector:selector=>nodes.get(selector),querySelectorAll:()=>icons,createElement:()=>({}),head:{append:meta=>nodes.set(`meta[name="${meta.name}"]`,meta)}};
  nodes.set('link[rel="manifest"]',{});nodes.set('link[rel="apple-touch-icon"]',{});
@@ -31,14 +33,14 @@ test('app title and head metadata react without changing launch identity',()=>{
  assert.equal(icons[0].href,'/instance-icon/32.png?v=two');
 });
 test('name applies on blur and color/reset apply directly, without a Save step',async()=>{
- const calls=[];const root=await setup(async(action,args)=>{calls.push({action,args});return {accepted:true,result:{...initial,...args,name:args.name||initial.name,revision:String(calls.length)}}});
+ const calls=[];const root=await setup(async(action,args)=>{calls.push({action,args});return {accepted:true,result:{...initial,...args.patch,name:args.patch?.name||initial.name,revision:String(calls.length)}}});
  await edit(root,'Demo server');
  assert.equal(calls.length,0);
  await renderAct(async()=>root.root.findByProps({id:'instance-name'}).props.onBlur());
- assert.deepEqual(calls[0],{action:'instanceBranding.update',args:{name:'Demo server'}});
+ assert.deepEqual(calls[0],{action:'instanceBranding.update',args:{patch:{name:'Demo server'}}});
  assert.equal(root.root.findByProps({id:'instance-name'}).props.value,'Demo server');
  await renderAct(async()=>button(root,'Teal icon').props.onClick());
- assert.deepEqual(calls[1],{action:'instanceBranding.update',args:{color:'#0f766e'}});
+ assert.deepEqual(calls[1],{action:'instanceBranding.update',args:{patch:{color:'#0f766e',image:''}}});
  await renderAct(async()=>button(root,'Reset name & icon').props.onClick());
  assert.deepEqual(calls[2],{action:'instanceBranding.reset',args:{}});
  assert.match(JSON.stringify(root.toJSON()),/Server-wide/);
@@ -53,6 +55,19 @@ test('failed name change keeps the entry and has an explicit retry',async()=>{
  assert.match(JSON.stringify(root.toJSON()),/Disk is full/);
  await renderAct(async()=>button(root,'Retry name change').props.onClick());
  assert.match(JSON.stringify(root.toJSON()),/Updated for this server/);
+ await renderAct(async()=>root.unmount());
+});
+test('edit then color applies both intentions, and edit then reset discards the edit',async()=>{
+ const calls=[];const root=await setup(async(action,args)=>{calls.push({action,args});return {accepted:true,result:{...initial,...args.patch,revision:String(calls.length)}}});
+ await edit(root,'Together');
+ await renderAct(async()=>root.root.findByProps({id:'instance-name'}).props.onBlur({relatedTarget:{closest:()=>true}}));
+ assert.equal(calls.length,0);
+ await renderAct(async()=>button(root,'Teal icon').props.onClick());
+ assert.deepEqual(calls[0].args,{patch:{name:'Together',color:'#0f766e',image:''}});
+ await edit(root,'Discard me');
+ await renderAct(async()=>root.root.findByProps({id:'instance-name'}).props.onBlur({relatedTarget:{closest:()=>true}}));
+ await renderAct(async()=>button(root,'Reset name & icon').props.onClick());
+ assert.deepEqual(calls[1],{action:'instanceBranding.reset',args:{}});
  await renderAct(async()=>root.unmount());
 });
 test('new server values do not replace an unfinished local name',async()=>{

@@ -6,6 +6,10 @@ export function instanceTitle(branding,title=''){
  const name=branding?.name||'Amplifier';
  return title?`${title} - ${name}`:name;
 }
+export function instanceLabel(branding){
+ const name=branding?.name||'Amplifier';
+ return name===branding?.defaultName?name.replace(/^Amplifier · /,''):name;
+}
 export function updateInstanceHead(branding,document){
  if(!branding)return;
  for(const name of ['apple-mobile-web-app-title','application-name']){

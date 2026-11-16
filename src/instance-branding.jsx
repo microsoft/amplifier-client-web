@@ -15,9 +15,10 @@ export function InstanceBrandingSettings({state,act,navigate}){
  useSettingsDraft('instance-name',{dirty:dirty||!!image,label:'App name & icon',review:()=>navigate('instance-branding'),discard:()=>{setName(saved?.name||'');setDirty(false);setImage(null)}});
  async function change(patch,reset=false){
   if(saving.current)return false;
+  if(!reset&&dirty&&!Object.hasOwn(patch,'name'))patch={name:name.trim(),...patch};
   saving.current=true;setBusy(true);setError('');setNotice('Updating this server…');
   try{
-   const response=await act(reset?'instanceBranding.reset':'instanceBranding.update',patch);
+   const response=await act(reset?'instanceBranding.reset':'instanceBranding.update',reset?{}:{patch});
    if(response?.accepted!==true)throw Error(response?.error||'Could not update the app name and icon.');
    const next=response.result;
    setSaved(next);if(reset||Object.hasOwn(patch,'name')){setName(next.name);setDirty(false)}
@@ -48,22 +49,22 @@ export function InstanceBrandingSettings({state,act,navigate}){
   </div>
   <div className="a-instance-field">
    <label htmlFor="instance-name">App name</label>
-   <input id="instance-name" value={name} maxLength={80} disabled={busy} aria-describedby="instance-name-help" onChange={event=>{setName(event.target.value);setDirty(true);setError('')}} onBlur={commitName} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();void commitName()}if(event.key==='Escape'){setName(saved.name);setDirty(false)}}}/>
+   <input id="instance-name" value={name} maxLength={120} disabled={busy} aria-describedby="instance-name-help" onChange={event=>{setName(event.target.value);setDirty(true);setError('')}} onBlur={event=>{if(!event?.relatedTarget?.closest?.('[data-instance-defer-name]'))void commitName()}} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();void commitName()}if(event.key==='Escape'){event.stopPropagation();setName(saved.name);setDirty(false)}}}/>
    <p id="instance-name-help" className="a-caption">Press Enter or leave this field to apply. Leave it empty to use {saved.defaultName}.</p>
    {error&&dirty&&<button type="button" className="a-link" disabled={busy} onClick={commitName}>Retry name change</button>}
   </div>
-  <fieldset disabled={busy} className="a-instance-colors">
+  <fieldset disabled={busy} className="a-instance-colors" data-instance-defer-name>
    <legend>Icon color</legend>
-   <div>{colors.map(([label,color])=><button key={color} type="button" className="a-instance-swatch" style={{'--instance-swatch':color}} aria-label={label+' icon'} aria-pressed={!saved.customIcon&&saved.color===color} onClick={()=>change({color})}>{!saved.customIcon&&saved.color===color?'✓':''}</button>)}</div>
+   <div>{colors.map(([label,color])=><button key={color} type="button" className="a-instance-swatch" style={{'--instance-swatch':color}} aria-label={label+' icon'} aria-pressed={!saved.customIcon&&saved.color===color} onClick={()=>change({color,image:''})}>{!saved.customIcon&&saved.color===color?'✓':''}</button>)}</div>
    <p className="a-caption">Choosing a color uses the built-in badge instead of an uploaded image.</p>
   </fieldset>
   <div className="a-instance-field">
    <label htmlFor="instance-image">Or upload an icon</label>
-   <input id="instance-image" type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={chooseImage} aria-describedby="instance-image-help"/>
+   <input id="instance-image" type="file" data-instance-defer-name accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={chooseImage} aria-describedby="instance-image-help"/>
    <p id="instance-image-help" className="a-caption">PNG, JPEG, or WebP, up to 2 MB and 4096 × 4096 pixels. Images are fitted to a square.</p>
    {image&&<div className="a-dialog-actions"><button type="button" className="a-primary" disabled={busy} onClick={()=>change({image:image.data})}>Use this image</button><button type="button" disabled={busy} onClick={()=>{selection.current++;setImage(null)}}>Cancel image</button></div>}
   </div>
-  <div className="a-dialog-actions"><button type="button" className="a-soft" disabled={busy} onClick={()=>change({},true)}>Reset name & icon</button><button type="button" className="a-link" onClick={()=>navigate('install-app')}>How to install this app</button></div>
+  <div className="a-dialog-actions"><button type="button" className="a-soft" data-instance-defer-name disabled={busy} onClick={()=>change({},true)}>Reset name & icon</button><button type="button" className="a-link" onClick={()=>navigate('install-app')}>How to install this app</button></div>
   <p className="a-caption">Your browser controls when an already installed app updates its name or icon. It may take time or require reinstalling the app. Your chats and launch address do not change.</p>
   <p role="status" aria-live="polite">{notice}</p>
   {error&&<p role="alert" className="a-danger">{error}</p>}
