@@ -15,6 +15,7 @@ import {SlidersHorizontal,Palette,AudioLines,Bell,Network,Layers,Plug,Download,A
 import {settingsSections,settingsLocation,settingsUnread,settingsTitle,settingsParent} from './settings-navigation';
 import {AIConnections} from './ai-connections';
 import {PrivacySettings,AdvancedSettings} from './settings-everyday';
+import {SuggestionSettings} from './suggestion-model-settings.jsx';
 import {SettingsPageContext} from './settings-ui';
 import {AttentionBadge,AttentionReview} from './attention';
 import {ProviderSettings,RoutingSettings} from './setup';
@@ -71,7 +72,7 @@ export function SettingsExperience({state,session,act,dispatch,open,close=()=>ac
  else if(page==='storage')content=active==='storage'?<StorageSettings state={state} act={dispatch||act} onPrivacy={()=>navigate('privacy')} navigate={navigate}/>:null;
  else if(page==='testing')content=<TestingSettings act={dispatch||act} navigate={navigate}/>;
  else if(page==='access-approvals')content=<AccessMode globalOnly act={dispatch||act}/>;
- else if(page==='privacy')content=<PrivacySettings state={state} navigate={navigate}/>;
+ else if(page==='privacy')content=<><SuggestionSettings state={state} act={dispatch||act} navigate={navigate}/><PrivacySettings state={state} navigate={navigate}/></>;
  else if(page==='model-capacity')content=<ModelCapacitySettings act={dispatch||act} navigate={navigate}/>;
  else if(page==='external-agents')content=<ExternalAgentSettings act={dispatch||act} navigate={navigate}/>;
  else if(page==='advanced')content=<AdvancedSettings {...props} sections={sections} navigate={navigate}/>;
