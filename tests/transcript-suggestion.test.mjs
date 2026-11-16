@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {suggestionText,suggestionScope,suggestionWitness,suggestionEligible,suggestionOutboxPending,plainSuggestionTab,createSuggestionController} from '../src/transcript-suggestion.js';
+import {suggestionText,suggestionScope,suggestionWitness,suggestionEligible,suggestionOutboxPending,plainSuggestionTab,createSuggestionController,createSuggestionCompletionTracker} from '../src/transcript-suggestion.js';
 import {composerState,insertComposerSuggestion,composerMarkdown,composerDocument} from '../src/markdown-composer.js';
 import {undo,redo} from 'prosemirror-history';
 
@@ -150,4 +150,61 @@ test('delayed ready and validation responses cannot extend admission-based or se
  let finish;h.readStatus(()=>new Promise(resolve=>{finish=resolve}));const checking=ghost.validate();h.advance(101);finish(h.result(args));assert.equal(await checking,null);
  const shorter=harness(),next=shorter.request();shorter.controller.receive(next,{...shorter.result(next),expiresAt:500});assert.equal(shorter.controller.candidate().expiresAt,500);shorter.advance(401);assert.equal(shorter.controller.candidate(),null);
  const expired=harness(),late=expired.request();expired.advance();assert.equal(expired.controller.receive(late,expired.result(late)),false);
+});
+function lifecycle(){
+ const state=frame(),tracker=createSuggestionCompletionTracker(),options={enabled:true,visible:true,connected:true,configEnabled:true};
+ const observe=patch=>tracker.observe(state,{...options,...patch});
+ const user=()=>{state.sessions[0].status='working';state.sessions[0].messages.push({id:'u2',role:'user',text:'Next'})};
+ const interim=()=>{state.sessions[0].messages.push({id:'a2',role:'assistant',text:'Interim',response:{phase:'interim',status:'running'}});state.sessions[0].messageWindow={revision:2}};
+ const finish=()=>{state.sessions[0].status='idle';Object.assign(state.sessions[0].messages.at(-1),{text:'Final',response:{phase:'final',status:'completed'}});state.sessions[0].messageWindow={revision:3}};
+ return {state,tracker,options,observe,user,interim,finish};
+}
+test('live user → working/interim assistant → idle/final same ID retains one completion intent',()=>{
+ const f=lifecycle();assert.equal(f.observe(),null);f.user();assert.equal(f.observe(),null);f.interim();assert.equal(f.observe(),null);
+ // Even an idle frame carrying an unfinished response is not a final witness.
+ f.state.sessions[0].status='idle';assert.equal(f.observe(),null);f.finish();
+ assert.ok(f.observe());f.tracker.consume();assert.equal(f.observe(),null);
+ f.state.sessions[0].messageWindow.revision++;assert.equal(f.observe(),null,'Window updates do not rearm a spent response');
+});
+test('completion intent waits for configuration discovery and binds the latest witness, not interim keys',()=>{
+ const f=lifecycle();f.options.configEnabled=undefined;f.observe();f.user();f.observe();f.interim();f.observe();f.finish();
+ assert.ok(f.observe());f.state.configurationRevision=42;f.state.sessions[0].messageWindow.revision++;
+ assert.ok(f.observe({configEnabled:true}));f.tracker.consume();
+ f.state.configurationRevision=43;assert.equal(f.observe({configEnabled:true}),null);
+});
+test('existing idle, focus/opt-in/reconnect and navigation baselines never invent a completion',()=>{
+ const f=lifecycle();assert.equal(f.observe(),null);
+ for(const patch of [{enabled:false},{visible:false},{connected:false},{configEnabled:false}]){
+  assert.equal(f.observe(patch),null);assert.equal(f.observe(),null);
+ }
+ f.user();f.observe();f.interim();f.observe();assert.equal(f.observe({connected:false}),null);f.finish();assert.equal(f.observe(),null);
+ f.state.selectedSessionId=null;f.observe();f.state.selectedSessionId='s';assert.equal(f.observe(),null);
+});
+test('stopped or replaced source discards a pending completion while first-send creation can be observed',()=>{
+ const f=lifecycle();f.observe();f.user();f.observe();f.interim();f.observe();f.state.sessions[0].status='stopped';assert.equal(f.observe(),null);f.finish();assert.equal(f.observe(),null);
+ f.user();f.observe();f.interim();f.observe();f.state.sessions[0].runtimeSessionId='replacement';f.observe();f.finish();assert.equal(f.observe(),null);
+ const fresh=lifecycle();fresh.state.selectedSessionId=null;fresh.observe();fresh.state.selectedSessionId='s';fresh.tracker.expectResponse(fresh.state,'s');fresh.user();fresh.observe();fresh.interim();fresh.observe();fresh.finish();assert.ok(fresh.observe());
+});
+test('new-chat navigation into an existing busy session is not a local first send',()=>{
+ const f=lifecycle();f.state.selectedSessionId=null;f.observe();f.state.selectedSessionId='s';f.user();f.observe();f.interim();f.observe();f.finish();assert.equal(f.observe(),null);
+});
+test('an explicit first-send marker also survives a coalesced completed first snapshot',()=>{
+ const f=lifecycle();f.state.selectedSessionId=null;f.observe();f.state.selectedSessionId='s';f.tracker.expectResponse(f.state,'s');f.user();f.interim();f.finish();assert.ok(f.observe());f.tracker.consume();assert.equal(f.observe(),null);
+});
+test('row and session streaming must settle before completing a witnessed response',()=>{
+ for(const rowStreaming of [true,false]){
+  const f=lifecycle();f.observe();f.user();f.observe();f.interim();f.observe();f.finish();
+  if(rowStreaming)f.state.sessions[0].messages.at(-1).streaming=true;else f.state.sessions[0].streaming='Live text';
+  assert.equal(f.observe(),null);
+  f.state.sessions[0].messages.at(-1).streaming=false;f.state.sessions[0].streaming='';
+  assert.ok(f.observe());f.tracker.consume();assert.equal(f.observe(),null);
+ }
+});
+test('user supersession spends a dormant completion rather than triggering after draft recovery',()=>{
+ const f=lifecycle();f.observe();f.user();f.observe();f.interim();f.observe();
+ f.tracker.consume();f.finish();assert.equal(f.observe(),null);
+});
+test('a projected unsent draft also discards dormant completion before being cleared',()=>{
+ const f=lifecycle();f.observe();f.user();f.observe();f.interim();f.observe();
+ f.state.view.draft='another thought';assert.equal(f.observe(),null);f.finish();f.state.view.draft='';assert.equal(f.observe(),null);
 });

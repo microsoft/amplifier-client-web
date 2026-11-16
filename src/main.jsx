@@ -397,6 +397,7 @@ function App(){
     let result;
     try{
      if(stop)stopPostStarted=true;
+     if(action==='conversation.send'&&meta.outboxScope)suggestionFence.current?.expectResponse(args.sessionId);
      result=await request('/api/actions',{signal:meta.signal,method:'POST',body:{action,args,id:meta.id||crypto.randomUUID(),...(meta.expectedRevision!==undefined?{expectedRevision:meta.expectedRevision}:{})}});
     }catch(error){
      if(stop){
@@ -1054,7 +1055,7 @@ function App(){
  const browsing=workSurface(state)!=='chat';
  const suggestionBlocked=!!(draft||busy||uploading||availableAttachments.length||referencingDraft||suggestionComposing||dictating||callActive||voiceStarting||historyPending||executionUnavailable||browsing||detail.focused||!connected||
   suggestionOutboxPending(outbox.entries,outboxSource,session?.id));
- const suggestion=useTranscriptSuggestion({state,readState:()=>pendingView.current.apply(latest.current),act:dispatch,blocked:suggestionBlocked,
+ const suggestion=useTranscriptSuggestion({state,readState:()=>pendingView.current.apply(latest.current),act:dispatch,blocked:suggestionBlocked,connected,
   recipient:recipientAgentId,canUse:()=>!lastDraft.current&&!uploadCount.current&&!referenceDraftLock.current&&!dictationControl.current?.current&&!suggestionOutboxPending(outbox.current.current,deliveryScope(latest.current,session),session?.id)&&!pendingView.current.apply(latest.current)?.draftNavigationPending});
  suggestionFence.current=suggestion.owner;
  const browse=(surface,id=null)=>act('view.update',{patch:{...browsePatch(surface,id),navExpanded:false}});

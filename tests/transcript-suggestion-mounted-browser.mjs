@@ -137,6 +137,37 @@ if(process.argv.includes('--preflight')){
   await editor.press('ControlOrMeta+z');await expect.poll(async()=>(await snapshot()).draft).toBe('');
   await expect(ghost).toHaveCount(0);
   report.acceptanceRevalidation={earlierEdit:true,earlierRemoval:true,serverOnlyEdit:true,coldSourceWhilePending:true,repeatedTabReturnSubmitBlocked:true,typingWhilePending:true,benignRerenderSuccess:true,statusOnly:true};
+  const requests=async()=>(await snapshot()).calls.filter(row=>row.action==='session.suggestion.request').length;
+  // Same assistant ID across streaming/interim/final plus delayed catalog:
+  // no inference while working and exactly one once completion is eligible.
+  for(const deferred of [false,true]){
+   const before=await requests();
+   await page.evaluate(()=>window.suggestionFixture.stage('user'));
+   await expect(ghost).toHaveCount(0);assert.equal(await requests(),before);
+   await page.evaluate(()=>window.suggestionFixture.stage('interim'));
+   await expect(ghost).toHaveCount(0);assert.equal(await requests(),before);
+   if(deferred)await page.evaluate(()=>window.suggestionFixture.deferModels());
+   await page.evaluate(()=>window.suggestionFixture.stage('final'));
+   if(deferred){await expect(ghost).toHaveCount(0);assert.equal(await requests(),before);await page.evaluate(()=>window.suggestionFixture.releaseModels())}
+   await expect(ghost).toBeVisible();assert.equal(await requests(),before+1);
+   await page.evaluate(()=>window.suggestionFixture.rerender());assert.equal(await requests(),before+1);
+   await editor.focus();await editor.press('Escape');await expect(ghost).toHaveCount(0);
+  }
+  for(const suspend of ['navigation','disable','disconnect']){
+   const before=await requests();
+   await page.evaluate(()=>window.suggestionFixture.stage('user'));
+   await page.evaluate(()=>window.suggestionFixture.stage('interim'));
+   if(suspend==='navigation')await page.evaluate(()=>window.suggestionFixture.newChat());
+   else if(suspend==='disconnect')await page.evaluate(()=>window.suggestionFixture.setConnected(false));
+   else await page.getByLabel('Show suggestions in this browser tab').uncheck();
+   await page.evaluate(()=>window.suggestionFixture.stage('final'));
+   if(suspend==='navigation')await page.evaluate(()=>window.suggestionFixture.reopen());
+   else if(suspend==='disconnect')await page.evaluate(()=>window.suggestionFixture.setConnected(true));
+   else await page.getByLabel('Show suggestions in this browser tab').check();
+   await expect(page.getByRole('button',{name:'Suggest a prompt'})).toBeVisible();await expect(ghost).toHaveCount(0);
+   assert.equal(await requests(),before);
+  }
+  report.completionLifecycle={interimSameId:true,streaming:true,zeroWorkingRequests:true,oneIdleRequest:true,delayedModelCatalog:true,benignRerenderNoRepeat:true,dormantNavigationNoRetry:true,dormantDisableNoRetry:true,dormantReconnectNoRetry:true};
   assert.equal((await snapshot()).calls.filter(row=>row.action==='providers.configureSuggestions').length,0,'discovery/opt-in never saves model settings');
   await page.getByLabel('Suggestion provider connection').selectOption('cheap');
   await page.getByLabel('Suggestion model',{exact:true}).fill('explicit-cheap-model');

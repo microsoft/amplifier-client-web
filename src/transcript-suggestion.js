@@ -37,8 +37,46 @@ function visibleTranscriptWitness(session){
 }
 export function suggestionWitness(state){
  const session=state?.sessions?.find(row=>row.id===state.selectedSessionId),tail=session?.messages?.at(-1);
- if(!suggestionScope(state)||!session||tail?.role!=='assistant'||!tail.id||!tail.text?.trim()||tail.streaming||tail.localDelivery||tail.textDetail)return null;
+ if(!suggestionScope(state)||!session||tail?.role!=='assistant'||!tail.id||!tail.text?.trim()||tail.streaming||tail.localDelivery||tail.textDetail||tail.response?.phase==='interim'||['running','working'].includes(tail.response?.status)||session.streaming)return null;
  return {sessionId:session.id,lastMessageId:tail.id,key:JSON.stringify([suggestionScope(state),deliveryScope(state,session),session.id,state.configurationRevision??0,session.nextMessageRevision??0,session.interruptionRevision??0,visibleTranscriptWitness(session)])};
+}
+
+// Completion intent belongs to an observed live response, not one transient
+// transcript/window/configuration snapshot. Keep it across interim assistant
+// rows and delayed catalog publication, and spend it only when requesting.
+export function createSuggestionCompletionTracker(){
+ let previous=null,pending=null;
+ const sourceKey=(state,session,recipient)=>session&&JSON.stringify([suggestionScope(state),deliveryScope(state,session),session.id,session.interruptionRevision??0,recipient]);
+ return {
+  expectResponse(state,sessionId,recipient){
+   const session=state?.sessions?.find(row=>row.id===sessionId);
+   if(!session||state.selectedSessionId!==sessionId)return;
+   pending={key:sourceKey(state,session,recipient),before:session.messages?.at(-1)?.id};
+  },
+  observe(state,{enabled,visible,connected,configEnabled,recipient}){
+   const session=state?.sessions?.find(row=>row.id===state.selectedSessionId),tail=session?.messages?.at(-1);
+   const key=sourceKey(state,session,recipient);
+   const busy=!!session&&(['starting','working','running','busy'].includes(session.status)||!!session.streaming||!!tail?.streaming||['running','working'].includes(tail?.response?.status));
+   const draft=state?.view||{};
+   const active=!!(enabled&&visible&&connected&&configEnabled!==false&&!state.navigationPending&&!state.draftNavigationPending&&!draft.draft&&!draft.messageEdit&&!draft.messageReply&&!draft.draftDocument?.segments?.length&&!['stopping','stopped','error','failed'].includes(session?.status));
+   const suspended=!key||!active;
+   const same=previous?.key===key,prior=previous;
+   previous={key,sessionId:session?.id,tailId:tail?.id,busy,suspended,active};
+   if(suspended){pending=null;return null}
+   if(!same||prior?.suspended){
+    // Only an explicit local send can carry interest across creation's first
+    // selected-session frame. Selecting an existing busy chat cannot invent it.
+    if(pending?.key!==key)pending=null;
+    const witness=pending&&!busy&&suggestionWitness(state);
+    return witness&&witness.lastMessageId!==pending.before?JSON.stringify([key,witness.lastMessageId]):null;
+   }
+   if(tail?.role==='user'&&tail.id!==prior.tailId)pending={key,before:prior.tailId};
+   else if(busy&&!prior.busy&&!pending)pending={key,before:prior.tailId};
+   const witness=pending&&!busy&&suggestionWitness(state);
+   return witness&&witness.lastMessageId!==pending.before?JSON.stringify([key,witness.lastMessageId]):null;
+  },
+  consume(){pending=null},
+ };
 }
 
 // One request per source/configuration. Invalidated or dismissed work cannot
