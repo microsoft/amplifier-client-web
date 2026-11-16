@@ -47,6 +47,16 @@ test('name applies on blur and color/reset apply directly, without a Save step',
  assert.match(JSON.stringify(root.toJSON()),/browser controls when/);
  await renderAct(async()=>root.unmount());
 });
+test('an unchanged branding revision performs no head mutations',()=>{
+ let mutations=0;
+ const node=()=>new Proxy({}, {set(target,key,value){mutations++;target[key]=value;return true}});
+ const nodes=new Map(),icons=[node()];
+ const document={querySelector:key=>nodes.get(key),querySelectorAll:()=>icons,createElement:node,head:{append:meta=>nodes.set(`meta[name="${meta.name}"]`,meta)}};
+ nodes.set('link[rel="manifest"]',node());nodes.set('link[rel="apple-touch-icon"]',node());
+ updateInstanceHead(initial,document);const after=mutations;
+ updateInstanceHead({...initial},document);assert.equal(mutations,after);
+ updateInstanceHead({...initial,revision:'two'},document);assert.ok(mutations>after);
+});
 test('failed name change keeps the entry and has an explicit retry',async()=>{
  let attempt=0;const root=await setup(async()=>++attempt===1?{accepted:false,error:'Disk is full'}:{accepted:true,result:{...initial,name:'Keep me',revision:'two'}});
  await edit(root,'Keep me');

@@ -728,8 +728,8 @@ function App(){
   const surface=workSurface(state),workspace=state?.workspaces?.find(row=>row.id===state.view?.workWorkspaceId);
   const title=surface==='home'?'':surface==='workspaces'?'All workspaces':surface==='chats'?'All chats':surface==='workspace'?workspace?.name||'Workspace':session?.title?.trim();
   document.title=instanceTitle(state?.instanceBranding,title);
-  updateInstanceHead(state?.instanceBranding,document);
- },[session?.id,session?.title,state?.view?.workSurface,state?.view?.workWorkspaceId,state?.workspaces,state?.instanceBranding]);
+ },[session?.id,session?.title,state?.view?.workSurface,state?.view?.workWorkspaceId,state?.workspaces,state?.instanceBranding?.name]);
+ useEffect(()=>{updateInstanceHead(state?.instanceBranding,document)},[state?.instanceBranding?.name,state?.instanceBranding?.revision]);
  useReadCompletion(state,act,messagesPane,shell.ready);
  const execution=useMemo(()=>splitWork(messages,executionData(session)),[messages,session?.id,session?.execution,session?.workers,session?.workerSummary?.bounded,session?.runtimeEvents,session?.status]);
  // Draft/setup/settings surfaces own provider discovery. Reading an existing
