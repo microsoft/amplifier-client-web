@@ -31,6 +31,7 @@ import {VoiceSettings,InstallAppSettings} from './settings-personal';
 import {SettingsLayoutContext,useSettingsCompact,useSettingsHistory,useSettingsViewport} from './settings-layout';
 import {settingsTrail,settingsBaseNavigation,mergeSettingsNavigation} from './settings-mobile';
 import {SettingsDraftProvider,useSettingsDrafts} from './settings-drafts';
+import {InstanceBrandingSettings} from './instance-branding.jsx';
 
 const icons={ai:Network,'external-agents':Plug,privacy:Archive,workspaces:Layers,overview:SlidersHorizontal,appearance:Palette,voice:AudioLines,notifications:Bell,models:Network,bundles:Layers,'smart-tools':Plug,updates:Download,diagnostics:Activity,history:Archive,advanced:Settings};
 export function SettingsExperience({state,session,act,dispatch,open,close=()=>act('view.update',{patch:{panel:null}}),navigationRef,appearance}){
@@ -76,6 +77,7 @@ export function SettingsExperience({state,session,act,dispatch,open,close=()=>ac
  else if(page==='external-agents')content=<ExternalAgentSettings act={dispatch||act} navigate={navigate}/>;
  else if(page==='advanced')content=<AdvancedSettings {...props} sections={sections} navigate={navigate}/>;
  else if(page==='appearance')content=<ShellSlot name="settings.appearance">{appearance}</ShellSlot>;
+ else if(page==='instance-branding')content=<InstanceBrandingSettings {...props} act={dispatch||act}/>;
  else if(page.startsWith('shell:'))content=<ShellSlot name="settings.section" instanceId={page.slice(6)}/>;
  else if(page==='workspaces')content=<WorkspaceSettings {...props} dispatch={dispatch||act}/>;
  else if(page==='workspace-starters')content=<StarterSettings {...props} dispatch={dispatch||act}/>;

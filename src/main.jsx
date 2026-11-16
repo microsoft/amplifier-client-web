@@ -41,6 +41,7 @@ import {appearanceCatalogFor,clearAppearanceCatalogs} from './appearance-catalog
 import {appAppearanceState} from './app-appearance-state';
 import {homePatch} from './adaptive-work.js';
 import {SettingsExperience} from './settings-experience';
+import {instanceTitle,updateInstanceHead} from './instance-branding.js';
 import {useGuardedSettingsPanel,useGuardedSettingsSession} from './settings-drafts';
 import {useMessageOutbox,outboxMessages,outboxMatches,ClosedDeliveryItems} from './message-outbox';
 import {checkedDelivery,deliveryRecovery,deliveryScope,deliverySourceScope,deliveryTargetMatches,nativeDeliverySource,retainedDeliveryTarget,freshRetrySource} from './pending-delivery-checks';
@@ -726,8 +727,9 @@ function App(){
  useEffect(()=>{
   const surface=workSurface(state),workspace=state?.workspaces?.find(row=>row.id===state.view?.workWorkspaceId);
   const title=surface==='home'?'':surface==='workspaces'?'All workspaces':surface==='chats'?'All chats':surface==='workspace'?workspace?.name||'Workspace':session?.title?.trim();
-  document.title=title?title+' - Amplifier':'Amplifier';
- },[session?.id,session?.title,state?.view?.workSurface,state?.view?.workWorkspaceId,state?.workspaces]);
+  document.title=instanceTitle(state?.instanceBranding,title);
+  updateInstanceHead(state?.instanceBranding,document);
+ },[session?.id,session?.title,state?.view?.workSurface,state?.view?.workWorkspaceId,state?.workspaces,state?.instanceBranding]);
  useReadCompletion(state,act,messagesPane,shell.ready);
  const execution=useMemo(()=>splitWork(messages,executionData(session)),[messages,session?.id,session?.execution,session?.workers,session?.workerSummary?.bounded,session?.runtimeEvents,session?.status]);
  // Draft/setup/settings surfaces own provider discovery. Reading an existing

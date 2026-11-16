@@ -5,6 +5,7 @@ export const settingsSections=[
  {id:'external-agents',title:'External agents',scope:'Connections on this Amplifier host',pages:[['external-agents','External agents']]},
  {id:'smart-tools',title:'Smart Tools',scope:'This Amplifier host',pages:[['smart-tools','Smart Tools']]},
  {id:'appearance',title:'Appearance',scope:'This interface',pages:[['appearance','Appearance']]},
+ {id:'instance-branding',title:'App name & icon',scope:'Everyone using this server and port',pages:[['instance-branding','App name & icon']]},
  {id:'workspaces',title:'Workspaces',scope:'New workspaces on this host',pages:[['workspaces','Workspaces'],['workspace-starters','Workspace starters']]},
  {id:'voice',title:'Voice',scope:'Future voice connections',pages:[['voice','Voice']]},
  {id:'notifications',title:'Notifications',scope:'This app',pages:[['notifications','Notifications']]},
