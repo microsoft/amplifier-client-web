@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import React,{act} from 'react';
 import {create} from 'react-test-renderer';
 import {createServer} from 'vite';
-const vite=await createServer({cacheDir:'.vite-pin-settlement-tests',server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
+// Watcher timers must not survive the fake-clock resets used by these SSR checks.
+const vite=await createServer({configFile:false,cacheDir:'.vite-pin-settlement-tests',server:{middlewareMode:true,hmr:false,watch:null},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
 const {PinnedItems}=await vite.ssrLoadModule('/src/shell/navigation-components.jsx');
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 test.after(()=>vite.close());

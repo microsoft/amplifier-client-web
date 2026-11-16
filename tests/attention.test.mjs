@@ -5,7 +5,8 @@ import React,{act as renderAct} from 'react';
 import {create} from 'react-test-renderer';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {createServer} from 'vite';
-const server=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
+// No hot reload is needed; watcher throttle timers contaminate the global fake clock below.
+const server=await createServer({configFile:false,server:{middlewareMode:true,hmr:false,watch:null},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
 const {AttentionBadge,AttentionReview,ActivityPanel,FailureDisposition,FailureDispositions,readItems,reviewItems,completionToRead,useReadCompletion}=await server.ssrLoadModule('/src/attention.jsx');
 const {request}=await server.ssrLoadModule('/src/api.js');
 const {FeedbackNotice}=await server.ssrLoadModule('/src/feedback.jsx');
@@ -64,10 +65,12 @@ test('visible foldable chat can acknowledge completion beside navigation, not be
   assert.deepEqual(calls,[{name:'attention.read',args:{ids:['completion:chat'],fingerprints:{'completion:chat':'exact'}}}]);
   state={...state,canvas:{open:true}};await renderAct(async()=>root.update(React.createElement(Hook)));
   assert.equal(timers.length,0,'Compact Canvas still hides chat through 760px');
+  assert.equal(calls.length,1,'Opening compact Canvas never acknowledges the hidden chat');
   await renderAct(async()=>root.unmount());root=null;
   width=390;state={...state,canvas:{open:false}};
   await renderAct(async()=>{root=create(React.createElement(Hook))});
   assert.equal(timers.length,0,'Phone modal navigation still blocks acknowledgement');
+  assert.equal(calls.length,1,'Phone modal navigation never acknowledges the hidden chat');
  }finally{
   if(root)await renderAct(async()=>root.unmount());
   for(const name of names){if(originals[name])Object.defineProperty(globalThis,name,originals[name]);else delete globalThis[name]}
