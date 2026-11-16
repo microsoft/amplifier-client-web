@@ -28,10 +28,14 @@ export function AttachmentPreview({file,privateDraft,opener,onClose}){
   return()=>{epoch.current++;document.removeEventListener('keydown',key,true);node.close();if(opener?.isConnected)opener.focus({preventScroll:true});else document.querySelector('.a-markdown-composer')?.focus({preventScroll:true});};
  },[]);
  useLayoutEffect(()=>{
-  const node=stage.current;const measure=()=>setViewport([node.clientWidth,node.clientHeight]);
-  measure();const observer=new ResizeObserver(measure);observer.observe(node);
-  window.visualViewport?.addEventListener('resize',measure);
-  return()=>{observer.disconnect();window.visualViewport?.removeEventListener('resize',measure)};
+  // clientWidth/Height can round fractional CSS pixels up. At non-integer zoom,
+  // that can overflow the stage, toggle both scrollbars and resize forever.
+  const observer=new ResizeObserver(([{contentRect}])=>{
+   const next=[Math.floor(contentRect.width),Math.floor(contentRect.height)];
+   setViewport(old=>old[0]===next[0]&&old[1]===next[1]?old:next);
+  });
+  observer.observe(stage.current);
+  return()=>observer.disconnect();
  },[]);
  useEffect(()=>{
   const ticket=++epoch.current;setNatural(null);setZoom(null);previous.current=null;setPhase(valid?'loading':'unavailable');
