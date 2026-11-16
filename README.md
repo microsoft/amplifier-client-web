@@ -46,14 +46,18 @@ npm run test:artifact-assets
 The build writes `dist/`. See [package.json](package.json) for focused checks and
 [AGENTS.md](AGENTS.md) for source, test, and packaging guidance.
 
-## Temporary dual-repository maintenance
+## Unified delivery
 
-This repository owns the browser source. Changes intended for Unified must also
-reach its selected `components/web-client/` copy, through the
-[documented refresh workflow](https://github.com/microsoft/amplifier-unified/blob/main/components/README.md#refresh-and-retire-the-copy)
-or a named integration handoff. Author changes here first; do not hand-edit that
-copy. This requirement remains until an approved delivery transition updates both
-repositories' guidance.
+This repository owns the browser source. Unified selects an exact accepted public
+revision and production-input digest through its
+[documented selection workflow](https://github.com/microsoft/amplifier-unified/blob/main/components/README.md#select-public-client-source).
+It prepares that source, qualifies the client/server pairing and ships complete
+built assets. Installing a released Unified wheel or source distribution does not
+require Node or this checkout.
+
+Author changes here first. A client source merge or release does not automatically
+update Unified: carry intended changes through selection and release or make a
+named integration handoff with exact revisions and pending work.
 
 For interface and design work, use the pinned
 [client vision](https://github.com/microsoft/amplifier-unified/blob/816c7a67dbafc20bfb28723dd317c71d3bd2bb28/docs/clients/VISION.md) and

@@ -28,19 +28,18 @@ design for ordinary information workers and consumers, with familiar labels,
 accessible controls and low cognitive load. UX is like golf: fewer strokes win,
 without losing authority, feedback or recovery.
 
-## Temporary dual-repository maintenance
+## Unified delivery
 
-Maintain both this canonical source and Unified's committed
-`components/web-client` snapshot and source record. Canonical-only or copy-only
-changes are not release-ready. Author here, then mechanically refresh the whole
-snapshot from the exact reviewed, accepted commit, or make a named integration
-handoff with exact revisions and pending work. Do not hand-edit the copy or import
-unreviewed moving-main extras. Follow the [README workflow](README.md#temporary-dual-repository-maintenance);
-only an explicitly approved delivery transition updating both repositories'
-guidance retires this obligation, not public availability alone.
+This repository is the sole client authoring owner. Unified selects an exact
+accepted public commit and production-input digest through its
+[selection workflow](https://github.com/microsoft/amplifier-unified/blob/main/components/README.md#select-public-client-source).
+A source merge or client release does not update Unified automatically. Carry
+changes intended for Unified through selection, paired qualification and its
+release, or make a named integration handoff with exact revisions and pending work.
+Do not import unreviewed moving-main changes or restore a committed delivery copy.
 
-The delivery copy and prepared source (`.build/web-client`) are consumers, not
-alternative authoring locations; preserve unknown local experiments.
+Unified's prepared source (`.build/web-client`) is disposable; preserve unknown
+local experiments and move desired changes into this repository.
 Keep one explicit paired server revision in artifact evidence. Do not add a
 compatibility registry, runtime asset override or automatic fallback. Follow the
 workspace's owned-DTU rules for builds/browser work and remove obsolete owned
