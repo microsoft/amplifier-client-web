@@ -35,6 +35,27 @@ npm run dev
 Open the local address printed by Vite. API and WebSocket requests are proxied to
 the development host. This client does not install or start the agent backend.
 
+## Suggested messages
+
+On a host that supports app-level suggestions, Settings → Privacy lets you save
+an explicit suggestion provider connection and model, independently of the chat
+model. Suggestions are off by default and also require this browser tab's opt-in.
+There is no automatic model selection or fallback; a configured connection is
+not a claim that every provider or model supports this feature.
+
+The host sends bounded visible conversation text to the selected provider,
+including other participants' messages—not an agent's private context or an
+unsent draft. The client requests a suggestion only by conversation and committed
+message identifiers. A new response can trigger one request while the chat is
+idle; an old idle chat offers **Suggest a prompt** instead. Starting a new chat,
+refocusing, or reconnecting does not trigger a model call.
+
+The private preview is not part of the editor document. Tab in the focused empty
+editor, or **Use suggestion**, adds literal, editable, undoable text; sending is
+always a separate action. The mounted browser check
+`node tests/transcript-suggestion-mounted-browser.mjs` uses synthetic action
+responses. It does not qualify a provider, installed host, or LAN deployment.
+
 ## Check and build
 
 ```sh
