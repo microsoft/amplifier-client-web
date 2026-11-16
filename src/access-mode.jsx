@@ -21,7 +21,7 @@ export function AccessMode({session,act,globalOnly=false}){
  useEffect(()=>{setReport(null);run('access.get');return()=>{generation.current++}},[session?.id,globalOnly]);
  return <section className="a-settings-section" aria-label="Access and approvals">
   {globalOnly&&<p>Default for all existing and new chats across every workspace on this Amplifier host. Explicit chat and workspace choices still take precedence.</p>}
-  <p>{session?.externalAgent?'Full access allows permission requests from this agent without asking each time. The agent controls its own tools and execution.':'Full access lets Amplifier use files, tools and configuration without asking for each permission. Enable it for work you trust.'}</p>
+  <p>{session?.externalAgent?'Full access allows permission requests from this agent without asking each time. The agent controls its own tools and execution.':'Full access lets Amplifier use files, tools and configuration without asking for each permission. Supported file tools can use files outside the workspace wherever your operating system account permits, overriding configured allowed and blocked folder restrictions. Ask when needed restores those restrictions.'}</p>
   {session?.externalAgent&&<p>Ask when needed shows the agent’s offered approval choices. Full access uses Allow once when offered; it does not save Always choices in the agent’s approval settings.</p>}
   {report&&<p role="status">Current mode: <strong>{report.mode==='full'?'Full access':'Ask when needed'}</strong> · {({session:'This chat',workspace:'Workspace default',app:'App default',default:'Default',inherited:'Source task settings',unavailable:'Source settings unavailable'})[report.source]}</p>}
   <fieldset className="a-permissions-fields" disabled={busy||!report}>
