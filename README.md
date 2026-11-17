@@ -38,7 +38,7 @@ the development host. This client does not install or start the agent backend.
 ## Suggested messages
 
 On a host that supports app-level suggestions, Settings → Privacy lets you save
-an explicit suggestion provider connection and model, independently of the chat
+an explicit suggestion provider connection, model and reasoning effort, independently of the chat
 model. Suggestions are off by default and also require this browser tab's opt-in.
 There is no automatic model selection or fallback; a configured connection is
 not a claim that every provider or model supports this feature.
@@ -46,9 +46,13 @@ not a claim that every provider or model supports this feature.
 The host sends bounded visible conversation text to the selected provider,
 including other participants' messages—not an agent's private context or an
 unsent draft. The client requests a suggestion only by conversation and committed
-message identifiers. A new response can trigger one request while the chat is
-idle; an old idle chat offers **Suggest a prompt** instead. Starting a new chat,
-refocusing, or reconnecting does not trigger a model call.
+message identifiers. The selected chat can request once when idle with an empty
+message box while the page is visible and focused, including when you visit an
+existing chat. No other chat or background page requests work. Returning to an
+unexpired ready suggestion checks its original attempt without another model
+call; failed, empty, cancelled or expired sources are not automatically retried.
+Starting a new chat before it has a response makes no request. In Settings →
+Advanced, the suggestion prompt can be edited and reset to the host default.
 
 The private preview is not part of the editor document. Tab in the focused empty
 editor, or **Use suggestion**, adds literal, editable, undoable text; sending is

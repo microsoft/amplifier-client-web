@@ -15,7 +15,7 @@ import {SlidersHorizontal,Palette,AudioLines,Bell,Network,Layers,Plug,Download,A
 import {settingsSections,settingsLocation,settingsUnread,settingsTitle,settingsParent} from './settings-navigation';
 import {AIConnections} from './ai-connections';
 import {PrivacySettings,AdvancedSettings} from './settings-everyday';
-import {SuggestionSettings} from './suggestion-model-settings.jsx';
+import {SuggestionSettings,SuggestionPromptSettings} from './suggestion-model-settings.jsx';
 import {SettingsPageContext} from './settings-ui';
 import {AttentionBadge,AttentionReview} from './attention';
 import {ProviderSettings,RoutingSettings} from './setup';
@@ -75,7 +75,7 @@ export function SettingsExperience({state,session,act,dispatch,open,close=()=>ac
  else if(page==='privacy')content=<><SuggestionSettings state={state} act={dispatch||act} navigate={navigate}/><PrivacySettings state={state} navigate={navigate}/></>;
  else if(page==='model-capacity')content=<ModelCapacitySettings act={dispatch||act} navigate={navigate}/>;
  else if(page==='external-agents')content=<ExternalAgentSettings act={dispatch||act} navigate={navigate}/>;
- else if(page==='advanced')content=<AdvancedSettings {...props} sections={sections} navigate={navigate}/>;
+ else if(page==='advanced')content=<><AdvancedSettings {...props} sections={sections} navigate={navigate}/><SuggestionPromptSettings state={state} act={dispatch||act} navigate={navigate}/></>;
  else if(page==='appearance')content=<ShellSlot name="settings.appearance">{appearance}</ShellSlot>;
  else if(page.startsWith('shell:'))content=<ShellSlot name="settings.section" instanceId={page.slice(6)}/>;
  else if(page==='workspaces')content=<WorkspaceSettings {...props} dispatch={dispatch||act}/>;

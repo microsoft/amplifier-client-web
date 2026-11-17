@@ -240,7 +240,8 @@ function App(){
   });
  },[acceptState]);
  const dispatch=useCallback((action,args={},meta={})=>{
-  if(['conversation.send','conversation.stop','session.select','session.draft','session.create','message.edit','message.reply','attachment.add','providers.configureSuggestions'].includes(action))suggestionFence.current?.invalidate();
+  if(['session.select','session.draft','session.create'].includes(action))suggestionFence.current?.suspend();
+  else if(['conversation.send','conversation.stop','message.edit','message.reply','attachment.add','providers.configureSuggestions'].includes(action))suggestionFence.current?.invalidate();
   if(action==='conversation.send'){
    args={sessionId:latest.current?.selectedSessionId,...args};
    if(!meta.preservePayload&&args.expectedSource===undefined){
@@ -397,7 +398,6 @@ function App(){
     let result;
     try{
      if(stop)stopPostStarted=true;
-     if(action==='conversation.send'&&meta.outboxScope)suggestionFence.current?.expectResponse(args.sessionId);
      result=await request('/api/actions',{signal:meta.signal,method:'POST',body:{action,args,id:meta.id||crypto.randomUUID(),...(meta.expectedRevision!==undefined?{expectedRevision:meta.expectedRevision}:{})}});
     }catch(error){
      if(stop){
@@ -1156,7 +1156,6 @@ function App(){
     <div className="a-compose-end"><DictationButton key={session?.id??'dictation-new'} draft={draft} onChange={value=>{if((latest.current?.selectedSessionId??null)===(session?.id??null))editDraft(value)}} controlRef={dictationControl} onListening={value=>{if(value)suggestionFence.current?.invalidate();setDictating(value)}} disabled={executionUnavailable||historyPending||referencingDraft||sendingHere||browsing||callActive}/><button type={primaryAction.action==='conversation.send'?'submit':'button'} className="a-send" data-part="composer-primary-action" data-action={primaryAction.action} aria-label={primaryAction.action==='call.start'&&state.voiceConfiguration?.available===false?'Set up voice':primaryAction.label} title={primaryAction.action==='call.start'&&state.voiceConfiguration?.available===false?'Set up voice in Settings':primaryAction.label} disabled={primaryAction.disabled||(referencingDraft&&primaryAction.action==='conversation.send')} onClick={primaryAction.action==='call.start'?startCall:primaryAction.action==='call.end'?()=>act('call.end'):primaryAction.action==='conversation.stop'?()=>act('conversation.stop',{sessionId:session.id}):undefined}>{primaryAction.icon==='voice'?<AudioLines/>:primaryAction.icon==='cancel'?<X/>:<ArrowUp/>}</button></div>
     </div>
     <ComposerReturnHelp id={composerReturnHelpId}/>
-    {suggestion.canRequest&&!suggestion.ghost&&<button type="button" className="a-link" onClick={suggestion.request}>Suggest a prompt</button>}
     <div className="a-compose-configuration">
      {session&&responseActive&&!callActive&&primaryAction.action!=='conversation.stop'&&<button type="button" className="a-compose-stop" aria-label="Stop response" data-action="conversation.stop" disabled={session.status==='stopping'||executionUnavailable} onClick={()=>act('conversation.stop',{sessionId:session.id})}>{session.status==='stopping'?'Stopping…':'Stop'}</button>}
      <ShellSlot name="composer.actions"><ComposerOptions state={state} session={session} act={act} working={working} detail={presentation.interfaceDetail||presentation.executionDetail} recipientAgentId={recipientAgentId} onRecipientChange={id=>setRecipientChoices(current=>({...current,[recipientKey]:id}))}/></ShellSlot>
