@@ -16,8 +16,7 @@
 // holds only a control page with the earlier field, decides to ask. Each browser
 // has its own record, so no decision can be counted for the wrong page. The
 // record of the first browser is read once more at the end. Not covered: a save
-// by hand through the browser's own key symbol, which the browser offers for
-// every hidden field that a person typed into. The headless shell that the
+// by hand through the browser's own key symbol. The headless shell that the
 // other journeys use has no password manager, so it cannot show this part.
 import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,rm,writeFile} from 'node:fs/promises';
@@ -33,7 +32,7 @@ const artifacts=process.env.AMPLIFIER_TEST_ARTIFACTS||'output/first-connection';
 const fullChromium=process.env.AMPLIFIER_TEST_FULL_CHROMIUM;
 const key='sk-fixture-0123456789-not-a-real-key';
 // A row as the host publishes it. The host keeps `eligible` in its private inventory and removes the field from
-// the rows that it sends (amplifier_web/updates.py `group_sources`); the client reads no such field.
+// the rows that it sends (amplifier_web/updates.py `group_sources`).
 const component=id=>({id,label:id,kind:'bundle',status:'update',missing:true,updateTier:'included',current:null,latest:'required'});
 // The host's own waiting state (amplifier_web/update_health.py `current`).
 const updates={phase:'checked',initialPreparation:true,lastCheck:1794900000,

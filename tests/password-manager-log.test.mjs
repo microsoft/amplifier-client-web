@@ -37,7 +37,8 @@ test('a record in which the manager did not check is not a judgment',()=>{
  const outside=(...lines)=>clientRecord(record(newPage,['Message:  PasswordManager::ProvisionallySaveForm ',...lines,''],check('OnDynamicFormSubmission'),newPage,newPage),'ai-private-key').kept;
  assert.equal(outside('Form parsing input: {','Form fields: ',clientField,'}'),true);
  assert.equal(outside('Form parsing input: {','Form fields: ','}',clientField),false);
- assert.equal(outside(clientField),false);
+ // Only the start of the block is missing here; its end is there.
+ assert.equal(outside(clientField,'}'),false);
  assert.equal(outside('Form parsing input: {','Form fields: ',clientField),false);
  assert.equal(outside('',...say('PasswordAutofillAgent::SendPasswordForms'),'Form is a password form: {','Form fields: ',clientField,'}'),false);
  // A key that the field does not hold is not kept.
