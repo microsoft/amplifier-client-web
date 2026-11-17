@@ -17,6 +17,11 @@
       "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/settings-draft-focus"}
     },
     {
+      "id": "first-connection",
+      "command": ["node", "tests/first-connection-browser.mjs"],
+      "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/first-connection"}
+    },
+    {
       "id": "settings-action-spacing",
       "command": ["node", "tests/settings-action-spacing-browser.mjs"],
       "env": {

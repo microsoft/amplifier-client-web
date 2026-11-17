@@ -36,12 +36,18 @@ test('the key field of the advanced provider editor follows the same rule and st
 test('every hidden field of the client source uses the one purpose for a secret that is not a sign-in password',async()=>{
  const {secretFieldAutoComplete}=await server.ssrLoadModule('/src/secret-field.js');
  assert.equal(secretFieldAutoComplete,'one-time-code');
- const directory=new URL('../src/',import.meta.url),found=[];
+ const directory=new URL('../src/',import.meta.url);let hidden=0;
  for(const name of (await readdir(directory,{recursive:true})).filter(name=>/\.jsx?$/.test(name))){
   const source=await readFile(new URL(name,directory),'utf8');
-  for(const [input] of source.matchAll(/<input\b[^>]*\btype="password"[^>]*>/g))found.push({name,ruled:input.includes('autoComplete={secretFieldAutoComplete}')});
+  // No field is made hidden in a way that this count cannot see.
+  assert.doesNotMatch(source,/type:\s*["']password["']|\.type\s*=\s*["']password["']|setAttribute\(\s*["']type["']\s*,\s*["']password/,name);
+  if(!name.endsWith('.jsx'))continue; // Markup is in .jsx files only.
+  // Counted, not parsed: an attribute with an arrow function holds a `>`.
+  const fields=source.match(/\stype=\{?["']password["']\}?/g)?.length||0;
+  const ruled=source.match(/\stype="password" autoComplete=\{secretFieldAutoComplete\}/g)?.length||0;
+  assert.equal(ruled,fields,name+' has a hidden field without the purpose for a secret');
+  hidden+=fields;
  }
- // The AI key (two editors), the voice key, the two notification fields and the remote-browser text.
- assert.deepEqual(found.map(row=>row.name).sort(),['ai-connections.jsx','notification-settings.jsx','notification-settings.jsx','settings-personal.jsx','setup.jsx','ui-use.jsx']);
- assert.deepEqual(found.filter(row=>!row.ruled),[]);
+ // The AI key in its two editors, the voice key, the two notification fields and the remote-browser text.
+ assert.equal(hidden,6);
 });

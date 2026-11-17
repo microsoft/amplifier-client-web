@@ -996,7 +996,7 @@ test('the two profile reasons of a component update have plain texts',()=>{
  // Word for word the host's text for this reason, so that the page does not hold two versions.
  assert.match(connection,/This update needs an AI connection, and the selected conversation profile has none\. Nothing was changed\. Set up an AI connection in Settings, then update again\./);
  const profile=failure('incomplete-conversation-profile');
- assert.match(profile,/The selected conversation profile is incomplete\. Nothing was changed\. Choose a complete profile in Bundles &amp; modules, then update again\./);
+ assert.match(profile,/The selected conversation profile is incomplete\. Nothing was changed\. Complete this profile or choose another in Bundles &amp; modules, then update again\./);
  // A reason without a text shows only its recorded facts.
  assert.doesNotMatch(failure('some-other-reason'),/Nothing was changed/);
 });
