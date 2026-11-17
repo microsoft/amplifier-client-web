@@ -2,6 +2,7 @@ import {useSettingsDraft} from './settings-drafts';
 import {DictationSettings} from './dictation-controls';
 import React from 'react';
 import {WorkingLabel} from './working-label';
+import {secretFieldAutoComplete} from './secret-field';
 import voiceCatalog from '../.build-inputs/amplifier_web/voice_options.json' with {type:'json'};
 export function VoiceSettings({state,act}){
  const settings=state.settings||{},model=voiceCatalog.models.find(row=>row.id===settings.preferredVoice)||voiceCatalog.models[0];
@@ -30,7 +31,7 @@ export function VoiceSettings({state,act}){
     {config?.environmentAvailable&&<label className="a-inline-checkbox"><input type="radio" name="voice-key-source" disabled={saving} checked={mode==='environment'} onChange={()=>setSource('environment')}/><span>Use the key on this host (OPENAI_API_KEY)</span></label>}
     <label className="a-inline-checkbox"><input type="radio" name="voice-key-source" disabled={saving} checked={mode==='private'||!config?.environmentAvailable} onChange={()=>setSource('private')}/><span>Use a separate key</span></label>
    </fieldset>
-   {(mode==='private'||!config?.environmentAvailable)&&<div className="a-voice-field"><label htmlFor="voice-api-key">OpenAI API key</label><input id="voice-api-key" disabled={saving} type="password" autoComplete="off" value={key} onChange={e=>{setSource('private');setKey(e.target.value)}} placeholder={config?.privateKeyAvailable?'Saved key · enter a new key to replace it':''}/></div>}
+   {(mode==='private'||!config?.environmentAvailable)&&<div className="a-voice-field"><label htmlFor="voice-api-key">OpenAI API key</label><input id="voice-api-key" disabled={saving} type="password" autoComplete={secretFieldAutoComplete} value={key} onChange={e=>{setSource('private');setKey(e.target.value)}} placeholder={config?.privateKeyAvailable?'Saved key · enter a new key to replace it':''}/></div>}
    <div className="a-dialog-actions"><button className="a-primary" data-action="voice.configure" aria-busy={saving||undefined} data-operation-pending={saving||undefined} disabled={saving||((mode==='private'||!config?.environmentAvailable)&&!key.trim()&&!config?.privateKeyAvailable)} onClick={saveKey}><WorkingLabel active={saving} working="Saving…">Save voice connection</WorkingLabel></button></div>
  </div>;
  return <div className="a-voice-settings">

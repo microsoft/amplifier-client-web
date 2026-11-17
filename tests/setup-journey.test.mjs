@@ -10,8 +10,8 @@ test.after(()=>server.close());
 
 // The host's own waiting state (amplifier_web/update_health.py `current`).
 const waiting={status:'waiting',title:'Components update after you set up an AI connection',detail:'Nothing failed.',actionRequired:false,action:'connect'};
-const render=(updates,view={setupJourney:'welcome'})=>renderToStaticMarkup(React.createElement(SetupJourney,
- {state:{view,setup:{providers:[]},updates},act:()=>{},dispatch:()=>{}}));
+const render=(updates,view={setupJourney:'welcome'},providers=[])=>renderToStaticMarkup(React.createElement(SetupJourney,
+ {state:{view,setup:{providers},updates},act:()=>{},dispatch:()=>{}}));
 
 test('the welcome panel has no spinner while Amplifier waits for an AI connection',()=>{
  const html=render({initialPreparation:true,sequence:{stage:'included',included:{available:4,missing:4}},currentStatus:waiting});
@@ -39,4 +39,11 @@ test('the waiting sentence also shows after the first preparation, and only in t
  assert.match(render({initialPreparation:true,phase:'error',sequence:{stage:'included'}}),/Some components need attention\. Open Updates for details\./);
  // No preparation and no waiting: no status line.
  assert.doesNotMatch(render({sequence:{stage:'complete'}}),/role="status"/);
+});
+
+test('after the connection is ready the panel makes no waiting claim and shows no spinner while the host status is behind',()=>{
+ const html=render({initialPreparation:true,sequence:{stage:'included',included:{available:4,missing:4}},currentStatus:waiting},
+  {setupJourney:'welcome'},[{id:'openai',config:{default_model:'model'}}]);
+ assert.match(html,/Your first connection is ready/);
+ assert.doesNotMatch(html,/after you connect an AI service|a-progress-spinner|role="status"/);
 });

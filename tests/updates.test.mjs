@@ -944,9 +944,9 @@ const waitingStatus={status:'waiting',title:'Components update after you set up 
 const waitingUpdates={phase:'checked',initialPreparation:true,items:[{...component,missing:true}],
  sequence:{stage:'included',included:{available:1,missing:1}},currentStatus:waitingStatus};
 test('before an AI connection the Updates page offers the connection and no installation',async()=>{
- const calls=[],opened=[];let root;
+ const calls=[];let root;
  const dispatch=async(...args)=>{calls.push(args);return {accepted:true}};
- await renderAct(async()=>{root=create(React.createElement(UpdateSettings,{state:state(waitingUpdates),act:dispatch,navigate:page=>opened.push(page)}))});
+ await renderAct(async()=>{root=create(React.createElement(UpdateSettings,{state:state(waitingUpdates),act:dispatch}))});
  const buttons=root.root.findAllByType('button');
  const named=name=>buttons.filter(button=>button.findAllByType('span').some(span=>span.children.join('')===name));
  assert.equal(named('Update Amplifier').length,0);
@@ -960,8 +960,8 @@ test('before an AI connection the Updates page offers the connection and no inst
  assert.equal(named('Check for updates').length,1);
  assert.equal(named('Check for updates')[0].props.disabled,false);
  await renderAct(async()=>connect[0].props.onClick());
- assert.deepEqual(opened,['ai-connections']);
- assert.deepEqual(calls.filter(([action])=>action==='updates.install'),[]);
+ // The click opens Settings > AI connections and requests no installation.
+ assert.deepEqual(calls,[['view.update',{patch:{panel:'settings',settingsSection:'setup',settingsExpanded:['ai-connections']}}]]);
  const html=render(waitingUpdates);
  assert.match(html,/Components update after you set up an AI connection/);
  assert.match(html,/Nothing failed\./);
@@ -987,7 +987,8 @@ test('the two profile reasons of a component update have plain texts',()=>{
  const failure=reason=>render({phase:'error',error:'x',sequence:{stage:'included'},diagnostics:{attemptId:'a',events:[],
   lastFailure:{attemptId:'a',kind:'ecosystem',phase:'ecosystem-probe',status:'failed',reason,errorType:'ValueError'}}});
  const connection=failure('ai-connection-needed');
- assert.match(connection,/This update needs an AI connection\. The selected conversation profile has none\. Nothing was changed\. Set up an AI connection in Settings, then update again\./);
+ // Word for word the host's text for this reason, so that the page does not hold two versions.
+ assert.match(connection,/This update needs an AI connection, and the selected conversation profile has none\. Nothing was changed\. Set up an AI connection in Settings, then update again\./);
  const profile=failure('incomplete-conversation-profile');
  assert.match(profile,/The selected conversation profile is incomplete\. Nothing was changed\. Choose a complete profile in Bundles &amp; modules, then update again\./);
  // A reason without a text shows only its recorded facts.
