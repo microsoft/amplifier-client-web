@@ -22,14 +22,14 @@ export function useCanvasNavigation(panel,visible){
    }
    modeRef.current=next;setMode(next);
    if(next==='compact'&&node.querySelector('.a-canvas-document-tabs')?.contains(document.activeElement))node.querySelector('.a-open-documents')?.focus({preventScroll:true});
-   if(next==='tabs'&&node.querySelector('.a-canvas-close-current')===document.activeElement)node.querySelector('.a-open-documents')?.focus({preventScroll:true});
+   if(next==='tabs'&&document.activeElement&&node.querySelector('.a-canvas-close-current')===document.activeElement)node.querySelector('.a-open-documents')?.focus({preventScroll:true});
   };
   measure.current=update;update();
   const observer=new ResizeObserver(()=>update());observer.observe(node);
   // focusout precedes the new activeElement; check again after native focus.
   const finish=()=>queueMicrotask(()=>update()),down=()=>{pressed=true;clearTimeout(timer)},up=()=>{pressed=false;finish()};
-  document.addEventListener('focusin',finish);document.addEventListener('keydown',finish);document.addEventListener('pointerdown',down);document.addEventListener('pointerup',up);node.addEventListener('focusout',finish);node.addEventListener('toggle',finish,true);
-  return()=>{clearTimeout(timer);observer.disconnect();measure.current=()=>{};document.removeEventListener('focusin',finish);document.removeEventListener('keydown',finish);document.removeEventListener('pointerdown',down);document.removeEventListener('pointerup',up);node.removeEventListener('focusout',finish);node.removeEventListener('toggle',finish,true)};
+  document.addEventListener('focusin',finish);document.addEventListener('keydown',finish);document.addEventListener('pointerdown',down);document.addEventListener('pointerup',up);document.addEventListener('pointercancel',up);node.addEventListener('focusout',finish);node.addEventListener('toggle',finish,true);
+  return()=>{clearTimeout(timer);observer.disconnect();measure.current=()=>{};document.removeEventListener('focusin',finish);document.removeEventListener('keydown',finish);document.removeEventListener('pointerdown',down);document.removeEventListener('pointerup',up);document.removeEventListener('pointercancel',up);node.removeEventListener('focusout',finish);node.removeEventListener('toggle',finish,true)};
  },[panel,visible,preference]);
  useEffect(()=>{
   if(typeof window==='undefined')return;

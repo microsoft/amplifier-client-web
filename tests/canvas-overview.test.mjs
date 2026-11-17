@@ -72,15 +72,15 @@ test('accepted document selection closes native modality before scheduling tab f
 
 // Real CanvasTabs handlers/hooks with mocked host nodes and deterministic receipt
 // and frame delivery. This does not substitute for the real browser focus oracle.
-async function controlledTabs(Component,run){
+async function controlledTabs(Component,run,{compact=false}={}){
  const keys=['window','document','requestAnimationFrame','ResizeObserver','IS_REACT_ACT_ENVIRONMENT'];
  const previous=Object.fromEntries(keys.map(key=>[key,globalThis[key]]));
- const listeners=new Map(),frames=[],calls=[],events=[];
+ const listeners=new Map(),stripListeners=new Map(),frames=[],calls=[],events=[];
  let focused=null,root,pending,model={...state,canvas:{open:true,id:'a',selectedVersion:2},canvasArtifacts:['a','b'].map(id=>({id,title:'Document '+id,kind:'markdown',tabOpen:true,sessionId:'chat-a',workspaceId:'workspace-a'}))};
  const nodes=new Map();
  const node=id=>{if(!nodes.has(id))nodes.set(id,{dataset:id==='overview'?{}:{artifactId:id},focus(){focused=this;events.push('focus:'+id)},closest(){return this},getBoundingClientRect(){return {left:0,right:100}}});return nodes.get(id)};
  const tabNodes=()=>['overview',...model.canvasArtifacts.filter(row=>row.tabOpen).map(row=>row.id)].map(node);
- const strip={scrollLeft:0,querySelectorAll:()=>tabNodes().slice(1),getBoundingClientRect:()=>({left:0,right:300}),addEventListener(){},removeEventListener(){}};
+ const strip={scrollLeft:0,clientWidth:300,scrollWidth:900,querySelectorAll:()=>tabNodes().slice(1),getBoundingClientRect:()=>({left:0,right:300}),addEventListener(name,fn){stripListeners.set(name,fn)},removeEventListener(name){stripListeners.delete(name)}};
  const tabs={querySelectorAll:tabNodes,querySelector:selector=>selector==='[aria-selected=true]'?node(model.canvas.id||'overview'):selector.includes(':focus')&&tabNodes().includes(focused)?focused:null};
  const search={focus(){focused=this;events.push('focus:search')}};
  const dialog={open:false,showModal(){this.open=true;events.push('open')},close(){this.open=false;events.push('close')},querySelector:()=>search};
@@ -91,9 +91,9 @@ async function controlledTabs(Component,run){
  globalThis.requestAnimationFrame=fn=>{frames.push(fn);return frames.length};
  globalThis.ResizeObserver=class{observe(){}disconnect(){}};
  const dispatch=(action,args)=>{calls.push({action,args});return new Promise((resolve,reject)=>{pending={resolve,reject,args,action}})};
- const render=()=>React.createElement(Component,{state:model,dispatch});
+ const render=()=>React.createElement(Component,{state:model,dispatch,compact});
  const findTab=id=>root.root.findAllByType('button').find(n=>id==='overview'?n.props['aria-label']==='Chat overview':n.props['data-artifact-id']===id);
- const key=async(value)=>{listeners.get('keydown')?.();await act(async()=>root.root.findByProps({role:'tablist'}).props.onKeyDown({key:value,target:focused,preventDefault(){}}))};
+ const key=async(value)=>{listeners.get('keydown')?.();await act(async()=>root.root.findByProps({className:'a-canvas-navigation'}).props.onKeyDown({key:value,target:focused,preventDefault(){}}))};
  const choose=async(id,modal=false)=>{
   if(modal){await act(async()=>root.root.findByProps({'aria-haspopup':'dialog'}).props.onClick());listeners.get('pointerdown')?.();
    await act(async()=>{root.root.findAllByType('li').find(n=>n.findAllByType('strong')[0].children.join('')==='Document '+id).findAllByType('button')[0].props.onClick()});
@@ -113,7 +113,7 @@ async function controlledTabs(Component,run){
  })};
  const flush=async()=>{await act(async()=>{while(frames.length)frames.shift()()})};
  try{
-  await act(async()=>{root=create(render(),{createNodeMock:element=>element.type==='dialog'?dialog:element.props.className==='a-canvas-document-tabs'?strip:element.props.role==='tablist'?tabs:element.props['aria-haspopup']==='dialog'?trigger:null})});
+  await act(async()=>{root=create(render(),{createNodeMock:element=>element.type==='dialog'?dialog:element.props.className==='a-canvas-document-tabs'?strip:element.props.className==='a-canvas-navigation'?tabs:element.props['aria-haspopup']==='dialog'?trigger:null})});
   await run({choose,remove,openList,key,settle,flush,calls,events,dialog,node,findTab,
    closeButton:id=>root.root.findByProps({className:'a-canvas-document-tabs'}).findByProps({'aria-label':'Close tab Document '+id}),
    async clickClose(id){listeners.get('pointerdown')?.();await act(async()=>{root.root.findByProps({className:'a-canvas-document-tabs'}).findByProps({'aria-label':'Close tab Document '+id}).props.onClick()})},
@@ -121,9 +121,32 @@ async function controlledTabs(Component,run){
    async reject(){await act(async()=>pending.reject(Error('Close failed')))},
    async scope(sessionId,workspaceId=model.selectedWorkspaceId){await act(async()=>{model={...model,selectedSessionId:sessionId,selectedWorkspaceId:workspaceId};root.update(render())})},
    async hide(){await act(async()=>{model={...model,canvas:{...model.canvas,open:false}};root.update(render())})},
-   async cancel(){await act(async()=>root.root.findByType('dialog').props.onCancel({preventDefault(){}}))}});
+   async cancel(){await act(async()=>root.root.findByType('dialog').props.onCancel({preventDefault(){}}))},
+   get root(){return root},get trigger(){return trigger},get strip(){return strip},
+   async wheel(patch={}){let prevented=false;await act(async()=>stripListeners.get('wheel')({...{deltaX:0,deltaY:60,deltaMode:0,ctrlKey:false,metaKey:false},...patch,preventDefault(){prevented=true}}));return prevented},
+   async scrollRight(){await act(async()=>root.root.findByProps({'aria-label':'Scroll document tabs right'}).props.onClick())},
+   async closeCurrent(){listeners.get('pointerdown')?.();await act(async()=>root.root.findByProps({className:'a-icon a-canvas-close-current'}).props.onClick())}
+  });
  }finally{if(root)await act(async()=>root.unmount());for(const key of keys)if(previous[key]===undefined)delete globalThis[key];else globalThis[key]=previous[key]}
 }
+test('mouse arrows and strip wheel scroll overflow without selecting; zoom and trackpad remain native',()=>controlledTabs(CanvasTabs,async h=>{
+ const before=h.strip.scrollLeft;await h.scrollRight();assert.ok(h.strip.scrollLeft>before);assert.deepEqual(h.calls,[]);
+ h.strip.scrollLeft=0;assert.equal(await h.wheel(),true);assert.equal(h.strip.scrollLeft,60);
+ assert.equal(await h.wheel({ctrlKey:true}),false);assert.equal(await h.wheel({metaKey:true}),false);
+ assert.equal(await h.wheel({deltaX:90}),false);assert.equal(h.strip.scrollLeft,60);
+ h.strip.scrollLeft=600;assert.equal(await h.wheel(),false,'at boundary normal content wheel is not consumed');
+ assert.deepEqual(h.calls,[]);
+}));
+test('Compact keeps hidden tab DOM but excludes it from keyboard navigation and restores stable picker focus',()=>controlledTabs(CanvasTabs,async h=>{
+ const strip=h.root.root.findByProps({className:'a-canvas-document-tabs'});assert.equal(strip.props.hidden,true);
+ assert.equal(h.root.root.findByProps({className:'a-canvas-navigation'}).props.role,'group');
+ assert.equal(h.findTab('overview').props.tabIndex,0,'Overview is reachable even with a selected document');
+ h.node('overview').focus();await h.key('ArrowRight');assert.equal(h.focused,h.node('overview'),'arrows cannot focus hidden tabs');
+ await h.choose('a',true);await h.settle();await h.flush();assert.equal(h.focused,h.trigger);
+ await h.closeCurrent();await h.settle();await h.flush();assert.equal(h.focused,h.trigger);
+ await h.closeCurrent();await h.settle();await h.flush();assert.equal(h.focused,h.trigger,'last close has a stable focus destination');
+ assert.equal(h.root.root.findAllByProps({className:'a-icon a-canvas-close-current'}).length,0);
+},{compact:true}));
 const retainsNewerHome=async Component=>controlledTabs(Component,async h=>{
  await h.choose('b');await h.key('Home');await h.settle();await h.flush();
  assert.equal(h.focused,h.node('overview'),'late acceptance must not steal newer Home focus');

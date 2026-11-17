@@ -17,6 +17,7 @@ export function CanvasTabs({state,act,dispatch=act,overview=false,onOverview,com
  const rows=chatArtifacts(state).filter(r=>r.tabOpen),strip=useRef(null),tabs=useRef(null),dialog=useRef(null),trigger=useRef(null);
  const [scrolled,setScrolled]=useState(false),[open,setOpen]=useState(false),[query,setQuery]=useState(''),[error,setError]=useState(''),[pending,setPending]=useState(false);
  const [focusId,setFocusId]=useState(null),selectedId=overview?'overview':state.canvas?.id;
+ const compactRef=useRef(compact);compactRef.current=compact;
  const labels=canvasTabLabels(rows),active=rows.find(row=>row.id===selectedId);
  const [edges,setEdges]=useState({left:false,right:false});
  const updateEdges=()=>{const node=strip.current;if(node)setEdges({left:node.scrollLeft>1,right:node.scrollLeft<node.scrollWidth-node.clientWidth-1})};
@@ -71,7 +72,7 @@ export function CanvasTabs({state,act,dispatch=act,overview=false,onOverview,com
     // The receipt is accepted; its React state commit may follow this frame.
     // The requested tab already exists. Do not gate focus on that later commit.
     if(focusIntent.current!==intent||latest.selectedSessionId!==sessionId||dialog.current?.open||!latest.canvas?.open)return;
-    if(compact)trigger.current?.focus({preventScroll:true});
+    if(compactRef.current)trigger.current?.focus({preventScroll:true});
     else{reveal(row.id);[...(strip.current?.querySelectorAll('[role=tab]')||[])].find(el=>el.dataset.artifactId===row.id)?.focus({preventScroll:true})}
    });
   }catch(err){setError(err.message)}finally{setPending(false)}
@@ -90,7 +91,7 @@ export function CanvasTabs({state,act,dispatch=act,overview=false,onOverview,com
    if(result?.accepted)requestAnimationFrame(()=>{
     if(!ownsInteraction())return;
     if(fromDialog)dialog.current?.querySelector('input,button')?.focus({preventScroll:true});
-    else if(compact)trigger.current?.focus({preventScroll:true});
+    else if(compactRef.current)trigger.current?.focus({preventScroll:true});
     else tabs.current?.querySelector('[aria-selected=true]')?.focus({preventScroll:true});
    });
    else setError(String(result?.error?.message||result?.error||'The tab was not closed. Your current view was kept.'));
