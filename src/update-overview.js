@@ -95,7 +95,8 @@ export function updateOverview(updates={},options={},attentionItems=[]){
  // cannot override it or independently classify the installation.
  const current=updates.currentStatus;
  // The host starts no component update before an AI connection exists: an
- // install request changes nothing. The page offers the connection instead.
+ // install request starts nothing (the host only keeps the request). The page
+ // offers the connection instead.
  const connect=current?.action==='connect';
  const result={...overview,...(connect?{installable:false}:{}),connect,attention,application:{state:appState,label:appLabels[appState]||appState,detail:appDetail},notice};
  if(current&&(!overview.active&&!overview.pending||current.actionRequired||connect)){
