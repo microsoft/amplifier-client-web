@@ -41,6 +41,17 @@ if(process.argv.includes('--preflight')){
   await demand(true);await expect(ghost).toBeVisible();assert.equal((await requests()).length,1,'Idle visible focused visit automatically suggests');
   const attemptA=(await requests())[0].args.requestId;
   assert.equal((await snapshot()).draft,'');assert.equal((await snapshot()).doc.content[0].content,undefined);
+  for(const departure of ['beginDraft','leaveChatSurface']){
+   const beforeStatus=(await calls('session.suggestion.status')).length;
+   await page.evaluate(method=>window.suggestionFixture[method](),departure);await expect(ghost).toHaveCount(0);
+   if(departure==='beginDraft'){
+    const pending=await snapshot();assert.equal(pending.selectedSessionId,'one');assert.equal(pending.navigationPending,true);assert.equal(pending.draftNavigationPending,true);
+    await page.evaluate(()=>window.suggestionFixture.settleDraft());assert.equal((await snapshot()).selectedSessionId,null);
+   }
+   await page.evaluate(()=>window.suggestionFixture.returnFromDeparture());await expect(ghost).toBeVisible();
+   const reads=await calls('session.suggestion.status');assert.equal(reads.length,beforeStatus+1);assert.equal(reads.at(-1).args.requestId,attemptA);
+   assert.equal((await requests()).length,1);assert.equal((await calls('session.suggestion.cancel')).length,0);
+  }
   await page.evaluate(()=>window.suggestionFixture.select('two'));await expect(ghost).toBeVisible();await expect.poll(async()=>(await requests()).length).toBe(2);
   assert.deepEqual((await requests()).map(row=>row.args.sessionId),['one','two'],'Only the currently selected chat requests');
   await page.evaluate(()=>window.suggestionFixture.select('one'));await expect(ghost).toBeVisible();assert.equal((await requests()).length,2);
@@ -51,7 +62,13 @@ if(process.argv.includes('--preflight')){
   await expect.poll(async()=>(await snapshot()).doc.content[0].content?.[0]?.text).toBe('**literal** @participant /not-a-command');
   await editor.press('ControlOrMeta+z');await expect.poll(async()=>(await snapshot()).draft).toBe('');await expect(ghost).toHaveCount(0);
   await demand(false);await demand(true);await expect(ghost).toHaveCount(0);assert.equal((await requests()).length,2,'Acceptance/Undo cannot re-infer or restore');
-  report.visibleVisits={onlySelected:true,hiddenZero:true,unfocusedZero:true,readyStatusOnly:true,readyNotCancelled:true,acceptUndoSpent:true};
+  report.visibleVisits={onlySelected:true,hiddenZero:true,unfocusedZero:true,readyStatusOnly:true,readyNotCancelled:true,beginDraftSameSelectionPreserved:true,nonChatSurfacePreserved:true,acceptUndoSpent:true};
+  await response();await page.evaluate(()=>window.suggestionFixture.holdStatus(true));await editor.focus();await editor.press('Tab');await expect(ghost).toHaveAttribute('aria-busy','true');
+  const beforeAcceptanceDeparture=(await requests()).length;
+  await page.evaluate(()=>window.suggestionFixture.beginDraft());await expect(ghost).toHaveCount(0);
+  await page.evaluate(()=>window.suggestionFixture.releaseStatus());await expect(page.locator('[data-suggestion-validating=true]')).toHaveCount(0);
+  assert.equal((await snapshot()).draft,'');assert.deepEqual((await snapshot()).sends,[]);
+  await page.evaluate(()=>window.suggestionFixture.returnFromDeparture());await expect(ghost).toBeVisible();assert.equal((await requests()).length,beforeAcceptanceDeparture);await dismiss();
   for(const gesture of ['click','tap']){await response();await ghost[gesture]();await expect.poll(async()=>(await snapshot()).draft.length).toBeGreaterThan(0);await editor.press('ControlOrMeta+z');await expect.poll(async()=>(await snapshot()).draft).toBe('')}
   await response();await dismiss();const beforeDismiss=(await requests()).length;await demand(false);await demand(true);await expect(ghost).toHaveCount(0);assert.equal((await requests()).length,beforeDismiss);
   await response();await editor.dispatchEvent('compositionstart',{data:''});await expect(ghost).toHaveCount(0);await editor.dispatchEvent('compositionend',{data:''});await expect(ghost).toHaveCount(0);
@@ -78,6 +95,10 @@ if(process.argv.includes('--preflight')){
   await demand(false);await expect.poll(async()=>(await calls('session.suggestion.cancel')).filter(row=>row.args.requestId===pendingAttempt).length).toBe(1);
   await page.evaluate(()=>window.suggestionFixture.setPending(false));await demand(true);await expect(ghost).toHaveCount(0);
   const afterPending=(await requests()).length;await demand(false);await demand(true);assert.equal((await requests()).length,afterPending,'Cancelled pending stays spent');
+  await page.evaluate(()=>{window.suggestionFixture.setPending(true);window.suggestionFixture.response()});
+  await expect.poll(async()=>(await requests()).length).toBe(afterPending+1);const pendingDeparture=(await requests()).at(-1).args.requestId;
+  await page.evaluate(()=>window.suggestionFixture.beginDraft());await expect.poll(async()=>(await calls('session.suggestion.cancel')).filter(row=>row.args.requestId===pendingDeparture).length).toBe(1);
+  await page.evaluate(()=>{window.suggestionFixture.setPending(false);window.suggestionFixture.returnFromDeparture()});await expect(ghost).toHaveCount(0);assert.equal((await requests()).length,afterPending+1);
   await response();await page.evaluate(()=>window.suggestionFixture.holdStatus(true));await editor.focus();await editor.press('Tab');await expect(ghost).toHaveAttribute('aria-busy','true');
   const statuses=(await calls('session.suggestion.status')).length;await editor.press('Tab');await editor.press('Enter');await page.locator('form').evaluate(node=>node.requestSubmit());assert.equal((await calls('session.suggestion.status')).length,statuses);
   await editor.pressSequentially('my newer draft');await page.evaluate(()=>window.suggestionFixture.releaseStatus());await expect(page.locator('[data-suggestion-validating=true]')).toHaveCount(0);
@@ -87,7 +108,7 @@ if(process.argv.includes('--preflight')){
   const beforeNoChat=(await requests()).length;await page.evaluate(()=>window.suggestionFixture.newChat());await expect(ghost).toHaveCount(0);assert.equal((await requests()).length,beforeNoChat);
   await page.evaluate(()=>{window.suggestionFixture.setDraft('saved draft');window.suggestionFixture.reopen()});await expect(ghost).toHaveCount(0);assert.equal((await requests()).length,beforeNoChat,'Visit does not overwrite or request from a nonempty draft');
   await page.evaluate(()=>window.suggestionFixture.setDraft(''));
-  report.acceptance={Tab:true,click:true,touch:true,Undo:true,Escape:true,IME:true,hiddenCompletionZero:true,metadataSameAttemptPolled:true,earlierEditInvalidatesNoReplacement:true,pendingCancelledDurably:true,repeatedTabReturnSubmitNoSend:true,newerDraftPreserved:true,serverOnlyStaleRejected:true,noChat:true};
+  report.acceptance={Tab:true,click:true,touch:true,Undo:true,Escape:true,IME:true,hiddenCompletionZero:true,metadataSameAttemptPolled:true,earlierEditInvalidatesNoReplacement:true,pendingCancelledDurably:true,heldAcceptanceDepartureNoInsert:true,repeatedTabReturnSubmitNoSend:true,newerDraftPreserved:true,serverOnlyStaleRejected:true,noChat:true};
   await expect(page.getByLabel('Suggestion model',{exact:true})).toBeVisible();
   assert.ok((await calls('providers.models')).length>=1,'Uses ordinary saved-connection model discovery');
   const model=page.getByLabel('Suggestion model',{exact:true});await model.selectOption('other-model');

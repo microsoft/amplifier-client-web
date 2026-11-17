@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import React,{act as renderAct} from 'react';
 import {create} from 'react-test-renderer';
 import {createServer} from 'vite';
+import {createConversationNavigation} from '../src/conversation-navigation.js';
 
 const server=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
 const {useTranscriptSuggestion}=await server.ssrLoadModule('/src/use-transcript-suggestion.jsx');
@@ -12,16 +13,18 @@ const {suggestionScope}=await server.ssrLoadModule('/src/transcript-suggestion.j
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 test.after(()=>server.close());
 
-async function scenario({wrongReady=false}={}){
+async function scenario({wrongReady=false,ready=false}={}){
  const originals={window:globalThis.window,document:globalThis.document,sessionStorage:globalThis.sessionStorage};
  globalThis.window=new EventTarget();globalThis.document=Object.assign(new EventTarget(),{hidden:false,hasFocus:()=>true});globalThis.sessionStorage={getItem:()=> 'true'};
  const state={client:{hostInstanceId:crypto.randomUUID(),historyScope:'principal'},selectedSessionId:'s',view:{},sessions:[{id:'s',status:'idle',messages:[{id:'a',role:'assistant',text:'Done'}]}]};
- publishSuggestionModels(suggestionScope(state),{suggestionModels:{enabled:true,revision:'config'},providers:[]},0);
- const calls=[];let recipient='one',blocked=false,root;
- const act=async(action,args)=>{calls.push({action,args});return {accepted:true,result:{...args,requestId:wrongReady?'wrong':args.requestId,status:wrongReady?'ready':'pending',suggestion:wrongReady?'Try this':null,configRevision:'config',sourceKey:'source'}}};
- function Probe(){useTranscriptSuggestion({state,readState:()=>state,act,recipient,blocked,canUse:()=>true});return null}
+ let config={enabled:true,revision:'config'};
+ const configure=patch=>{config={...config,...patch};publishSuggestionModels(suggestionScope(state),{suggestionModels:config,providers:[]},0)};
+ configure({});
+ const calls=[];let recipient='one',blocked=false,root,suggestion;
+ const act=async(action,args)=>{calls.push({action,args});return {accepted:true,result:{...args,requestId:wrongReady?'wrong':args.requestId,status:wrongReady||ready?'ready':'pending',suggestion:wrongReady||ready?'Try this':null,configRevision:'config',sourceKey:'source'}}};
+ function Probe(){suggestion=useTranscriptSuggestion({state,readState:()=>state,act,recipient,blocked,canUse:()=>true});return null}
  const render=()=>renderAct(async()=>{if(root)root.update(React.createElement(Probe));else root=create(React.createElement(Probe))});
- return {calls,render,recipient:next=>{recipient=next},block:()=>{blocked=true},async close(){await renderAct(async()=>root?.unmount());Object.assign(globalThis,originals)}};
+ return {calls,state,get ghost(){return suggestion?.ghost},render,configure:patch=>renderAct(async()=>configure(patch)),recipient:next=>{recipient=next},block:()=>{blocked=true},async close(){await renderAct(async()=>root?.unmount());Object.assign(globalThis,originals)}};
 }
 test('changing only recipient cancels the original pending attempt immediately',async()=>{
  const h=await scenario();try{
@@ -41,4 +44,55 @@ test('unverified ready identity cannot suppress cancellation of the actual attem
 test('production admission includes the same shell and appearance render gates as boot',async()=>{
  const source=await readFile(new URL('../src/main.jsx',import.meta.url),'utf8');
  assert.match(source,/const suggestionBlocked=!!\(!shell\.ready\|\|!hasAppearanceIdentity\(state\?\.appearance\)\|\|state\?\.appearance\?\.availability==='failed'/);
+});
+test('ready survives actual beginDraft same-session departure then returns by exact status only',async()=>{
+ const h=await scenario({ready:true});try{
+  await h.render();const original=h.calls.find(row=>row.action==='session.suggestion.request').args,old=h.ghost;
+  assert.ok(old);
+  const nav=createConversationNavigation(),token=nav.beginDraft(),departed=nav.apply(h.state);
+  assert.equal(departed.selectedSessionId,h.state.selectedSessionId);
+  assert.equal(departed.navigationPending,true);assert.equal(departed.draftNavigationPending,true);
+  Object.assign(h.state,departed);await h.render();assert.equal(h.ghost,null);assert.equal(old.available(),false);
+  nav.settle(token);delete h.state.navigationPending;delete h.state.draftNavigationPending;await h.render();
+  assert.ok(h.ghost);assert.notEqual(h.ghost,old);assert.equal(old.available(),false);assert.equal(h.ghost.expiresAt,old.expiresAt);
+  assert.deepEqual(h.calls.filter(row=>row.action==='session.suggestion.status').map(row=>row.args),[{sessionId:original.sessionId,requestId:original.requestId}]);
+  assert.equal(h.calls.filter(row=>row.action==='session.suggestion.request').length,1);
+  assert.equal(h.calls.filter(row=>row.action==='session.suggestion.cancel').length,0);
+ }finally{await h.close()}
+});
+test('ready survives same-session non-chat surface departure without paid replacement',async()=>{
+ const h=await scenario({ready:true});try{
+  await h.render();h.state.view.workSurface='home';await h.render();assert.equal(h.ghost,null);
+  h.state.view.workSurface='chat';await h.render();assert.ok(h.ghost);
+  assert.equal(h.calls.filter(row=>row.action==='session.suggestion.request').length,1);
+  assert.equal(h.calls.filter(row=>row.action==='session.suggestion.status').length,1);
+ }finally{await h.close()}
+});
+test('pending beginDraft departure cancels and return never resumes inference',async()=>{
+ const h=await scenario();try{
+  await h.render();const original=h.calls.find(row=>row.action==='session.suggestion.request').args;
+  const nav=createConversationNavigation();nav.beginDraft();Object.assign(h.state,nav.apply(h.state));await h.render();
+  assert.equal(h.calls.filter(row=>row.action==='session.suggestion.cancel'&&row.args.requestId===original.requestId).length,1);
+  delete h.state.navigationPending;delete h.state.draftNavigationPending;await h.render();
+  assert.equal(h.ghost,null);assert.equal(h.calls.filter(row=>row.action==='session.suggestion.request').length,1);
+  assert.equal(h.calls.filter(row=>row.action==='session.suggestion.status').length,0);
+ }finally{await h.close()}
+});
+test('departure does not preserve ready through editing, Stop, disablement or changed source',async()=>{
+ for(const mutate of [
+  async h=>{h.state.view.draft='typed'},
+  async h=>{h.state.sessions[0].status='stopped'},
+  async h=>h.configure({enabled:false}),
+  async h=>{h.state.sessions[0].messages[0].text='Edited'},
+  async h=>{h.block()},
+ ]){
+  const h=await scenario({ready:true});try{
+   await h.render();h.state.navigationPending=true;h.state.draftNavigationPending=true;await h.render();assert.equal(h.ghost,null);
+   await mutate(h);await h.render();
+   h.state.view.draft='';h.state.sessions[0].status='idle';await h.configure({enabled:true});
+   delete h.state.navigationPending;delete h.state.draftNavigationPending;await h.render();
+   assert.equal(h.ghost,null);assert.equal(h.calls.filter(row=>row.action==='session.suggestion.status').length,0);
+   assert.equal(h.calls.filter(row=>row.action==='session.suggestion.request').length,1);
+  }finally{await h.close()}
+ }
 });

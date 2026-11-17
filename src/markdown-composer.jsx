@@ -26,7 +26,7 @@ export function MarkdownComposer({value,document:documentValue,onChange,onSend,o
   for(let parent=node;parent;parent=parent.parentElement){const style=getComputedStyle(parent);if(style.visibility==='hidden'||style.visibility==='collapse'||style.opacity==='0')return false}
   return true;
  };
- const invalidateSuggestion=()=>{epoch.current++;setEditorEpoch(epoch.current);latest.current.onSuggestionSupersede?.()};
+ const invalidateSuggestion=reason=>{epoch.current++;setEditorEpoch(epoch.current);latest.current.onSuggestionSupersede?.(reason)};
  const acceptSuggestion=(candidate,expectedEpoch)=>{
   const view=editor.current;
   if(acceptance.current)return true;
@@ -168,7 +168,7 @@ export function MarkdownComposer({value,document:documentValue,onChange,onSend,o
  },[]);
  useLayoutEffect(()=>{
   const view=editor.current;if(!view)return;
-  if(disabled||readOnly)invalidateSuggestion();
+  if(disabled||readOnly)invalidateSuggestion('editor-uneditable');
   view.setProps({editable:()=>!disabled&&!readOnly,attributes:{...view.props.attributes,'aria-describedby':returnHelpId}});
   view.dom.setAttribute('aria-disabled',String(disabled));view.dom.setAttribute('aria-readonly',String(readOnly));view.dom.setAttribute('aria-busy',String(readOnly));
   // Do not rebuild selection or undo history for our own autosave echoes.

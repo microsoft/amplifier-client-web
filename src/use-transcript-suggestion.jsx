@@ -18,7 +18,11 @@ export function useTranscriptSuggestion({state,readState,act,blocked,canUse,reci
  const owner=controller.current,witness=suggestionWitness(state),eligible=enabled&&visible&&focused&&connected&&config?.enabled===true&&!blocked&&suggestionEligible(state);
  if(previousRecipient.current!==recipient){owner.invalidate();previousRecipient.current=recipient}
  const trigger=JSON.stringify([witness?.key,config?.revision,recipient]);
- owner.observe(state,config?.revision,eligible,{retainReady:!visible||!focused,recipient});
+ const departing=state?.navigationPending||state?.draftNavigationPending||state?.view?.workSurface&&state.view.workSurface!=='chat';
+ // Navigation can leave the old selected ID mounted until acknowledgement.
+ // Suspend its ready preview, but never treat edits/disablement/Stop as leaving.
+ const retainReady=enabled&&connected&&config?.enabled===true&&!blocked&&suggestionEligible(state,{ignoreDeparture:true})&&(!visible||!focused||departing);
+ owner.observe(state,config?.revision,eligible,{retainReady,recipient});
  useEffect(()=>{
   const hide=()=>{if(document.hidden)owner.suspend();setVisible(!document.hidden)};
   const leave=()=>owner.suspend();
@@ -56,5 +60,5 @@ export function useTranscriptSuggestion({state,readState,act,blocked,canUse,reci
  },[owner,trigger,eligible,config?.revision,act]);
  const ghost=owner.candidate();
  useEffect(()=>{if(!ghost)return;const timer=setTimeout(()=>refresh(value=>value+1),Math.max(0,ghost.expiresAt-Date.now()+1));return()=>clearTimeout(timer)},[ghost?.expiresAt]);
- return {ghost,owner,supersede:owner.invalidate};
+ return {ghost,owner,supersede:reason=>reason==='editor-uneditable'&&retainReady?owner.suspend():owner.invalidate()};
 }

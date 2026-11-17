@@ -4,6 +4,7 @@ import {createRoot} from 'react-dom/client';
 import {MarkdownComposer} from '../../src/markdown-composer.jsx';
 import {useTranscriptSuggestion} from '../../src/use-transcript-suggestion.jsx';
 import {SuggestionSettings,SuggestionPromptSettings} from '../../src/suggestion-model-settings.jsx';
+import {createConversationNavigation} from '../../src/conversation-navigation.js';
 import '../../src/reference.css';
 import '../../src/transcript-suggestion.css';
 
@@ -15,7 +16,8 @@ function App(){
  const attempts=useRef(new Map()),source=useRef(1),held=useRef([]),holdStatus=useRef(false),holdModels=useRef(false),modelReads=useRef([]),stagedId=useRef(null);
  const pendingMetadata=useRef(false);
  const failSave=useRef(false);
- live.current={...state,view:{...state.view,draft}};
+ const navigation=useRef(createConversationNavigation()),navigationToken=useRef(null);
+ live.current=navigation.current.apply({...state,view:{...state.view,draft}});
  const act=useRef(async(action,args,meta={})=>{
   if(meta.suggestionIsCurrent&&!meta.suggestionIsCurrent())return {accepted:false};
   calls.current.push({action,args});
@@ -47,6 +49,10 @@ function App(){
  useLayoutEffect(()=>{
   window.suggestionFixture={
    setProps,setBlocked,setState,setConnected,setDraft,setPending:value=>{pending.current=value},select:id=>setState(current=>({...current,selectedSessionId:id})),failSave:value=>{failSave.current=value},
+   beginDraft(){navigationToken.current=navigation.current.beginDraft();setState(current=>({...current}))},
+   settleDraft(){navigation.current.settle(navigationToken.current);setState(current=>({...current,selectedSessionId:null}))},
+   returnFromDeparture(){navigation.current.settle(navigationToken.current);setState(current=>({...current,selectedSessionId:'one',view:{...current.view,workSurface:'chat'}}))},
+   leaveChatSurface:()=>setState(current=>({...current,view:{...current.view,workSurface:'home'}})),
    demand({visible=true,focused=true}){window.fixtureDemand={visible,focused};document.dispatchEvent(new Event('visibilitychange'));window.dispatchEvent(new Event(focused?'focus':'blur'))},
    pendingMetadata:value=>{pendingMetadata.current=value},
    refreshMetadata:()=>setState(current=>({...current,sessions:current.sessions.map(session=>({...session,messageWindow:{...session.messageWindow,revision:Date.now(),beforeCursor:'bookkeeping-only'},messages:session.messages.map(row=>({...row,updatedAt:Date.now()}))}))})),
@@ -66,7 +72,7 @@ function App(){
    newChat:()=>setState(current=>({...current,selectedSessionId:null})),
    reopen:()=>setState(current=>({...current,selectedSessionId:'one'})),
    configChange:()=>{selection.current={...selection.current,revision:'config-external',model:'other-model'};setState(current=>({...current,configurationRevision:(current.configurationRevision||0)+1}))},
-   snapshot:()=>({draft:live.current.view.draft,doc:quoteApi.current.capture().doc.toJSON(),sends:sends.current,calls:calls.current}),
+   snapshot:()=>({draft:live.current.view.draft,selectedSessionId:live.current.selectedSessionId,navigationPending:!!live.current.navigationPending,draftNavigationPending:!!live.current.draftNavigationPending,doc:quoteApi.current.capture().doc.toJSON(),sends:sends.current,calls:calls.current}),
    response(){
     const id=++sequence.current;
     setState(current=>({...current,sessions:[{...current.sessions[0],status:'working',messages:[...current.sessions[0].messages,{id:'user'+id,role:'user',text:'Next'}]}]}));
@@ -78,7 +84,7 @@ function App(){
   };
  },[]);
  return <><form onSubmit={event=>{event.preventDefault();if(!quoteApi.current?.suggestionValidating())sends.current.push('form submit')}}>
-  <MarkdownComposer value={draft} editorRef={editorRef} quoteApi={quoteApi} onChange={text=>{suggestion.supersede();setDraft(text)}} onSend={()=>{if(!quoteApi.current?.suggestionValidating())sends.current.push(draft)}} onFiles={()=>{}} suggestion={suggestion.ghost} onSuggestionSupersede={suggestion.supersede} onComposing={setComposing} {...props}/>
+  <MarkdownComposer value={draft} readOnly={!!live.current.draftNavigationPending} editorRef={editorRef} quoteApi={quoteApi} onChange={text=>{suggestion.supersede();setDraft(text)}} onSend={()=>{if(!quoteApi.current?.suggestionValidating())sends.current.push(draft)}} onFiles={()=>{}} suggestion={suggestion.ghost} onSuggestionSupersede={suggestion.supersede} onComposing={setComposing} {...props}/>
   <button type="submit">Send fixture</button>
  </form><SuggestionSettings state={state} act={act} navigate={()=>setAdvanced(true)}/><button type="button" onClick={()=>setAdvanced(true)}>Advanced settings</button>{advanced&&<SuggestionPromptSettings state={state} act={act} navigate={()=>{}}/>}</>;
 }

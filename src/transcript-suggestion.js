@@ -13,9 +13,9 @@ export function suggestionScope(state){
 export const plainSuggestionTab=event=>event.key==='Tab'&&!event.shiftKey&&!event.ctrlKey&&!event.metaKey&&!event.altKey&&!event.isComposing&&event.keyCode!==229;
 export const suggestionOutboxPending=(entries,scope,sessionId)=>entries.some(row=>!row.closed&&row.scope===scope&&row.sessionId===(sessionId??null));
 
-export function suggestionEligible(state){
+export function suggestionEligible(state,{ignoreDeparture=false}={}){
  const session=state?.sessions?.find(row=>row.id===state.selectedSessionId),view=state?.view||{};
- return !!session&&(!view.workSurface||view.workSurface==='chat')&&!state.navigationPending&&!state.draftNavigationPending&&!view.panel&&!view.settingsCanvas&&!view.messageEdit&&!view.messageReply&&!view.draft&&!view.draftDocument?.segments?.length&&
+ return !!session&&(ignoreDeparture||(!view.workSurface||view.workSurface==='chat')&&!state.navigationPending&&!state.draftNavigationPending)&&!view.panel&&!view.settingsCanvas&&!view.messageEdit&&!view.messageReply&&!view.draft&&!view.draftDocument?.segments?.length&&
   !(session.draftAttachments||state.draftAttachments)?.length&&!session.historyLoading&&!session.historyReadOnlyReason&&session.workspaceAvailable!==false&&!ownershipState(session).blocked&&
   !['starting','working','running','busy','stopping','stopped','error','failed'].includes(session.status)&&!(session.workers||[]).some(row=>['queued','starting','working','running','stopping'].includes(row.status));
 }
