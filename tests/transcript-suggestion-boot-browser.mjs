@@ -8,7 +8,7 @@ import {createShellHttpFixture,installFixtureEvents} from './shell-http-fixture.
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const output=process.env.AMPLIFIER_TEST_ARTIFACTS||'/tmp/transcript-suggestion-boot';
-let state={revision:1,settings:{workspace:'/fixture'},runtime:{available:true},view:{setupJourney:'done',scheme:'system',navPinned:true},sessions:[],workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:null,selectedWorkspaceId:'project',setup:{providers:[],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false},attention:{items:[],sessions:{}}};
+let state={revision:1,settings:{workspace:'/fixture'},runtime:{available:true},view:{setupJourney:'done',scheme:'system',navPinned:true},sessions:[],workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:null,selectedWorkspaceId:'project',setup:{providers:[{id:'fixture',module:'provider-fixture',enabled:true,config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false},attention:{items:[],sessions:{}}};
 const shell=createShellHttpFixture(()=>state),calls=[],errors=[],external=[],reads=[];
 const snapshot=()=>{const next=shell.state();return {...next,client:{...next.client,historyScope:'boot-principal'}}};
 const suggestionActions=()=>calls.filter(row=>row.action.startsWith('session.suggestion.'));
@@ -46,6 +46,7 @@ try{
  await page.waitForFunction(()=>window.amplifier.getState().client?.historyScope==='boot-principal');
  await expect.poll(()=>calls.filter(row=>row.action==='providers.suggestionModels').length).toBe(1);
  assert.equal(await page.evaluate(()=>window.amplifier.getState().selectedSessionId),null);
+ assert.equal(await page.evaluate(()=>window.amplifier.getState().view?.panel??null),null,'Normal chat boot is not masked by a settings panel');
  assert.deepEqual(suggestionActions(),[]);assert.deepEqual(writes(),[]);
  // Hydration can omit selection, then normalize it to null. Neither is a source.
  delete state.selectedSessionId;state.revision++;await page.evaluate(next=>window.emitFixtureState(next),snapshot());
