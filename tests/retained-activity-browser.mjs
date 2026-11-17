@@ -29,7 +29,8 @@ function decorate(value){
   context.navigationActivityById=activities;
   for(const name of ['pinnedNavigation','recentNavigation']){
    if(!entry.resources[name])continue;
-   if(pending){delete entry.resources[name];entry.pending[name]={status:'pending'};continue}
+   if(pending)entry.pending[name]={status:'pending'};
+   if(pending==='absent'){delete entry.resources[name];continue}
    if(name==='pinnedNavigation')entry.resources[name].value={pinnedNavigation:{
     items:rows.map(row=>({id:'session:'+row.id,kind:'session',row})),total:rows.length,pages:1}};
    else{
@@ -83,7 +84,7 @@ try{
   return {top:r.top,height:r.height,scrollTop:scroll.scrollTop,rows:scroll.querySelectorAll('[data-session-id]').length};
  });
  const before=await geometry();assert.ok(before.scrollTop>0,'The reading rail is actually scrolled');
- pending=true;activities={};state.selectedSessionId='b';await emit();
+ pending='absent';activities={};state.selectedSessionId='b';await emit();
  await expect(status(pin)).toHaveAttribute('aria-label','Updating status…');
  await expect(status(recent)).toHaveAttribute('aria-label','Updating status…');
  const retained=await geometry();
@@ -97,12 +98,21 @@ try{
  await expect(detailStatus).toHaveText('Updating status…');
  await page.screenshot({path:artifacts+'/updating.png'});
  proof.checkpoints.push({label:'uncovered retained row + open details',before,retained});
- for(const current of [working,answer,{kind:'attention',label:'Check answer delivery'},{kind:'idle',label:'Idle'}]){
-  activities={a:current};await emit();
-  await expect(status(pin)).toHaveAttribute('aria-label',current.label);
-  await expect(status(recent)).toHaveAttribute('aria-label',current.label);
-  await expect(detailStatus).toHaveText(current.label);
-  proof.checkpoints.push({label:current.label,openDetails:true});
+ for(const retention of ['absent','present']){
+  const before=await geometry();
+  pending=retention;activities={};await emit();
+  await expect(status(pin)).toHaveAttribute('aria-label','Updating status…');
+  await expect(status(recent)).toHaveAttribute('aria-label','Updating status…');
+  await expect(detailStatus).toHaveText('Updating status…');
+  assert.deepEqual(await geometry(),before,'Server-present and client-only reading geometry remain unchanged');
+  proof.checkpoints.push({label:retention+' pending page, uncovered owner',openDetails:true});
+  for(const current of [working,answer,{kind:'attention',label:'Check answer delivery'},{kind:'idle',label:'Idle'}]){
+   activities={a:current};await emit();
+   await expect(status(pin)).toHaveAttribute('aria-label',current.label);
+   await expect(status(recent)).toHaveAttribute('aria-label',current.label);
+   await expect(detailStatus).toHaveText(current.label);
+   proof.checkpoints.push({label:current.label,retention,openDetails:true});
+  }
  }
  activities={};await emit();await expect(detailStatus).toHaveText('Updating status…');
  await expect(status(pin)).toHaveAttribute('data-kind','updating');

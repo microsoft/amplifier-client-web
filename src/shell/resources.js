@@ -46,10 +46,8 @@ function readingResources(bootstrap,instance,prior,snapshot,wanted){
  return retained;
 }
 
-// Reading rows never grant resource coverage or satisfy a page wait. Only the
-// quiet sidebar renders them; main search/workspace results remain scope-fenced.
-export function sidebarReadingSnapshot(snapshot){
- const reading=Object.assign({},...Object.values(snapshot.navigationResourceRetained||{}));
+function readingActivity(fields){
+ const reading={...fields};
  // Geometry may outlive its activity evidence. Mark only copied reading rows,
  // never current pages or cached source objects; exact-ID context still wins.
  const mark=chat=>({...chat,navigationActivityRetained:true});
@@ -58,7 +56,13 @@ export function sidebarReadingSnapshot(snapshot){
  if(reading.recentNavigation)reading.recentNavigation={...reading.recentNavigation,
   items:reading.recentNavigation.items.map(mark)};
  if(reading.recentShortcuts)reading.recentShortcuts=reading.recentShortcuts.map(mark);
- return {...reading,...snapshot};
+ return reading;
+}
+
+// Reading rows never grant resource coverage or satisfy a page wait. Only the
+// quiet sidebar renders them; main search/workspace results remain scope-fenced.
+export function sidebarReadingSnapshot(snapshot){
+ return {...readingActivity(Object.assign({},...Object.values(snapshot.navigationResourceRetained||{}))),...snapshot};
 }
 
 function validEntry(entry){
@@ -88,7 +92,9 @@ export function resourceSnapshots(bootstrap,envelope,demand,previous={}){
     const resource=resources[name];if(!resource)continue;
     const {sidebarNavigation,navigationAge,...fields}=resource.value;
     if(navigationAge!==undefined)snapshot.navigationResourceAges[name]=navigationAge;
-    Object.assign(snapshot,fields);
+    // A present page can also be the server's retained reading copy while its
+    // query is pending/retrying. Membership coverage is not activity freshness.
+    Object.assign(snapshot,pending[name]&&sidebarFields[name]?readingActivity(fields):fields);
     if(sidebarNavigation)snapshot.sidebarNavigation={...snapshot.sidebarNavigation,...sidebarNavigation};
     snapshot.navigationResources.push(name);
    }
