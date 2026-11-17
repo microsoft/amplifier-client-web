@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {updateReleaseSummary} from '../src/update-release-summary.js';
+import {releaseDayGroups,releaseEntries,updateReleaseSummary} from '../src/update-release-summary.js';
 import {updateOverview} from '../src/update-overview.js';
 
 const notes=version=>({version,title:'Release '+version,changes:['Changes for '+version],notices:[]});
@@ -54,4 +54,42 @@ test('missing notes keep exact target and a safe release link without unrelated 
 test('failed optional tool does not conceal newer app notes',()=>{
  const result=summary({phase:'available',pendingSmartTools:[{previous:'stories-old',failure:{reason:'smart-tool-update-failed'}}]});
  assert.equal(result.stage,'before');assert.equal(result.notes.version,'0.20.206');
+});
+
+test('release days sort newest first, preserve row order and count unique versions',()=>{
+ const entries=[
+  {...notes('0.20.203'),date:'2026-11-16'},
+  {...notes('0.20.205'),date:'2026-11-17'},
+  {...notes('0.20.206'),date:'2026-11-17'},
+  {...notes('v0.20.205'),date:'2026-11-17'},
+ ];
+ const before=JSON.stringify(entries),groups=releaseDayGroups(entries);
+ assert.deepEqual(groups.map(({date,label,count})=>({date,label,count})),[
+  {date:'2026-11-17',label:'November 17, 2026',count:2},
+  {date:'2026-11-16',label:'November 16, 2026',count:1},
+ ]);
+ assert.deepEqual(groups[0].entries,entries.slice(1));
+ assert.equal(JSON.stringify(entries),before);
+ assert.deepEqual(releaseDayGroups([]),[]);
+});
+
+test('missing and invalid optional dates stay honestly undated without rejecting release notes',()=>{
+ const invalid=[undefined,null,'','0000-01-01','2026-02-29','2026-04-31','2026-13-01','2026-00-01','2026-11-00',
+  '2026-11-17T00:00:00Z','2026-1-7',' 2026-11-17',20261117,{},'<script>'];
+ const entries=invalid.map((date,i)=>({...notes(`0.20.${i}`),date}));
+ assert.equal(releaseEntries(entries),entries);
+ const groups=releaseDayGroups([...entries,{...notes('0.21.0'),date:'2024-02-29'}]);
+ assert.equal(groups[0].label,'February 29, 2024');
+ assert.equal(groups[1].date,null);assert.equal(groups[1].label,'Undated');
+ assert.equal(groups[1].count,invalid.length);assert.deepEqual(groups[1].entries,entries);
+});
+
+test('date-only publication headings do not shift with the viewer time zone',()=>{
+ const previous=process.env.TZ;
+ try{
+  for(const zone of ['Pacific/Honolulu','America/Los_Angeles','UTC','Pacific/Kiritimati']){
+   process.env.TZ=zone;
+   assert.equal(releaseDayGroups([{...notes('0.20.206'),date:'2026-01-01'}])[0].label,'January 1, 2026',zone);
+  }
+ }finally{if(previous===undefined)delete process.env.TZ;else process.env.TZ=previous}
 });
