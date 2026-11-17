@@ -30,6 +30,7 @@ import {NavigationResourceStatus} from './shell/navigation-resource-status';
 import {DestinationHistory} from './destination-history.jsx';
 import {sessionIdentity} from './navigation-presentation';
 import {writeClipboardText} from './clipboard-copy';
+import {instanceIcon,instanceLabel} from './instance-branding.js';
 
 export function WorkDialog({label,onClose,children,initialFocus}){
  const ref=useRef(null);useModalFocus(ref,true,onClose);
@@ -52,6 +53,7 @@ function ActionMenu({label,children,icon=<MoreHorizontal/>,badge,caption}){
 }
 export function AppFooter({state,connected,open,act}){
  return <div className="a-work-footer">
+  {state.instanceBranding&&<span className="a-instance-footer-label" title={state.instanceBranding.name}>{state.instanceBranding.name}</span>}
   <div className="a-footer-status"><ShellSlot name="app.status"><span className={`a-dot ${connected?'':'pending'}`} title={connected?'Connected':'Reconnecting'}/></ShellSlot><span>{connected?'Connected':'Reconnecting…'}</span><ShellSlot name="app.actions"><ActionMenu label="App options" badge={<AttentionBadge state={state} count={Math.max(state.attention?.badgeUnread??state.attention?.unread??0,state.attention?.settingsUnread??0)}/>}>
    <button title="Activity and unread notifications" onClick={()=>open('activity')}><Bell/><span>Activity</span><AttentionBadge state={state}/></button>
    <button onClick={()=>open('feedback')}><Bug/>Send feedback</button>
@@ -109,7 +111,7 @@ export function WorkHeader({state,session,act,open,narrow,presentation,fileDropH
  },[]);
  const title=surface==='home'?'Home':surface==='workspaces'?'All workspaces':surface==='chats'?'All chats':surface==='workspace'?workspace?.name||'Workspace':displayTitle;
  return <header ref={header} className="a-work-header" data-part="header" inert={!!state.view?.panel} {...fileDropHandlers}>
-  <button type="button" className="a-brand a-work-brand" aria-label="Amplifier Home" title="Amplifier Home" onClick={()=>nav.home({navExpanded:false})}><img src="/branding/icons/amplifier-icon-128.png" alt=""/><span>Amplifier</span></button>
+  <button type="button" className="a-brand a-work-brand" data-instance-brand aria-label="Amplifier Home" title={state.instanceBranding?.name||'Amplifier Home'} onClick={()=>nav.home({navExpanded:false})}><img src={state.instanceBranding?instanceIcon(state.instanceBranding):'/branding/icons/amplifier-icon-128.png'} alt=""/><span>{instanceLabel(state.instanceBranding)}</span></button>
   <button id="navigation-toggle" type="button" className="a-icon a-work-nav-toggle" aria-label={navOpen?'Close navigation':'Open navigation'} aria-expanded={navOpen} aria-controls="workspace-navigation" data-action="view.update" onClick={()=>act('view.update',{patch:{navExpanded:!navOpen,...(!navigationNarrow?{navPinned:!navOpen}:{}),toolbarMenuOpen:false}})}><PanelLeft/>{!navOpen&&<AttentionBadge state={state}/>}</button>
   <nav className="a-site-navigation" aria-label="Site navigation">
    <button type="button" className="a-icon a-work-home-nav" aria-label="Home" title="Home" aria-current={surface==='home'?'page':undefined} onClick={()=>nav.home({navExpanded:false})}><HomeIcon/></button>

@@ -17,6 +17,14 @@ self.addEventListener('activate',event=>{
 self.addEventListener('fetch',event=>{
   const request=event.request,url=new URL(request.url);
   if(request.method!=='GET'||url.origin!==self.location.origin)return;
+  // Instance metadata can change without a client build. Bypass the old
+  // build-versioned cache, including legacy install-icon addresses.
+  if(url.pathname==='/manifest.webmanifest'||url.pathname==='/favicon.ico'||
+     url.pathname.startsWith('/instance-icon/')||
+     /^\/branding\/(?:favicons\/|pwa\/)/.test(url.pathname)){
+    event.respondWith(fetch(request,{cache:'no-store'}));
+    return;
+  }
   if(PUBLIC_FILES.includes(url.pathname)){
     event.respondWith(caches.open(CACHE).then(async cache=>(await cache.match(url.pathname))||fetch(request)));
     return;
