@@ -12,7 +12,7 @@ const bundle=await build({
   import {createRoot} from 'react-dom/client';
   import {flushSync} from 'react-dom';
   import {useInstanceAccent} from './src/theme-presentation.jsx';
-  import {instanceIcon,updateInstanceHead,fallbackInstanceIcon} from './src/instance-branding.js';
+  import {instanceIcon,updateInstanceHead} from './src/instance-branding.js';
   import {InstanceBrandingSettings} from './src/instance-branding.jsx';
   const initial={css:'#amp-one{--tone:light-dark(#48646d,#a4d5df);--a-accent:var(--tone)}',
    scheme:'light',accent:'',preview:false,shellPreview:false,confirmed:true,namespace:'fixture',revision:'one',colorMode:'appearance',customIcon:false};
@@ -33,7 +33,7 @@ const bundle=await build({
    }
    return <div id="amp-one" ref={root} style={{colorScheme:config.scheme,...(config.accent?{'--a-accent':config.accent}:{})}}>
     <style>{config.css}</style>
-    <img id="shell-icon" src={instanceIcon(branding,192,colors.rendered)} onError={fallbackInstanceIcon}/>
+    <img id="shell-icon" src={instanceIcon(branding,192,colors.rendered)}/>
     <InstanceBrandingSettings state={{instanceBranding:branding}} act={action} navigate={()=>{}} instanceAccent={colors.rendered}/>
    </div>;
   }
@@ -43,13 +43,13 @@ const bundle=await build({
 
 const html='<!doctype html><html><head><link rel="icon" href="/favicon.ico"><link rel="apple-touch-icon" href="/touch.png"><link rel="manifest" href="/manifest.webmanifest"></head><body><div id="root"></div></body></html>';
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a6UAAAAASUVORK5CYII=','base64');
-const requests=[],errors=[];let browser;
+const errors=[];let browser;
 try{
  browser=await chromium.launch({headless:true});
  const page=await browser.newPage({colorScheme:'light'});
  page.on('pageerror',error=>errors.push(error.message));
  const routeFixture=async route=>{
-  const url=new URL(route.request().url());requests.push(url.pathname+url.search);
+  const url=new URL(route.request().url());
   if(url.pathname==='/')return route.fulfill({status:200,contentType:'text/html',body:html});
   if(url.pathname==='/manifest.webmanifest'){
    const accent=url.searchParams.get('accent');
@@ -57,10 +57,7 @@ try{
     id:'/',start_url:'/',scope:'/',icons:[{src:'/instance-icon/192.png?v=one'+(accent?'&accent='+accent:'')}],
    })});
   }
-  if(url.pathname.startsWith('/instance-icon/')){
-   if(url.searchParams.get('v')==='stale')return route.fulfill({status:410,body:''});
-   return route.fulfill({status:200,contentType:'image/png',body:png});
-  }
+  if(url.pathname.startsWith('/instance-icon/'))return route.fulfill({status:200,contentType:'image/png',body:png});
   return route.fulfill({status:404,body:''});
  };
  await page.route('https://fixture.invalid/**',routeFixture);
@@ -143,13 +140,6 @@ try{
  await expect.poll(head).toBe('/manifest.webmanifest?v=updated&accent=204060');
  assert.equal(await page.getByRole('button',{name:'Use appearance accent'}).getAttribute('aria-pressed'),'true');
 
- // A retired revision is retried once without v, then a later snapshot is used.
- await page.evaluate(()=>window.configure({revision:'stale'}));
- await expect.poll(shell).toBe('/instance-icon/192.png?accent=204060');
- await page.evaluate(()=>window.configure({revision:'fresh'}));
- await expect.poll(shell).toBe('/instance-icon/192.png?v=fresh&accent=204060');
- assert.ok(requests.includes('/instance-icon/192.png?v=stale&accent=204060'));
- assert.ok(requests.includes('/instance-icon/192.png?accent=204060'));
  assert.deepEqual(errors,[]);
- console.log('PASS synthetic browser: computed accents, preview fencing, settings, metadata and stale revision recovery');
+ console.log('PASS synthetic browser: computed accents, preview fencing, settings and metadata');
 }finally{await browser?.close()}

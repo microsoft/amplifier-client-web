@@ -1,5 +1,5 @@
 import React,{useEffect,useRef,useState} from 'react';
-import {fallbackInstanceIcon,instanceIcon} from './instance-branding.js';
+import {instanceIcon} from './instance-branding.js';
 import {useSettingsDraft} from './settings-drafts';
 import './instance-branding.css';
 
@@ -23,7 +23,7 @@ export function InstanceBrandingSettings({state,act,navigate,instanceAccent}){
    const response=await act(reset?'instanceBranding.reset':'instanceBranding.update',reset?{}:{patch});
    if(response?.accepted!==true)throw Error(response?.error||'Could not update the app name and icon.');
    // A newer stream snapshot may arrive before this action receipt. Do not
-   // let a delayed receipt replace it with a retired versioned image URL.
+   // let a delayed receipt replace the newer displayed name or icon.
    const current=latestBranding.current;
    const next=current?.revision!==startedRevision&&current?.revision!==response.result?.revision?current:response.result;
    setSaved(next);if(reset||Object.hasOwn(patch,'name')){setName(next.name);setDirty(false)}
@@ -49,7 +49,7 @@ export function InstanceBrandingSettings({state,act,navigate,instanceAccent}){
   <p>Recognize this Amplifier server in your browser and installed app.</p>
   <p className="a-caption">Server-wide: applies to everyone using this listener, across all workspaces and browsers. Other servers and ports keep their own choices.</p>
   <div className="a-instance-preview" aria-label="App preview">
-   <img src={image?.url||instanceIcon(saved,192,instanceAccent)} onError={image?undefined:fallbackInstanceIcon} alt="" width="64" height="64"/>
+   <img src={image?.url||instanceIcon(saved,192,instanceAccent)} alt="" width="64" height="64"/>
    <div><strong>{name.trim()||saved.defaultName}</strong><small>{image?'Image preview · not applied yet':'App name & icon preview'}</small></div>
   </div>
   <div className="a-instance-field">

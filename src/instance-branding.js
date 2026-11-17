@@ -10,17 +10,6 @@ export function instanceManifest(branding,accent=null){
  return `/manifest.webmanifest?${brandingQuery(branding,accent)}`;
 }
 
-// A concurrent listener update can retire a version before the next state
-// snapshot arrives. Retry once without the version; the server still enforces
-// the current upload/custom-color precedence over the optional accent.
-export function fallbackInstanceIcon(event){
- const node=event.currentTarget||event.target,source=node?.getAttribute?.('href')||node?.getAttribute?.('src')||'';
- const match=source.match(/^(\/instance-icon\/\d+\.png)\?v=[^&]*(?:&accent=([0-9a-f]{6}))?$/i);
- if(!match)return;
- const key=node.getAttribute('href')!==null?'href':'src';
- node.setAttribute(key,match[1]+(match[2]?`?accent=${match[2].toLowerCase()}`:''));
-}
-
 // Resolve the root's actual custom property as a CSS color in its rendered
 // color-scheme. Canvas converts browser-supported color spaces to sRGB bytes;
 // custom properties alone may still contain light-dark() or other expressions.
@@ -56,7 +45,6 @@ export function instanceLabel(branding){
  const name=branding?.name||'Amplifier';
  return name===branding?.defaultName?name.replace(/^Amplifier · /,''):name;
 }
-const observedIcons=new WeakSet();
 export function updateInstanceHead(branding,document,accent=null){
  if(!branding)return;
  const set=(node,key,value)=>{if(node[key]!==value)node[key]=value};
@@ -69,13 +57,9 @@ export function updateInstanceHead(branding,document,accent=null){
  }
  for(const link of document.querySelectorAll('link[rel="icon"]')){
   href(link,instanceIcon(branding,32,accent));set(link,'type','image/png');
-  if(link.addEventListener&&!observedIcons.has(link)){link.addEventListener('error',fallbackInstanceIcon);observedIcons.add(link)}
  }
  const apple=document.querySelector('link[rel="apple-touch-icon"]');
- if(apple){
-  href(apple,instanceIcon(branding,180,accent));
-  if(apple.addEventListener&&!observedIcons.has(apple)){apple.addEventListener('error',fallbackInstanceIcon);observedIcons.add(apple)}
- }
+ if(apple)href(apple,instanceIcon(branding,180,accent));
  const manifest=document.querySelector('link[rel="manifest"]');
  if(manifest)href(manifest,instanceManifest(branding,accent));
 }

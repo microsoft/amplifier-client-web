@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
-import {fallbackInstanceIcon,instanceIcon,instanceManifest,instanceTitle,instanceLabel,updateInstanceHead} from '../src/instance-branding.js';
+import {instanceIcon,instanceManifest,instanceTitle,instanceLabel,updateInstanceHead} from '../src/instance-branding.js';
 import React,{act as renderAct} from 'react';
 import {create} from 'react-test-renderer';
 import {createServer} from 'vite';
@@ -53,15 +53,6 @@ test('appearance mode supplies only a valid browser accent to icon and manifest 
  assert.equal(nodes.get('link[rel="manifest"]').href,'/manifest.webmanifest?v=one&accent=abcdef');
  updateInstanceHead(initial,document,'abcdef');
  assert.equal(nodes.get('link[rel="manifest"]').href,'/manifest.webmanifest?v=one');
-});
-test('stale icon fallback retries once without a version and keeps a valid accent',()=>{
- for(const key of ['src','href']){
-  const attrs={[key]:'/instance-icon/192.png?v=old&accent=12abcf'},changes=[];
-  const node={getAttribute:name=>attrs[name]??null,setAttribute:(name,value)=>{attrs[name]=value;changes.push([name,value])}};
-  fallbackInstanceIcon({currentTarget:node});fallbackInstanceIcon({currentTarget:node});
-  assert.equal(attrs[key],'/instance-icon/192.png?accent=12abcf');
-  assert.equal(changes.length,1);
- }
 });
 test('name applies on blur and color/reset apply directly, without a Save step',async()=>{
  const calls=[];const root=await setup(async(action,args)=>{calls.push({action,args});return {accepted:true,result:{...initial,...args.patch,name:args.patch?.name||initial.name,revision:String(calls.length)}}});
