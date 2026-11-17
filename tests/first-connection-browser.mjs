@@ -33,6 +33,7 @@ const updates={phase:'checked',initialPreparation:true,lastCheck:1794900000,
  application:{id:'application',kind:'app',label:'Amplifier Unified',current:'0.105.0',latest:'v0.105.0',status:'current'},
  items:['computer-use','context-intelligence','imagegen','routing-matrix'].map(component),
  sequence:{stage:'included',install:true,included:{available:4,missing:4},other:{available:0}},
+ diagnostics:{attemptId:'a'.repeat(32),batch:{attemptId:'a'.repeat(32),kind:'application',components:['application'],componentCount:1,startedAt:1794899990}},
  currentStatus:{status:'waiting',title:'Components update after you set up an AI connection',
   detail:'Nothing failed. Amplifier checks new components together with an AI connection, and none is set up yet. Set up an AI connection in Settings. The update can then start.',
   actionRequired:false,action:'connect',component:null}};
@@ -121,6 +122,7 @@ try{
  await expect(updatesPage.getByRole('button',{name:'Update Amplifier'})).toHaveCount(0);
  await expect(updatesPage.locator('[data-action="updates.install"]')).toHaveCount(0);
  await expect(updatesPage.getByText('Last update issue')).toHaveCount(0);
+ await expect(updatesPage.getByText('Current batch')).toHaveCount(0);
  await expect(updatesPage.getByRole('button',{name:'Check for updates',exact:true})).toBeEnabled();
  const connect=updatesPage.getByRole('button',{name:'Set up an AI connection',exact:true});
  await expect(connect).toBeEnabled();

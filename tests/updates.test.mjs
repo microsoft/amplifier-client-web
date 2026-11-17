@@ -1002,3 +1002,11 @@ test('the two profile reasons of a component update have plain texts',()=>{
  // A reason without a text shows only its recorded facts.
  assert.doesNotMatch(failure('some-other-reason'),/Nothing was changed|conversation profile/);
 });
+
+test('no batch is called current while the host waits for an AI connection',()=>{
+ // Recorded on Windows before this change: the finished application batch stayed "Current batch: application".
+ const diagnostics={attemptId:'app',batch:{attemptId:'app',kind:'application',components:['application'],componentCount:1,startedAt:1}};
+ assert.doesNotMatch(render({...waitingUpdates,diagnostics}),/Current batch/);
+ // A batch that runs is still named.
+ assert.match(render({...waitingUpdates,diagnostics,phase:'validating',currentStatus:{status:'working',title:'Updating Amplifier',detail:'x',actionRequired:false,action:null}}),/Current batch: application/);
+});
