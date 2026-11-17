@@ -46,10 +46,23 @@ function readingResources(bootstrap,instance,prior,snapshot,wanted){
  return retained;
 }
 
+function readingActivity(fields){
+ const reading={...fields};
+ // Geometry may outlive its activity evidence. Mark only copied reading rows,
+ // never current pages or cached source objects; exact-ID context still wins.
+ const mark=chat=>({...chat,navigationActivityRetained:true});
+ if(reading.pinnedNavigation)reading.pinnedNavigation={...reading.pinnedNavigation,
+  items:reading.pinnedNavigation.items.map(item=>item.kind==='session'?{...item,row:mark(item.row)}:item)};
+ if(reading.recentNavigation)reading.recentNavigation={...reading.recentNavigation,
+  items:reading.recentNavigation.items.map(mark)};
+ if(reading.recentShortcuts)reading.recentShortcuts=reading.recentShortcuts.map(mark);
+ return reading;
+}
+
 // Reading rows never grant resource coverage or satisfy a page wait. Only the
 // quiet sidebar renders them; main search/workspace results remain scope-fenced.
 export function sidebarReadingSnapshot(snapshot){
- return {...Object.assign({},...Object.values(snapshot.navigationResourceRetained||{})),...snapshot};
+ return {...readingActivity(Object.assign({},...Object.values(snapshot.navigationResourceRetained||{}))),...snapshot};
 }
 
 function validEntry(entry){
@@ -79,7 +92,9 @@ export function resourceSnapshots(bootstrap,envelope,demand,previous={}){
     const resource=resources[name];if(!resource)continue;
     const {sidebarNavigation,navigationAge,...fields}=resource.value;
     if(navigationAge!==undefined)snapshot.navigationResourceAges[name]=navigationAge;
-    Object.assign(snapshot,fields);
+    // A present page can also be the server's retained reading copy while its
+    // query is pending/retrying. Membership coverage is not activity freshness.
+    Object.assign(snapshot,pending[name]&&sidebarFields[name]?readingActivity(fields):fields);
     if(sidebarNavigation)snapshot.sidebarNavigation={...snapshot.sidebarNavigation,...sidebarNavigation};
     snapshot.navigationResources.push(name);
    }
@@ -123,7 +138,9 @@ export function pendingSnapshots(bootstrap,previous,demand,hostInstanceId=bootst
   if(!prior||prior.generation!==generation)continue;
   if(navigation.has(instance.package)){
    const context=previous.shellResources?.instances?.[instance.id]?.resources?.context?.value||{};
-   const snapshot={...context,view:prior.view,generation,navigationResources:[],
+   // This context belongs to the previous demand. Its activity map is not
+   // current coverage merely because we are retaining sidebar reading rows.
+   const snapshot={...context,navigationActivityById:{},view:prior.view,generation,navigationResources:[],
     navigationResourcePending:Object.fromEntries((demand?.resources||[]).map(name=>[name,{status:'pending'}])),
     navigationResourceScope:[hostInstanceId,bootstrap.shellBootstrapKey,demand?.id,generation,...(demand?.scope||[])]};
    snapshot.navigationResourceRetained=hostInstanceId===bootstrap.hostInstanceId?readingResources(bootstrap,instance,prior,snapshot,demand?.resources||[]):{};

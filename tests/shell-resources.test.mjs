@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {shellScope,resourceSnapshots,retainResourceVersions,pendingSnapshots,sidebarReadingSnapshot} from '../src/shell/resources.js';
 import {createShellDiagnostics} from '../src/shell/diagnostics.js';
+import {activityFor} from '../src/navigation-presentation.js';
 const bootstrap={clientId:'client',hostInstanceId:'host',shellBootstrapKey:'key',resolvedInstances:[{id:'chat',package:'builtin.chats'},{id:'button',package:'builtin.actions'},{id:'custom',package:'custom.sidebar'}],instanceGenerations:{chat:1,button:2,custom:3}};
 const demand={id:1,scope:['chat','workspace','chat',null,null],resources:['sidebarSearch']};
 const envelope=()=>({
@@ -168,6 +169,96 @@ test('retained sidebar survives pending baseline but clears for new host, module
  const aged=structuredClone(next);aged.instances.chat.resources.context.value.view.navAge='24h';
  assert.deepEqual(resourceSnapshots(bootstrap,aged,changed,waiting).chat.navigationResourceRetained,{});
  assert.deepEqual(pendingSnapshots(bootstrap,previous,changed,'new-host').chat.navigationResourceRetained,{});
+ assert.deepEqual(pendingSnapshots({...bootstrap,shellBootstrapKey:'new-key'},previous,changed).chat.navigationResourceRetained,{});
  assert.equal(pendingSnapshots({...bootstrap,instanceGenerations:{...bootstrap.instanceGenerations,chat:2}},previous,changed).chat,undefined);
  assert.deepEqual(pendingSnapshots(bootstrap,previous,{...changed,resources:[]}).chat.navigationResourceRetained,{});
+});
+
+test('H6: selection retains geometry, not a previous demand’s Answer requested coverage',()=>{
+ const {wanted,value}=readingFixture(),entry=value.instances.chat;
+ const chat={id:'a',status:'working',activity:{kind:'attention',label:'Answer requested'}};
+ entry.resources.recentNavigation.value={recentNavigation:{items:[chat],total:1},recentShortcuts:[chat]};
+ entry.resources.pinnedNavigation.value={pinnedNavigation:{items:[{id:'session:a',kind:'session',row:chat}],total:1}};
+ entry.resources.context.value.navigationActivityById={a:chat.activity};
+ const snapshots=resourceSnapshots(bootstrap,value,wanted),previous={shellResources:value,snapshots};
+ const before=JSON.stringify(previous),changed={...wanted,id:2,scope:['b','workspace','chat',null,null]};
+ const pending=pendingSnapshots(bootstrap,previous,changed).chat;
+ assert.deepEqual(pending.navigationActivityById,{});
+ const reading=sidebarReadingSnapshot(pending),row=reading.recentNavigation.items[0];
+ assert.equal(row.id,'a');assert.equal(row.status,'working');
+ assert.equal(row.navigationActivityRetained,true);
+ assert.deepEqual(activityFor(row,reading),{kind:'updating',label:'Updating status…'});
+ assert.equal(activityFor(reading.pinnedNavigation.items[0].row,reading).kind,'updating');
+ assert.equal(activityFor(reading.recentShortcuts[0],reading).kind,'updating');
+ assert.equal(snapshots.chat.recentNavigation.items[0].navigationActivityRetained,undefined);
+ assert.equal(JSON.stringify(previous),before,'reading markers cannot mutate cached source rows');
+ const next=structuredClone(value);next.demandId=2;next.scope=changed.scope;next.instances.chat.stateRevision=2;
+ next.instances.chat.pending={recentNavigation:{status:'pending'},pinnedNavigation:{status:'pending'}};
+ next.instances.chat.resources={context:next.instances.chat.resources.context};
+ next.instances.chat.resources.context.value.navigationActivityById={};
+ const absent=sidebarReadingSnapshot(resourceSnapshots(bootstrap,next,changed,{chat:pending}).chat);
+ assert.equal(activityFor(absent.recentNavigation.items[0],absent).kind,'updating');
+ next.instances.chat.stateRevision++;
+ next.instances.chat.resources.context.value.navigationActivityById={a:{kind:'working',label:'Working'}};
+ const covered=sidebarReadingSnapshot(resourceSnapshots(bootstrap,next,changed,{chat:pending}).chat);
+ assert.deepEqual(activityFor(covered.recentNavigation.items[0],covered),{kind:'working',label:'Working'});
+ const repeated=pendingSnapshots(bootstrap,{shellResources:next,snapshots:{chat:covered}},{...changed,id:3}).chat;
+ const repeatedReading=sidebarReadingSnapshot(repeated);
+ assert.equal(activityFor(repeatedReading.recentNavigation.items[0],repeatedReading).kind,'updating','another pending demand cannot inherit the last covered map');
+});
+
+test('fresh page fallbacks and custom snapshots never acquire retained activity provenance',()=>{
+ const {wanted,value}=readingFixture();
+ const fresh=sidebarReadingSnapshot(resourceSnapshots(bootstrap,value,wanted).chat);
+ assert.equal(fresh.recentNavigation.items[0].navigationActivityRetained,undefined);
+ const mixed={...fresh,navigationResourceRetained:{recentNavigation:{recentNavigation:{items:[{id:'old'}]}}}};
+ assert.equal(sidebarReadingSnapshot(mixed).recentNavigation,fresh.recentNavigation,'current page overrides retained geometry');
+ const changed={...wanted,id:2},previous={snapshots:{custom:{ownField:42,generation:3}}};
+ assert.deepEqual(pendingSnapshots(bootstrap,previous,changed).custom,previous.snapshots.custom);
+});
+
+for(const status of ['pending','retry'])test(`server-retained present sidebar pages have reading activity provenance while ${status}`,()=>{
+ const {wanted,value}=readingFixture(),entry=value.instances.chat;
+ const chat={id:'dormant',status:'working',activity:{kind:'attention',label:'Answer requested'}};
+ const workspace={id:'workspace:one',kind:'workspace',row:{workspaceId:'one'}};
+ entry.resources.pinnedNavigation.value={pinnedNavigation:{items:[{id:'session:dormant',kind:'session',row:chat},workspace],total:2}};
+ entry.resources.recentNavigation.value={recentNavigation:{items:[chat],total:1},recentShortcuts:[chat]};
+ entry.resources.context.value.navigationActivityById={};
+ entry.pending={pinnedNavigation:{status},recentNavigation:{status}};
+ const original=JSON.stringify(value),snapshot=resourceSnapshots(bootstrap,value,wanted).chat;
+ const reading=sidebarReadingSnapshot(snapshot);
+ assert.deepEqual(snapshot.navigationResourceRetained,{},'no client-only retained fallback is involved');
+ assert.deepEqual(snapshot.navigationResources,wanted.resources,'membership coverage is unchanged');
+ const retainedRows=[reading.pinnedNavigation.items[0].row,reading.recentNavigation.items[0],reading.recentShortcuts[0]];
+ for(const row of retainedRows){
+  assert.deepEqual(activityFor(row,reading),{kind:'updating',label:'Updating status…'});
+  for(const current of [{kind:'working',label:'Working'},{kind:'attention',label:'Answer requested'},{kind:'attention',label:'Check answer delivery'}])
+   assert.equal(activityFor(row,{...reading,navigationActivityById:{dormant:current}}),current);
+ }
+ assert.equal(reading.pinnedNavigation.items[1],workspace,'workspace pins do not acquire chat provenance');
+ assert.equal(JSON.stringify(value),original,'wire page objects remain untouched');
+ const completed=structuredClone(value);completed.instances.chat.stateRevision++;
+ completed.instances.chat.pending={};
+ const ready=resourceSnapshots(bootstrap,completed,wanted).chat;
+ for(const row of [ready.pinnedNavigation.items[0].row,ready.recentNavigation.items[0],ready.recentShortcuts[0]]){
+  assert.equal(row.navigationActivityRetained,undefined);
+  assert.equal(activityFor(row,ready).label,'Answer requested','nonpending fresh page retains ordinary fallback even at equal resource revision');
+ }
+ const late=retainResourceVersions(completed,value);
+ assert.equal(activityFor(resourceSnapshots(bootstrap,late,wanted).chat.recentNavigation.items[0],ready).label,'Answer requested');
+});
+
+test('pending activity provenance belongs only to its named quiet-sidebar resource',()=>{
+ const {wanted,value}=readingFixture(),entry=value.instances.chat;
+ const chat={id:'same',activity:{kind:'attention',label:'Answer requested'}};
+ entry.resources.pinnedNavigation.value={pinnedNavigation:{items:[{kind:'session',row:chat}]}};
+ entry.resources.recentNavigation.value={recentNavigation:{items:[chat]},recentShortcuts:[chat]};
+ entry.resources.sidebarSearch.value={sidebarNavigation:{search:{items:[chat]}}};
+ for(const name of ['pinnedNavigation','recentNavigation','sidebarSearch']){
+  entry.pending={[name]:{status:'pending'}};
+  const snapshot=sidebarReadingSnapshot(resourceSnapshots(bootstrap,value,wanted).chat);
+  assert.equal(activityFor(snapshot.pinnedNavigation.items[0].row,snapshot).kind,name==='pinnedNavigation'?'updating':'attention');
+  assert.equal(activityFor(snapshot.recentNavigation.items[0],snapshot).kind,name==='recentNavigation'?'updating':'attention');
+  assert.equal(snapshot.sidebarNavigation.search.items[0],chat,'main search fallback is outside quiet-sidebar retention');
+ }
 });

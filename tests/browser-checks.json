@@ -182,6 +182,16 @@
       }
     },
     {
+      "id": "retained-activity",
+      "command": [
+        "node",
+        "tests/retained-activity-browser.mjs"
+      ],
+      "env": {
+        "AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/retained-activity"
+      }
+    },
+    {
       "id": "conversation-navigation",
       "command": [
         "node",

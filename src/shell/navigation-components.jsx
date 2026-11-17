@@ -209,7 +209,7 @@ export function useRecentShortcuts(host,state,act){
  const ownerFor=current=>JSON.stringify([current?.navigationResourceScope?.[0],current?.navigationResourceScope?.[1],current?.generation]);
  const owner=ownerFor(state);
  const acceptedOwner=useRef(owner),observedOwner=useRef(owner);
- const accepted=useRef(page),intent=useRef(null),sequence=useRef(0),mounted=useRef(true),waiting=useRef(false),uncertain=useRef(false),readWait=useRef(null);
+ const accepted=useRef(page),acceptedSource=useRef(state.recentNavigation),intent=useRef(null),sequence=useRef(0),mounted=useRef(true),waiting=useRef(false),uncertain=useRef(false),readWait=useRef(null);
  const latest=useRef(null);latest.current={host,state,act};
  const scopeFor=current=>{
   const mode=current.sidebarNavigation?.pinned?.scope?.mode||'all';
@@ -232,6 +232,7 @@ export function useRecentShortcuts(host,state,act){
   &&((candidate?.scope?.viewRevision??0)>(accepted.current?.scope?.viewRevision??0)
    ||(candidate?.dataRevision??0)>=(accepted.current?.dataRevision??0));
  const accept=candidate=>{
+  acceptedSource.current=candidate;
   candidate={...candidate,items:[...new Map(candidate.items.map(row=>[row.id,row])).values()]};
   acceptedOwner.current=owner;accepted.current=candidate;uncertain.current=false;setPage(candidate);
   setSettings({limit:candidate.scope.limit,showAgentCreated:candidate.scope.showAgentCreated});
@@ -328,7 +329,12 @@ export function useRecentShortcuts(host,state,act){
  const queryPending=state.navigationResourcePending?.recentNavigation;
  const matching=acceptedOwner.current===owner&&page.scope?.showAgentCreated===(state.view?.navShowAgentCreated===true)
   &&Object.entries(scopeFor(state)).every(([key,value])=>key==='selectedSessionId'||page.scope?.[key]===value);
- const visiblePage=matching?page:{items:[],total:0,remaining:0,limit:settings.limit};
+ // The accepted page can outlive shell reading retention (e.g. interest release
+ // or an expansion wait). Only its exact current source grants row fallback;
+ // otherwise carry reading provenance into both badges and open details.
+ const currentPage=state.recentNavigation===acceptedSource.current&&!state.navigationResourceRetained?.recentNavigation;
+ const visiblePage=matching?(currentPage?page:{...page,items:page.items.map(chat=>({...chat,navigationActivityRetained:true}))})
+  :{items:[],total:0,remaining:0,limit:settings.limit};
  return {page:visiblePage,settings,busy:busy||!error&&(queryPending?.status==='pending'||!matching&&!queryPending),
   error,blocked:uncertain.current||!!queryPending,change,retry};
 }

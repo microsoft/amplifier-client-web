@@ -923,7 +923,8 @@ for(const registration of ['missing','unavailable'])test(`Recent retains canonic
    release({recentNavigation:empty(40,99)});
    await pending;
   });
-  assert.deepEqual(api.page.items,restored.items);assert.equal(api.page.scope.workspaceId,'pinned-missing');
+  assert.deepEqual(api.page.items,restored.items.map(row=>({...row,navigationActivityRetained:true})));
+  assert.equal(api.page.scope.workspaceId,'pinned-missing');
   assert.match(api.error,/changed during the read/);
  }finally{recentRead=previousRead;await act(async()=>root.unmount())}
 });
@@ -972,6 +973,8 @@ test('cold resource placeholders never claim empty catalogs and retained sidebar
 
 test('selected chat changes retain loaded Recent rows while only a current-selection page can settle expansion',async()=>{
  let current={...snapshot,recentNavigation:recentFixture(60,false,3),view:{navRecentLimit:60}},api,root;
+ current.recentNavigation.items[0]={...current.recentNavigation.items[0],activity:{kind:'attention',label:'Answer requested'}};
+ const originalPage=current.recentNavigation,original=JSON.stringify(originalPage);
  const listeners=new Set();const readHost=recentHost({getSnapshot:()=>current,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn)}});
  function Probe(){api=useRecentShortcuts(readHost,current,async()=>({accepted:true}));return null}
  await act(async()=>{root=create(React.createElement(Probe))});
@@ -979,13 +982,53 @@ test('selected chat changes retain loaded Recent rows while only a current-selec
  current={...current,selectedSessionId:'other',recentNavigation:undefined,navigationResourcePending:{recentNavigation:{status:'pending'}}};
  await act(async()=>{root.update(React.createElement(Probe));listeners.forEach(fn=>fn())});
  assert.equal(api.page.items.length,60);assert.equal(api.error,'');assert.equal(api.busy,true);
+ const {activityFor}=await import('../src/navigation-presentation.js');
+ assert.equal(api.page.items[0].navigationActivityRetained,true,'local hook cache has reading provenance even without shell retention');
+ assert.equal(activityFor(api.page.items[0],current).label,'Updating status…');
+ current={...current,navigationActivityById:{[api.page.items[0].id]:{kind:'working',label:'Working'}}};
+ await act(async()=>root.update(React.createElement(Probe)));
+ assert.equal(activityFor(api.page.items[0],current).label,'Working');
  current={...current,view:{navRecentLimit:80},recentNavigation:recentFixture(80,false,4),navigationResourcePending:{}};
  await act(async()=>{root.update(React.createElement(Probe));listeners.forEach(fn=>fn())});
  assert.equal(api.page.items.length,60,'old-selection completion cannot be accepted');
+ assert.equal(api.page.items[0].navigationActivityRetained,true);
  current={...current,recentNavigation:{...current.recentNavigation,scope:{...current.recentNavigation.scope,selectedSessionId:'other'}}};
  await act(async()=>{root.update(React.createElement(Probe));listeners.forEach(fn=>fn());await pending});
  assert.equal(api.page.items.length,80);assert.equal(api.error,'');assert.equal(api.busy,false);
+ assert.equal(api.page.items[0].navigationActivityRetained,undefined,'fresh accepted page restores normal fallback');
+ assert.equal(JSON.stringify(originalPage),original,'retention never mutates cached source rows');
  await act(async()=>root.unmount());
+});
+
+test('Recent accepts server-retained provenance and clears it at equal-value completion without extra renders',async()=>{
+ const {resourceSnapshots}=await import('../src/shell/resources.js');
+ const {activityFor}=await import('../src/navigation-presentation.js');
+ const bootstrap={clientId:'client',hostInstanceId:'host',shellBootstrapKey:'key',
+  resolvedInstances:[{id:'chats',package:'builtin.chats'}],instanceGenerations:{chats:1}};
+ const wanted={id:1,scope:['a','b','chat',null,null],resources:['recentNavigation']};
+ const page=recentFixture(20,false,1,1);page.items[0].activity={kind:'attention',label:'Answer requested'};
+ const entry={generation:1,stateRevision:1,pending:{recentNavigation:{status:'pending'}},resources:{
+  context:{revision:1,value:{view:{},selectedSessionId:'a',selectedWorkspaceId:'b',navigationActivityById:{}}},
+  recentNavigation:{revision:1,value:{recentNavigation:page}},
+ }};
+ const envelope={clientId:'client',hostInstanceId:'host',bootstrapKey:'key',demandId:1,scope:wanted.scope,instances:{chats:entry}};
+ const original=JSON.stringify(envelope);
+ let current=resourceSnapshots(bootstrap,envelope,wanted).chats,api,root,renders=0;
+ const readHost=recentHost({getSnapshot:()=>current});
+ function Probe(){renders++;api=useRecentShortcuts(readHost,current,async()=>assert.fail('No write expected'));return null}
+ try{
+  await act(async()=>{root=create(React.createElement(Probe))});
+  assert.equal(activityFor(api.page.items[0],current).kind,'updating');
+  const completed=structuredClone(envelope);completed.instances.chats.stateRevision++;completed.instances.chats.pending={};
+  current=resourceSnapshots(bootstrap,completed,wanted).chats;
+  await act(async()=>root.update(React.createElement(Probe)));
+  assert.equal(activityFor(api.page.items[0],current).label,'Answer requested');
+  assert.equal(api.page.items[0].navigationActivityRetained,undefined);
+  const before=renders;
+  await act(async()=>root.update(React.createElement(Probe)));
+  assert.equal(renders,before+1,'same snapshot does not trigger another hook acceptance');
+  assert.equal(JSON.stringify(envelope),original);
+ }finally{if(root)await act(async()=>root.unmount())}
 });
 
 test('Recent retry waits for a pending resource baseline and a failure never also reports loading',async t=>{

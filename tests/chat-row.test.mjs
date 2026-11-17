@@ -5,7 +5,7 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {createServer} from 'vite';
 
 const vite=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
-const {ChatRow}=await vite.ssrLoadModule('/src/shell/navigation-components.jsx');
+const {ChatRow,ChatDetails}=await vite.ssrLoadModule('/src/shell/navigation-components.jsx');
 const {WorkspaceRow}=await vite.ssrLoadModule('/src/workspace-explorer.jsx');
 test.after(()=>vite.close());
 const chat={id:'chat',title:'Review',workspaceId:'workspace',workspace:'/work/client',workspaceName:'Customer work',workspaceLabel:'client'};
@@ -24,6 +24,19 @@ test('the full-path preference replaces the name without changing workspace memb
  const markup=render(chat,{},true);
  assert.match(markup,/data-show-paths="true" data-has-workspace="true"/);
  assert.match(markup,/<small class="a-nav-chat-workspace" title="\/work\/client">\/work\/client<\/small>/);
+});
+
+test('retained row and details status are neutral and accessible until exact-ID coverage arrives',()=>{
+ const row={...chat,navigationActivityRetained:true,activity:{kind:'attention',label:'Answer requested'}};
+ for(const current of [null,{kind:'working',label:'Working'},{kind:'attention',label:'Answer requested'}]){
+  const model={state:{navigationActivityById:current?{chat:current}:{}},draft:{},choose:()=>{},act:()=>{},setDraft:()=>{}};
+  for(const markup of [render(row,{model}),renderToStaticMarkup(React.createElement(ChatDetails,{chat:row,model,now:1,close:()=>{}}))]){
+   assert.ok(markup.includes(`aria-label="${current?.label||'Updating status…'}"`));
+   if(!current){
+    assert.match(markup,/data-kind="updating"/);assert.doesNotMatch(markup,/data-attention=|Answer requested|lucide-circle-help|lucide-circle-alert/);
+   }
+  }
+ }
 });
 test('standalone managed folders and absent workspace IDs never acquire workspace subtitles',()=>{
  for(const row of [
