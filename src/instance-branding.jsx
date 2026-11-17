@@ -5,22 +5,27 @@ import './instance-branding.css';
 
 const colors=[['Indigo','#4f46e5'],['Blue','#2563eb'],['Teal','#0f766e'],['Green','#15803d'],['Orange','#c2410c'],['Rose','#be123c'],['Purple','#7e22ce'],['Slate','#475569']];
 const MAX_IMAGE_BYTES=2*1024*1024;
-export function InstanceBrandingSettings({state,act,navigate}){
+export function InstanceBrandingSettings({state,act,navigate,instanceAccent}){
  const branding=state.instanceBranding;
  const [saved,setSaved]=useState(branding),[name,setName]=useState(branding?.name||''),[dirty,setDirty]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[image,setImage]=useState(null);
- const saving=useRef(false),selection=useRef(0);
- useEffect(()=>{if(branding){setSaved(branding);if(!dirty)setName(branding.name)}},[branding?.revision,branding?.name]);
+ const saving=useRef(false),selection=useRef(0),latestBranding=useRef(branding);
+ latestBranding.current=branding;
+ useEffect(()=>{if(branding){setSaved(branding);if(!dirty)setName(branding.name)}},[branding?.revision,branding?.name,branding?.colorMode,branding?.customIcon]);
  useEffect(()=>()=>{selection.current++},[]);
  useSettingsDraft('instance-name',{dirty:dirty||!!image,label:'App name & icon',review:()=>navigate('instance-branding'),discard:()=>{selection.current++;setName(saved?.name||'');setDirty(false);setImage(null)}});
  async function change(patch,reset=false){
   if(saving.current)return false;
   if(reset||Object.hasOwn(patch,'image'))selection.current++;
   if(!reset&&dirty&&!Object.hasOwn(patch,'name'))patch={name:name.trim(),...patch};
+  const startedRevision=latestBranding.current?.revision;
   saving.current=true;setBusy(true);setError('');setNotice('Updating this server…');
   try{
    const response=await act(reset?'instanceBranding.reset':'instanceBranding.update',reset?{}:{patch});
    if(response?.accepted!==true)throw Error(response?.error||'Could not update the app name and icon.');
-   const next=response.result;
+   // A newer stream snapshot may arrive before this action receipt. Do not
+   // let a delayed receipt replace the newer displayed name or icon.
+   const current=latestBranding.current;
+   const next=current?.revision!==startedRevision&&current?.revision!==response.result?.revision?current:response.result;
    setSaved(next);if(reset||Object.hasOwn(patch,'name')){setName(next.name);setDirty(false)}
    if(reset||Object.hasOwn(patch,'image'))setImage(null);
    setNotice('Updated for this server.');return true;
@@ -44,7 +49,7 @@ export function InstanceBrandingSettings({state,act,navigate}){
   <p>Recognize this Amplifier server in your browser and installed app.</p>
   <p className="a-caption">Server-wide: applies to everyone using this listener, across all workspaces and browsers. Other servers and ports keep their own choices.</p>
   <div className="a-instance-preview" aria-label="App preview">
-   <img src={image?.url||instanceIcon(saved)} alt="" width="64" height="64"/>
+   <img src={image?.url||instanceIcon(saved,192,instanceAccent)} alt="" width="64" height="64"/>
    <div><strong>{name.trim()||saved.defaultName}</strong><small>{image?'Image preview · not applied yet':'App name & icon preview'}</small></div>
   </div>
   <div className="a-instance-field">
@@ -55,8 +60,9 @@ export function InstanceBrandingSettings({state,act,navigate}){
   </div>
   <fieldset disabled={busy} className="a-instance-colors" data-instance-defer-name>
    <legend>Icon color</legend>
-   <div>{colors.map(([label,color])=><button key={color} type="button" className="a-instance-swatch" style={{'--instance-swatch':color}} aria-label={label+' icon'} aria-pressed={!saved.customIcon&&saved.color===color} onClick={()=>change({color,image:''})}>{!saved.customIcon&&saved.color===color?'✓':''}</button>)}</div>
-   <p className="a-caption">Choosing a color uses the built-in badge instead of an uploaded image.</p>
+   <button type="button" className="a-soft a-instance-appearance" aria-pressed={!saved.customIcon&&saved.colorMode==='appearance'} onClick={()=>change({color:'',image:''})}>Use appearance accent</button>
+   <div>{colors.map(([label,color])=><button key={color} type="button" className="a-instance-swatch" style={{'--instance-swatch':color}} aria-label={label+' icon'} aria-pressed={!saved.customIcon&&saved.colorMode==='custom'&&saved.color===color} onClick={()=>change({color,image:''})}>{!saved.customIcon&&saved.colorMode==='custom'&&saved.color===color?'✓':''}</button>)}</div>
+   <p className="a-caption">Choosing a color uses the built-in badge instead of an uploaded image. The appearance accent can look different in each browser.</p>
   </fieldset>
   <div className="a-instance-field">
    <label htmlFor="instance-image">Or upload an icon</label>

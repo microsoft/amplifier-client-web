@@ -1,6 +1,41 @@
 // These URLs change presentation, never the manifest's installation identity.
-export function instanceIcon(branding,size=192){
- return `/instance-icon/${size}.png?v=${encodeURIComponent(branding?.revision||'default')}`;
+function brandingQuery(branding,accent){
+ const revision=encodeURIComponent(branding?.revision||'default');
+ return `v=${revision}`+(branding?.colorMode==='appearance'&&!branding?.customIcon&&typeof accent==='string'&&/^[0-9a-f]{6}$/i.test(accent)?`&accent=${accent.toLowerCase()}`:'');
+}
+export function instanceIcon(branding,size=192,accent=null){
+ return `/instance-icon/${size}.png?${brandingQuery(branding,accent)}`;
+}
+export function instanceManifest(branding,accent=null){
+ return `/manifest.webmanifest?${brandingQuery(branding,accent)}`;
+}
+
+// Resolve the root's actual custom property as a CSS color in its rendered
+// color-scheme. Canvas converts browser-supported color spaces to sRGB bytes;
+// custom properties alone may still contain light-dark() or other expressions.
+export function renderedInstanceAccent(root){
+ if(!root)return null;
+ let probe;
+ try{
+  const document=root.ownerDocument,view=document.defaultView;
+  const value=view.getComputedStyle(root).getPropertyValue('--a-accent').trim();
+  if(!value||!view.CSS.supports('color',value))return null;
+  probe=document.createElement('span');
+  probe.style.setProperty('--instance-icon-accent',value,'important');
+  probe.style.setProperty('color','var(--instance-icon-accent)','important');
+  probe.style.setProperty('display','none','important');
+  // Read the selected color rather than forced text-color substitution.
+  probe.style.setProperty('forced-color-adjust','none','important');
+  root.appendChild(probe);
+  const color=view.getComputedStyle(probe).color;
+  const canvas=document.createElement('canvas');canvas.width=canvas.height=1;
+  const context=canvas.getContext('2d',{willReadFrequently:true});
+  if(!context)return null;
+  context.clearRect(0,0,1,1);context.fillStyle=color;context.fillRect(0,0,1,1);
+  const [r,g,b,a]=context.getImageData(0,0,1,1).data;
+  if(a!==255)return null;
+  return [r,g,b].map(byte=>byte.toString(16).padStart(2,'0')).join('');
+ }catch{return null}finally{probe?.remove()}
 }
 export function instanceTitle(branding,title=''){
  const name=branding?.name||'Amplifier';
@@ -10,7 +45,7 @@ export function instanceLabel(branding){
  const name=branding?.name||'Amplifier';
  return name===branding?.defaultName?name.replace(/^Amplifier · /,''):name;
 }
-export function updateInstanceHead(branding,document){
+export function updateInstanceHead(branding,document,accent=null){
  if(!branding)return;
  const set=(node,key,value)=>{if(node[key]!==value)node[key]=value};
  // href properties are absolute in the DOM; compare authored attributes.
@@ -21,10 +56,10 @@ export function updateInstanceHead(branding,document){
   set(meta,'content',branding.name);
  }
  for(const link of document.querySelectorAll('link[rel="icon"]')){
-  href(link,instanceIcon(branding,32));set(link,'type','image/png');
+  href(link,instanceIcon(branding,32,accent));set(link,'type','image/png');
  }
  const apple=document.querySelector('link[rel="apple-touch-icon"]');
- if(apple)href(apple,instanceIcon(branding,180));
+ if(apple)href(apple,instanceIcon(branding,180,accent));
  const manifest=document.querySelector('link[rel="manifest"]');
- if(manifest)href(manifest,`/manifest.webmanifest?v=${encodeURIComponent(branding.revision)}`);
+ if(manifest)href(manifest,instanceManifest(branding,accent));
 }

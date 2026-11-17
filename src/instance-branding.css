@@ -9,6 +9,7 @@
 .a-instance-field>input{min-width:0;width:100%;box-sizing:border-box}
 .a-instance-colors{border:0;padding:0;margin:20px 0}
 .a-instance-colors legend{font-weight:600;margin-bottom:10px}
+.a-instance-colors .a-instance-appearance{margin-bottom:12px}
 .a-instance-colors>div{display:flex;flex-wrap:wrap;gap:10px}
 #amp-one .a-instance-colors .a-instance-swatch{background:var(--instance-swatch);color:white;width:40px;height:40px;border:2px solid transparent;border-radius:50%;font-size:20px;padding:0}
 #amp-one .a-instance-colors .a-instance-swatch[aria-pressed=true]{outline:2px solid var(--a-ink);outline-offset:3px}

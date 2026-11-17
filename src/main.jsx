@@ -52,7 +52,7 @@ import {readDetail} from './detail-read.js';
 import {trackAction,setFeedbackEventStream} from './feedback-diagnostics';
 import {ConversationError} from './conversation-controls';
 import {useShell,ShellContext,ShellSlot} from './shell/runtime';
-import {useThemeScheme,useAppearanceCache,useWindowChrome} from './theme-presentation';
+import {useThemeScheme,useAppearanceCache,useWindowChrome,useInstanceAccent} from './theme-presentation';
 import {ownershipState,actionErrorMessage} from './ownership.js';
 import {ArtifactLinks} from './inline-artifacts';
 import {withArtifactRows} from './artifact-placement';
@@ -729,7 +729,6 @@ function App(){
   const title=surface==='home'?'':surface==='workspaces'?'All workspaces':surface==='chats'?'All chats':surface==='workspace'?workspace?.name||'Workspace':session?.title?.trim();
   document.title=instanceTitle(state?.instanceBranding,title);
  },[session?.id,session?.title,state?.view?.workSurface,state?.view?.workWorkspaceId,state?.workspaces,state?.instanceBranding?.name]);
- useEffect(()=>{updateInstanceHead(state?.instanceBranding,document)},[state?.instanceBranding?.name,state?.instanceBranding?.revision]);
  useReadCompletion(state,act,messagesPane,shell.ready);
  const execution=useMemo(()=>splitWork(messages,executionData(session)),[messages,session?.id,session?.execution,session?.workers,session?.workerSummary?.bounded,session?.runtimeEvents,session?.status]);
  // Draft/setup/settings surfaces own provider discovery. Reading an existing
@@ -1022,6 +1021,8 @@ function App(){
  useAppearanceCache({root,shell,namespace:appearance.namespace,scheme:requestedScheme,mode:themeScheme,preview,compositionId:composedAppearance.id,
   activeScope:appearance.activeScope,storageVersion:appearanceCacheLocal.storageVersion,confirmed:appearanceCacheConfirmed,
   invalidate:!!appearanceCacheLocal.error||!!state&&(!hasAppearanceIdentity(state.appearance)||state.appearance.availability==='failed')});
+ const instanceAccent=useInstanceAccent({root,ready:shell.ready&&!!state&&hasAppearanceIdentity(state.appearance)&&state.appearance.availability!=='failed',namespace:hasAppearanceIdentity(state?.appearance)?state.appearance.namespace:undefined,confirmed:appearanceCacheConfirmed,preview:preview||!!shell.data?.preview,css:activeCss,scheme:themeScheme,accent:presentation.accent,compositionId:composedAppearance.id});
+ useLayoutEffect(()=>{updateInstanceHead(state?.instanceBranding,document,instanceAccent.committed)},[state?.instanceBranding?.name,state?.instanceBranding?.revision,state?.instanceBranding?.colorMode,state?.instanceBranding?.customIcon,instanceAccent.committed]);
  useLayoutEffect(()=>bindWindowControlsOverlay(root.current),[shell.ready,!!state]);
  const newChatPending=!session&&outbox.entries.some(row=>!row.closed&&outboxMatches(row,outboxSource)&&row.sessionId===null&&['sending','unknown'].includes(row.status));
  const responseActive=working||(session?.workers||[]).some(worker=>['queued','starting','working','running','stopping'].includes(worker.status));
@@ -1042,7 +1043,7 @@ function App(){
  }});
  const settingsState={...state,view:{...state?.view,settingsCanvas:canvasSettingsVisible}};
  const settingsAct=(name,args={},meta={})=>act(name,name==='view.update'&&canvasSettingsVisible&&args.patch?.panel==='settings'?{...args,patch:{...args.patch,panel:null,settingsCanvas:true}}:args,meta);
- const settingsSurface=<SettingsExperience state={settingsState} session={settingsSession} act={settingsAct} dispatch={dispatch} open={open} close={()=>canvasSettingsVisible?act('canvas.tabClose',{id:state.canvas.id}):dismissPanel()} navigationRef={settingsNavigation} appearance={<><AppearanceSettings state={state} appearance={appearance} act={dispatch} editor={appearanceEditor} previewOwner={appearancePreviewOwner} preferenceStatus={appearancePreferenceStatus} onPreferenceChange={updateAppearancePreference} onPreferenceSelect={selectAppearanceProfile}/><ComposerReturnSettings/></>}/>;
+ const settingsSurface=<SettingsExperience state={settingsState} session={settingsSession} act={settingsAct} dispatch={dispatch} open={open} close={()=>canvasSettingsVisible?act('canvas.tabClose',{id:state.canvas.id}):dismissPanel()} navigationRef={settingsNavigation} instanceAccent={instanceAccent.rendered} appearance={<><AppearanceSettings state={state} appearance={appearance} act={dispatch} editor={appearanceEditor} previewOwner={appearancePreviewOwner} preferenceStatus={appearancePreferenceStatus} onPreferenceChange={updateAppearancePreference} onPreferenceSelect={selectAppearanceProfile}/><ComposerReturnSettings/></>}/>;
  const browsing=workSurface(state)!=='chat';
  const browse=(surface,id=null)=>act('view.update',{patch:{...browsePatch(surface,id),navExpanded:false}});
  const visitHistory=async key=>{
@@ -1091,7 +1092,7 @@ function App(){
   <style>{responsiveNavigation}</style><style>{workShellCss}</style><style>{windowControlsOverlayCss}</style><style>{chatPresentationCss}</style><style>{mainRefreshCss}</style><style>{canvasExperienceCss}</style><style>{compactComposerCss}</style>
   <div className="a-window-chrome-blend" aria-hidden="true"/>
 
-  <WorkHeader state={state} session={session} act={act} open={open} narrow={narrow} presentation={presentation} fileDropHandlers={browsing?undefined:chatDrop.handlers}/>
+  <WorkHeader state={state} session={session} act={act} open={open} narrow={narrow} presentation={presentation} instanceAccent={instanceAccent.rendered} fileDropHandlers={browsing?undefined:chatDrop.handlers}/>
   <AppReloadNotice/>
   {!panel&&<ArchiveNotice value={archiveValue}/>}
   {chatLink?.status==='failed'&&<div className="a-alert" role="alert" data-chat-link-failure><span>Couldn’t open chat: {actionErrorMessage(chatLink.error)}</span><button type="button" onClick={()=>chatLinkReceiver.current.retry()}>Retry opening chat</button><button type="button" aria-label="Dismiss chat link" onClick={()=>chatLinkReceiver.current.dismiss()}><X/></button></div>}
