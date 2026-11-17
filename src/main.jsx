@@ -16,6 +16,9 @@ import {workProjectionReceipt} from './work-projection-receipt.js';
 import {hasEarlierWindow,conversationHistoryPending} from './history-window.js';
 import {ChatPages,chatPageTitles} from './chat-pages';
 import {MarkdownComposer} from './markdown-composer.jsx';
+import {useTranscriptSuggestion} from './use-transcript-suggestion.jsx';
+import {suggestionOutboxPending} from './transcript-suggestion.js';
+import {clearSuggestionModels} from './suggestion-model-settings.jsx';
 import {ComposerReturnHelp,ComposerReturnSettings} from './composer-return-preference.jsx';
 import {ComposerAdd} from './composer-add.jsx';
 import {ButtonTooltips} from './tooltips';
@@ -136,13 +139,14 @@ function App(){
  const [creatingWorkspace,setCreatingWorkspace]=useState(false);
  const actionFeedback=useRef(createActionFeedback()),outsidePointer=useRef(false),panelReturnFocus=useRef(null),settingsNavigation=useRef(null),workspaceSettingsNavigation=useRef(null);
  const dictationControl=useRef(null);
+ const suggestionFence=useRef(null),[suggestionComposing,setSuggestionComposing]=useState(false),[dictating,setDictating]=useState(false);
  // Cleared on every transport open/error; populated only by this stream's
  // authoritative baseline (then its valid delta chain), not action/GET state.
  const [streamClient,setStreamClient]=useState(null);
  const [destinationTrail,setDestinationTrail]=useState(null),destinationHistory=useRef(null);
  if(!destinationHistory.current)destinationHistory.current=createDestinationHistory({changed:setDestinationTrail});
  const deliveryAuthentication=useRef(0);
- useEffect(()=>onAuthenticationChange(scope=>{deliveryAuthentication.current++;destinationHistory.current.invalidate(scope);clearAppearanceCatalogs();setBootAttempt(value=>value+1)}),[]);
+ useEffect(()=>onAuthenticationChange(scope=>{suggestionFence.current?.reset();clearSuggestionModels();deliveryAuthentication.current++;destinationHistory.current.invalidate(scope);clearAppearanceCatalogs();setBootAttempt(value=>value+1)}),[]);
  const [state,setState]=useState(null),[catalog,setCatalog]=useState([]),[error,setError]=useState(''),[connected,setConnected]=useState(false),[busy,setBusy]=useState(false),[bootAttempt,setBootAttempt]=useState(0),[draft,setDraft]=useState(''),[workerDraft,setWorkerDraft]=useState(''),[agentAction,setAgentAction]=useState('view.update'),[agentArgs,setAgentArgs]=useState('{"patch":{"mode":"chat"}}'),[voice,setVoice]=useState({status:'idle'}),[uploading,setUploading]=useState(false);
  const [appearancePreferenceStatus,setAppearancePreferenceStatus]=useState({status:'idle'});
  // One client-document owner survives modal/Canvas Settings mount changes.
@@ -237,6 +241,8 @@ function App(){
   });
  },[acceptState]);
  const dispatch=useCallback((action,args={},meta={})=>{
+  if(['session.select','session.draft','session.create'].includes(action))suggestionFence.current?.suspend();
+  else if(['conversation.send','conversation.stop','message.edit','message.reply','attachment.add','providers.configureSuggestions'].includes(action))suggestionFence.current?.invalidate();
   if(action==='conversation.send'){
    args={sessionId:latest.current?.selectedSessionId,...args};
    if(!meta.preservePayload&&args.expectedSource===undefined){
@@ -360,6 +366,7 @@ function App(){
   const dirtyBarrier=canvasDirtyBarrier.current;
   const execute=async()=>{
    if(meta.before)await meta.before;
+   if(meta.suggestionIsCurrent&&!meta.suggestionIsCurrent())return {accepted:false};
    if(deliveryTarget&&!sameDeliveryTarget())throw Object.assign(Error('The delivery target changed. The original submission remains saved.'),{accepted:false,beforePost:true});
    if(action==='conversation.send'&&meta.outboxScope&&(meta.outboxAuthentication!==deliveryAuthentication.current||!deliveryTargetMatches(latest.current,{scope:meta.outboxScope},args.sessionId)))
     throw Object.assign(Error('The original message belongs to a different source. Nothing was sent again.'),{accepted:false,beforePost:true});
@@ -428,7 +435,7 @@ function App(){
      // Exact annotation, preview, delivery and handoff receipts settle locally,
      // even when newer than the stream. Ordinary creation and navigation still
      // wait for their authoritative state.
-     else if(!['message.reaction','peer.preview','context.inspect','conversation.delivery','session.handoff.read','session.handoff.confirm','session.handoff.cancel'].includes(action))await awaitState(result);
+     else if(!action.startsWith('session.suggestion.')&&!['providers.suggestionModels','providers.configureSuggestions','message.reaction','peer.preview','context.inspect','conversation.delivery','session.handoff.read','session.handoff.confirm','session.handoff.cancel'].includes(action))await awaitState(result);
     }catch(error){
      // An accepted reset is not a refusal when only its following read fails.
      // Keep the exact receipt; the Canvas owner offers a read, never a replay.
@@ -457,7 +464,7 @@ function App(){
   const appearanceRead=isAppearanceRead(action,meta);
   // Optional plan summaries have their own exact read result; they must not
   // hold up browsing or ordered mutations while canonical files are read.
-  const planRead=action==='session.plans'||action==='context.inspect';
+  const planRead=action==='session.plans'||action==='context.inspect'||action.startsWith('session.suggestion.')||action==='providers.suggestionModels';
   // Reveal joins document ordering AND visibility ordering without merging their
   // queues globally. Capture the prior visibility tail before publishing this one.
   const after=permissionHistory?canvasVisibilityQueue.current:(catalogRead&&!choiceRead||appearanceRead)?commandQueue.current:null;
@@ -712,6 +719,7 @@ function App(){
  const detail=useConversationDetail(state?.sessions?.find(s=>s.id===state.selectedSessionId),()=>{stickToBottom.current=false;const pane=messagesPane.current;if(!pane)return;const top=pane.getBoundingClientRect().top,anchor=[...pane.querySelectorAll('[data-message-id]')].find(node=>node.getBoundingClientRect().bottom>top);if(anchor)historyScrollAnchor.current={sessionId:state.selectedSessionId,messageId:anchor.dataset.messageId,top:anchor.getBoundingClientRect().top}},dispatch);
  useEffect(()=>{if(detail.jumpRequest){const frame=requestAnimationFrame(()=>detail.jumpRequest.id==='latest'?chatScroll.current?.reveal():chatScroll.current?.jump(detail.jumpRequest.id));return()=>cancelAnimationFrame(frame)}},[detail.jumpRequest]);
  const session=detail.session,view=state?.view||{},mode=view.mode||'chat',activity=sessionStatus(session),working=activity.busy;
+ useEffect(()=>{setSuggestionComposing(false);setDictating(false)},[session?.id]);
  const externalConversation=!!(session?.externalAgent||(!session&&draftExternalAgentIds(view.newSessionDraft).length));
  const sharedConversation=isSharedExternalConversation(session)||!session&&draftExternalAgentIds(view.newSessionDraft).length>1;
  const outboxSource=deliveryScope(state,session);
@@ -868,6 +876,7 @@ function App(){
   draftSaves.current.set(payload,save);save.catch(()=>draftSaves.current.delete(payload));return save;
  }
  function editDraft(value,documentValue){
+  suggestionFence.current?.invalidate();
   if(referenceDraftLock.current||latest.current?.draftNavigationPending)return;
   if(documentValue===undefined&&value&&quoteApi.current?.document()){
    if(value.startsWith(lastDraft.current)){try{quoteApi.current.append(value.slice(lastDraft.current.length));}catch(error){reportError(error)}return;}
@@ -902,6 +911,7 @@ function App(){
  }
  function addFiles(files){
   if(!files?.length||executionUnavailable||historyPending)return;
+  suggestionFence.current?.invalidate();
   if(externalConversation){setError("This agent currently accepts text messages. Paste the relevant text instead.");return;}
   const target=latest.current?.selectedSessionId??null,selected=Array.from(files),expectedDraftId=target===null?latest.current?.attachmentDraftId:undefined;
   const admittedClient=latest.current?.client?.id,admittedHost=latest.current?.client?.hostInstanceId;
@@ -959,6 +969,7 @@ function App(){
   await deliver(next);
  }
  async function send(e){
+  if(quoteApi.current?.suggestionValidating?.()){e?.preventDefault();return}
   dictationControl.current?.cancel();
   e?.preventDefault();if(referenceDraftLock.current)return;if((!draft.trim()&&!availableAttachments.length)||uploadCount.current||busy||newChatPending||historyPending||executionUnavailable)return;
   preserveOtherDraft(session?.id??null);
@@ -1044,6 +1055,13 @@ function App(){
  const settingsAct=(name,args={},meta={})=>act(name,name==='view.update'&&canvasSettingsVisible&&args.patch?.panel==='settings'?{...args,patch:{...args.patch,panel:null,settingsCanvas:true}}:args,meta);
  const settingsSurface=<SettingsExperience state={settingsState} session={settingsSession} act={settingsAct} dispatch={dispatch} open={open} close={()=>canvasSettingsVisible?act('canvas.tabClose',{id:state.canvas.id}):dismissPanel()} navigationRef={settingsNavigation} appearance={<><AppearanceSettings state={state} appearance={appearance} act={dispatch} editor={appearanceEditor} previewOwner={appearancePreviewOwner} preferenceStatus={appearancePreferenceStatus} onPreferenceChange={updateAppearancePreference} onPreferenceSelect={selectAppearanceProfile}/><ComposerReturnSettings/></>}/>;
  const browsing=workSurface(state)!=='chat';
+ // Navigation/work-surface departure is handled by the suggestion owner so it
+ // may retain READY privately. Actual history loading and safety blockers clear it.
+ const suggestionBlocked=!!(!shell.ready||!hasAppearanceIdentity(state?.appearance)||state?.appearance?.availability==='failed'||draft||busy||uploading||availableAttachments.length||referencingDraft||suggestionComposing||dictating||callActive||voiceStarting||conversationHistoryPending(session,false,messages)||executionUnavailable||detail.focused||!connected||
+  suggestionOutboxPending(outbox.entries,outboxSource,session?.id));
+ const suggestion=useTranscriptSuggestion({state,readState:()=>pendingView.current.apply(latest.current),act:dispatch,blocked:suggestionBlocked,connected,
+  recipient:recipientAgentId,canUse:()=>!lastDraft.current&&!uploadCount.current&&!referenceDraftLock.current&&!dictationControl.current?.current&&!suggestionOutboxPending(outbox.current.current,deliveryScope(latest.current,session),session?.id)&&!pendingView.current.apply(latest.current)?.draftNavigationPending});
+ suggestionFence.current=suggestion.owner;
  const browse=(surface,id=null)=>act('view.update',{patch:{...browsePatch(surface,id),navExpanded:false}});
  const visitHistory=async key=>{
   const entry=destinationHistory.current.snapshot().entries.find(row=>row.key===key);
@@ -1119,7 +1137,7 @@ function App(){
     <div className="a-compose-writing">
     <AttachmentStrip privateDraft sessionId={session?.id??null} items={availableAttachments} remove={id=>act('attachment.remove',{sessionId:session?.id??null,id})}/>{uploading&&<p role="status" className="a-upload-status">Uploading attachments…</p>}
     <ReplyPreview quote={state.view?.messageReply} sessionId={session?.id} dispatch={dispatch}/>
-    <MarkdownComposer key={session?.id??'new-chat'} returnHelpId={composerReturnHelpId} editorRef={composerRef} quoteApi={quoteApi} value={draft} document={state.view?.draftDocument} onChange={editDraft} onSend={send} onQuoteRemoved={left=>setQuoteNotice(notice=>quoteNoticeAfterRemoval(notice,session?.id,left))} onReveal={async(quote,button)=>{
+    <MarkdownComposer key={session?.id??'new-chat'} returnHelpId={composerReturnHelpId} editorRef={composerRef} quoteApi={quoteApi} value={draft} document={state.view?.draftDocument} onChange={editDraft} onSend={send} suggestion={suggestion.ghost} onSuggestionSupersede={suggestion.supersede} onComposing={setSuggestionComposing} onQuoteRemoved={left=>setQuoteNotice(notice=>quoteNoticeAfterRemoval(notice,session?.id,left))} onReveal={async(quote,button)=>{
      const sid=session?.id,owner=quoteApi.current;
      if(quote.sessionId!==sid)throw Error('This source is from another chat. Cross-chat quotation is not available.');
      const top=messagesPane.current?.scrollTop;
@@ -1139,7 +1157,7 @@ function App(){
     </div>
     <div role="status" aria-live="polite" aria-atomic="true" className="a-sr-only">{sendingHere?'Sending message…':''}</div>
     {!externalConversation&&<ComposerAdd sessionId={session?.id} panel={settingsRoute||null} disabled={uploading||executionUnavailable||historyPending} accessDisabled={browsing} onFiles={kind=>{fileInput.current.accept=kind==='image'?'image/*':'';fileInput.current.click()}} onAccess={()=>open('chat-write-files')}><input ref={fileInput} type="file" multiple className="a-file-input" aria-label="Attach files" data-action="attachment.add" onChange={e=>{addFiles([...e.target.files]);e.target.value=''}}/></ComposerAdd>}
-    <div className="a-compose-end"><DictationButton key={session?.id??'dictation-new'} draft={draft} onChange={value=>{if((latest.current?.selectedSessionId??null)===(session?.id??null))editDraft(value)}} controlRef={dictationControl} disabled={executionUnavailable||historyPending||referencingDraft||sendingHere||browsing||callActive}/><button type={primaryAction.action==='conversation.send'?'submit':'button'} className="a-send" data-part="composer-primary-action" data-action={primaryAction.action} aria-label={primaryAction.action==='call.start'&&state.voiceConfiguration?.available===false?'Set up voice':primaryAction.label} title={primaryAction.action==='call.start'&&state.voiceConfiguration?.available===false?'Set up voice in Settings':primaryAction.label} disabled={primaryAction.disabled||(referencingDraft&&primaryAction.action==='conversation.send')} onClick={primaryAction.action==='call.start'?startCall:primaryAction.action==='call.end'?()=>act('call.end'):primaryAction.action==='conversation.stop'?()=>act('conversation.stop',{sessionId:session.id}):undefined}>{primaryAction.icon==='voice'?<AudioLines/>:primaryAction.icon==='cancel'?<X/>:<ArrowUp/>}</button></div>
+    <div className="a-compose-end"><DictationButton key={session?.id??'dictation-new'} draft={draft} onChange={value=>{if((latest.current?.selectedSessionId??null)===(session?.id??null))editDraft(value)}} controlRef={dictationControl} onListening={value=>{if(value)suggestionFence.current?.invalidate();setDictating(value)}} disabled={executionUnavailable||historyPending||referencingDraft||sendingHere||browsing||callActive}/><button type={primaryAction.action==='conversation.send'?'submit':'button'} className="a-send" data-part="composer-primary-action" data-action={primaryAction.action} aria-label={primaryAction.action==='call.start'&&state.voiceConfiguration?.available===false?'Set up voice':primaryAction.label} title={primaryAction.action==='call.start'&&state.voiceConfiguration?.available===false?'Set up voice in Settings':primaryAction.label} disabled={primaryAction.disabled||(referencingDraft&&primaryAction.action==='conversation.send')} onClick={primaryAction.action==='call.start'?startCall:primaryAction.action==='call.end'?()=>act('call.end'):primaryAction.action==='conversation.stop'?()=>act('conversation.stop',{sessionId:session.id}):undefined}>{primaryAction.icon==='voice'?<AudioLines/>:primaryAction.icon==='cancel'?<X/>:<ArrowUp/>}</button></div>
     </div>
     <ComposerReturnHelp id={composerReturnHelpId}/>
     <div className="a-compose-configuration">

@@ -9,6 +9,7 @@ import {splitListItem,liftListItem,sinkListItem,wrapInList} from 'prosemirror-sc
 import {unified} from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
+import {suggestionText,suggestionEditorEmpty} from './transcript-suggestion.js';
 
 // Markdown image references remain editable without fetching remote images.
 // Actual images use the existing attachment upload path.
@@ -80,6 +81,16 @@ const serializer=new MarkdownSerializer({...defaultMarkdownSerializer.nodes,
  reference(state,node){state.write('From '+node.attrs.quote.speaker+' (historical reference):\n');for(const line of node.attrs.quote.excerpt.split('\n'))state.write('> '+line+'\n');state.closeBlock(node);}
 },{...defaultMarkdownSerializer.marks,strike:{open:'~~',close:'~~',mixable:true,expelEnclosingWhitespace:true}});
 export const composerMarkdown=doc=>serializer.serialize(doc);
+// One undoable literal-text insertion. Never run Markdown, mention or command
+// parsing, draft replacement, or a send action when accepting assistance.
+export function insertComposerSuggestion(view,value){
+ const text=suggestionText(value);
+ if(!text||view.composing||!suggestionEditorEmpty(view.state.doc))return false;
+ const tr=closeHistory(view.state.tr).setStoredMarks([]).insertText(text,1);
+ view.dispatch(tr.setSelection(TextSelection.create(tr.doc,1+text.length)).scrollIntoView());
+ view.dispatch(closeHistory(view.state.tr));
+ view.focus();return true;
+}
 const sourceDocument=text=>composerSchema.nodes.doc.create(null,composerSchema.nodes.markdown_source.create(null,text?composerSchema.text(text):null));
 // The reader already owns the CommonMark/GFM grammar. Compare semantic trees
 // before importing rich content, so dialect differences (for example one-tilde
