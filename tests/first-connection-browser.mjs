@@ -11,12 +11,14 @@
 //
 // With AMPLIFIER_TEST_FULL_CHROMIUM=<a full Chromium, Chrome or Edge binary> and
 // a display (for example under xvfb-run): the browser's own password manager
-// kept the pasted key, judged the save and the leaving of the page, and made no
-// offer to save the key. A second browser of the same kind, which holds only a
-// control page with the earlier field, gets the offer. Each browser has its own
-// record, so no offer can be counted for the wrong page. The record of the
-// first browser is read once more at the end. The headless shell that the other
-// journeys use has no password manager, so it cannot show this part.
+// kept the pasted key, judged the save and the leaving of the page, and decided
+// neither to ask nor to save by itself. A second browser of the same kind, which
+// holds only a control page with the earlier field, decides to ask. Each browser
+// has its own record, so no decision can be counted for the wrong page. The
+// record of the first browser is read once more at the end. Not covered: a save
+// by hand through the browser's own key symbol, which the browser offers for
+// every hidden field that a person typed into. The headless shell that the
+// other journeys use has no password manager, so it cannot show this part.
 import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -30,6 +32,8 @@ import {read,clientRecord,controlRecord} from './password-manager-log.mjs';
 const artifacts=process.env.AMPLIFIER_TEST_ARTIFACTS||'output/first-connection';
 const fullChromium=process.env.AMPLIFIER_TEST_FULL_CHROMIUM;
 const key='sk-fixture-0123456789-not-a-real-key';
+// A row as the host publishes it. The host keeps `eligible` in its private inventory and removes the field from
+// the rows that it sends (amplifier_web/updates.py `group_sources`); the client reads no such field.
 const component=id=>({id,label:id,kind:'bundle',status:'update',missing:true,updateTier:'included',current:null,latest:'required'});
 // The host's own waiting state (amplifier_web/update_health.py `current`).
 const updates={phase:'checked',initialPreparation:true,lastCheck:1794900000,
@@ -56,13 +60,15 @@ const earlier=`<!doctype html><meta charset="utf-8"><title>Control</title><div i
 <script>document.getElementById('save').onclick=async()=>{await fetch('/api/control',{method:'POST',body:'{}'});document.getElementById('root').innerHTML='<p>Saved</p>'}</script>`;
 const blank='<!doctype html><meta charset="utf-8"><title>Blank</title><p>Blank</p>';
 let browser,context,vite,failure;
-const full=[];
+const full=[],profiles=[];
 // A full browser with its own profile and its own record of what its password manager saw and decided, in order.
 async function fullBrowser(){
  const profile=await mkdtemp(path.join(tmpdir(),'first-connection-'));
+ // Noted before the launch: the folder is removed at the end also when the browser does not start.
+ profiles.push(profile);
  // Automation mode switches the browser's offer to save a password off.
  const opened=await chromium.launchPersistentContext(profile,{executablePath:fullChromium,headless:false,viewport:{width:1280,height:900},ignoreDefaultArgs:['--enable-automation'],args:['--no-first-run']});
- full.push({context:opened,profile});
+ full.push(opened);
  // The record is written only while this page is open.
  const log=opened.pages()[0]||await opened.newPage();
  await log.goto('chrome://password-manager-internals/');
@@ -206,15 +212,15 @@ try{
   // Last: the first browser stayed open all the time. Its record still holds no offer.
   await writeFile(path.join(artifacts,'password-manager-client-final.log'),(await client.lines()).join('\n'));
   assert.deepEqual((await record()).offers,[],'the browser decided late to offer to save the AI key as a password');
-  coverage=`Password manager of ${version}: it kept the pasted key, judged the save and the leaving of the page, and made no offer, also not later; a second browser with only the control page and the earlier field got the offer for that field.`;
+  coverage=`Password manager of ${version}: it kept the pasted key, judged the save and the leaving of the page, and its record holds no decision to ask or to save and no prompt, up to the last reading at the end of this run; a second browser with only the control page and the earlier field decided to ask for that field. A save by hand through the browser's own key symbol is NOT COVERED.`;
  }
  assert.deepEqual(errors,[]);
  console.log('PASS (synthetic client fixture): before an AI connection the welcome panel has no spinner and the Updates page offers the connection and no installation; the AI key field has its label, hides the key, takes a paste, stays out of the client\u2019s view, and sends the key only with the save. '+coverage+' An actual host and real Microsoft Edge on Windows are NOT COVERED here.');
 }catch(error){failure=error;throw error}
 finally{
  if(!fullChromium)await context?.close().catch(()=>{});
- for(const {context:opened} of full)await opened.close().catch(()=>{});
+ for(const opened of full)await opened.close().catch(()=>{});
  await browser?.close().catch(()=>{});await vite?.close();
- for(const {profile} of full)await rm(profile,{recursive:true,force:true}).catch(()=>{});
+ for(const profile of profiles)await rm(profile,{recursive:true,force:true}).catch(()=>{});
  if(failure)console.error('FAIL: '+failure.message.split('\n')[0]);
 }

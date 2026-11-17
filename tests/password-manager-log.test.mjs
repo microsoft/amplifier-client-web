@@ -30,6 +30,16 @@ test('a record in which the manager did not check is not a judgment',()=>{
   {kept:false,judgedSave:false,judgedLeaving:false,complete:false,offers:[]});
  // The kept value belongs to another field.
  assert.equal(clientRecord(record(newPage,keep(controlField),check('OnDynamicFormSubmission'),newPage,newPage),'ai-private-key').kept,false);
+ // The field of that name with another type is not a kept password.
+ assert.equal(clientRecord(record(newPage,keep(clientField.replace('type=password','type=text')),check('OnDynamicFormSubmission'),newPage,newPage),'ai-private-key').kept,false);
+ // A field line counts only inside the form block of the message that kept the value:
+ // not after the end of that block, not without the block's start, not without its end, and not in a block of the next message.
+ const outside=(...lines)=>clientRecord(record(newPage,['Message:  PasswordManager::ProvisionallySaveForm ',...lines,''],check('OnDynamicFormSubmission'),newPage,newPage),'ai-private-key').kept;
+ assert.equal(outside('Form parsing input: {','Form fields: ',clientField,'}'),true);
+ assert.equal(outside('Form parsing input: {','Form fields: ','}',clientField),false);
+ assert.equal(outside(clientField),false);
+ assert.equal(outside('Form parsing input: {','Form fields: ',clientField),false);
+ assert.equal(outside('',...say('PasswordAutofillAgent::SendPasswordForms'),'Form is a password form: {','Form fields: ',clientField,'}'),false);
  // A key that the field does not hold is not kept.
  assert.equal(clientRecord(record(newPage,keep(clientField.replace('non-empty','empty')),check('OnDynamicFormSubmission'),newPage,newPage),'ai-private-key').kept,false);
  // A checked submission before the key was kept does not count.

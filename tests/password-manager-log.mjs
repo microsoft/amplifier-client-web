@@ -11,13 +11,15 @@ const decided=line=>/Decision: (?!DROP\b)/.test(line);
 // Every such decision, and the prompt that the browser opened.
 export const offers=lines=>lines.filter(line=>decided(line)||/Show password prompt/.test(line));
 const decision=lines=>lines.findIndex(decided);
-// The field lines of the form that the message at `at` is about (the browser prints them under "Form fields:").
+// The field lines of the form that the message at `at` is about. The browser prints them before its next message,
+// between "Form fields:" and the "}" that ends the block. A block without its start or its end is not read: the
+// record can be in the middle of a write.
 function fields(lines,at){
- const next=lines.findIndex((line,i)=>i>at&&line.startsWith('Message:')),end=next<0?lines.length:next;
- const start=lines.findIndex((line,i)=>i>at&&i<end&&line.startsWith('Form fields:'));
- if(start<0)return [];
- const close=lines.findIndex((line,i)=>i>start&&i<end&&line==='}');
- return lines.slice(start+1,close<0?end:close);
+ const next=lines.findIndex((line,i)=>i>at&&line.startsWith('Message:'));
+ const own=lines.slice(at+1,next<0?lines.length:next);
+ const start=own.findIndex(line=>line.startsWith('Form fields:'));
+ const close=start<0?-1:own.findIndex((line,i)=>i>start&&line==='}');
+ return close<0?[]:own.slice(start+1,close);
 }
 // Each time the manager kept a typed value as a possible password: where, and the fields of that form.
 const kept=lines=>lines.flatMap((line,at)=>message('PasswordManager::ProvisionallySaveForm')(line)?[{at,fields:fields(lines,at)}]:[]);

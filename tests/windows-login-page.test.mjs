@@ -10,7 +10,7 @@ const script=readFileSync(new URL('../public/browser-entry.js',import.meta.url),
 const sentence='Open Amplifier from the Start menu: Amplifier Unified. If the Start menu has no such entry, run this: amplifier-unified open.';
 // The status line as the page holds it before its script runs.
 const shown=page.match(/<p id="entry-status" role="status">([^<]*)<\/p>/)?.[1];
-function open(hash,before=shown){
+function open(hash,before){
  const status={textContent:before},submitted=[];
  const form={action:'/api/browser-entry/redeem',elements:{ticket:{value:''}},submit(){submitted.push(this.elements.ticket.value)}};
  const location={hash,pathname:'/login',search:'',protocol:'https:',origin:'https://127.0.0.1:8443',hostname:'127.0.0.1',href:'https://127.0.0.1:8443/login'+hash};
@@ -27,7 +27,7 @@ test('the Windows sign-in page names the Start menu first and uses no word of th
  assert.doesNotMatch(page+script,/owner launcher|owner handoff|this candidate|not available|Hello PIN|this host/);
 });
 
-test('without a ticket the script writes the same sentence that the page shows',()=>{
+test('without a ticket the script writes the sentence, which the first case shows to be the page\u2019s own',()=>{
  for(const hash of ['','#ticket=too-short','#ticket='+'A'.repeat(43)+'&more=1']){
   // The status line starts with another text here, so the sentence can only come from the script.
   const {status,submitted}=open(hash,'the text before the script ran');
