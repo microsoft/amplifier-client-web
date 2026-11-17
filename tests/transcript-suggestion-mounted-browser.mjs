@@ -110,7 +110,10 @@ if(process.argv.includes('--preflight')){
   await page.evaluate(()=>window.suggestionFixture.setDraft(''));
   report.acceptance={Tab:true,click:true,touch:true,Undo:true,Escape:true,IME:true,hiddenCompletionZero:true,metadataSameAttemptPolled:true,earlierEditInvalidatesNoReplacement:true,pendingCancelledDurably:true,heldAcceptanceDepartureNoInsert:true,repeatedTabReturnSubmitNoSend:true,newerDraftPreserved:true,serverOnlyStaleRejected:true,noChat:true};
   await expect(page.getByLabel('Suggestion model',{exact:true})).toBeVisible();
-  assert.ok((await calls('providers.models')).length>=1,'Uses ordinary saved-connection model discovery');
+  assert.equal((await calls('providers.models')).length,0,'Full exact-key setup projection already hydrates the deferred shared catalog');
+  await expect(page.getByLabel('Suggestion model',{exact:true}).locator('option[value="haiku-fixture"]')).toHaveCount(1);
+  await page.getByRole('button',{name:'Refresh suggestion models'}).click();
+  assert.deepEqual((await calls('providers.models')).at(-1).args,{id:'cheap',scope:'global',configurationTarget:{kind:'global'},refresh:true},'Explicit refresh uses ordinary global discovery');
   const model=page.getByLabel('Suggestion model',{exact:true});await model.selectOption('other-model');
   const effort=page.getByRole('slider',{name:/Reasoning effort/});await effort.fill('2');
   await page.getByRole('button',{name:'Save suggestion settings'}).click();await expect(page.getByText('Saved. Applies to the next suggestion request.',{exact:true})).toBeVisible();

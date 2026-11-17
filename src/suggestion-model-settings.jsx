@@ -43,14 +43,21 @@ export function SuggestionSettings({state,act,navigate}){
  const providers=(data.providers||[]).filter(row=>row.enabled!==false&&!row.authenticationRequired);
  const chosen=providers.find(row=>row.id===value.provider);
  const layout=useContext(SettingsLayoutContext),id=useId(),requested=useRef(new Set()),[catalogError,setCatalogError]=useState('');
- const globalSetup=state.setup?.configurationTarget?.kind==='global'?state.setup:null;
- const entry=state.modelCatalogs?.[chosen?.sharedCatalogKey]||globalSetup?.providerCatalogs?.[value.provider];
+ const catalogKey=chosen?.sharedCatalogKey,shared=catalogKey?state.modelCatalogs?.[catalogKey]:undefined;
+ const setupEntry=state.setup?.providerCatalogs?.[chosen?.id];
+ // The global roster's exact connection key supplies authority, not a setup
+ // surface marker or provider ID. Public projections may defer the shared
+ // models while providers.models has already published their full setup entry.
+ const matching=catalogKey&&setupEntry?.sharedCatalogKey===catalogKey?setupEntry:undefined;
+ const hydrated=shared?.modelsDeferred&&!Array.isArray(shared.models)&&shared.phase==='ready'&&matching?.phase==='ready'&&Array.isArray(matching.models)&&!(shared.loadedAt!=null&&matching.loadedAt<shared.loadedAt);
+ const entry=hydrated?{...shared,...matching,modelsDeferred:false}:shared||matching;
+ const needsCatalog=!entry||entry.modelsDeferred&&!Array.isArray(entry.models);
  const choices=(providerFields(entry?.metadata||chosen,{model:value.model,default_model:value.model}).find(field=>field.id==='reasoning_effort')?.choices||[]).map(row=>typeof row==='object'?row.value:row);
  useEffect(()=>{
   const key=JSON.stringify([scope,config?.revision,value.provider,chosen?.sharedCatalogKey]);
-  if(!layout.active||!chosen||entry||requested.current.has(key))return;
+  if(!layout.active||!chosen||!needsCatalog||requested.current.has(key))return;
   requested.current.add(key);void refreshCatalog();
- },[scope,config?.revision,value.provider,chosen?.sharedCatalogKey,entry,layout.active]);
+ },[scope,config?.revision,value.provider,chosen?.sharedCatalogKey,needsCatalog,layout.active]);
  async function refreshCatalog(refresh=false){
   if(!chosen)return;setCatalogError('');
   try{
