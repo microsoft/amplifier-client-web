@@ -5,6 +5,18 @@ import {composerState,insertComposerSuggestion,composerMarkdown,composerDocument
 import {undo,redo} from 'prosemirror-history';
 
 const frame=()=>({client:{hostInstanceId:'host',historyScope:'principal'},selectedSessionId:'s',view:{},sessions:[{id:'s',status:'idle',messages:[{id:'a',role:'assistant',text:'Done.'}]}]});
+test('controller observes unselected pre-client boot states without allocating work',()=>{
+ for(const initial of [undefined,null,{}, {sessions:[]},{selectedSessionId:undefined,sessions:[]},{selectedSessionId:null,sessions:[]}]){
+  let state=initial;
+  const controller=createSuggestionController({readState:()=>state,requestId:()=> 'boot-attempt'});
+  assert.doesNotThrow(()=>controller.observe(state,undefined,false));
+  assert.equal(controller.nextRequest(),null);assert.equal(controller.candidate(),null);
+  state=frame();state.selectedSessionId=null;
+  controller.observe(state,'model1',false);assert.equal(controller.nextRequest(),null);
+  state.selectedSessionId='s';controller.observe(state,'model1',true);
+  assert.deepEqual(controller.nextRequest(),{sessionId:'s',requestId:'boot-attempt',expectedLastMessageId:'a'});
+ }
+});
 function harness(){
  let state=frame(),eligible=true,revision='model1',time=100,sequence=0,statusPatch={},statusReader=null;
  const result=args=>({requestId:args.requestId,sessionId:args.sessionId,status:'ready',suggestion:'Try this',sourceKey:'source',configRevision:'model1'});

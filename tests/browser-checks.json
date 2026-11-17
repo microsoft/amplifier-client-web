@@ -45,6 +45,11 @@
       "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/transcript-suggestion-mounted"}
     },
     {
+      "id": "transcript-suggestion-boot",
+      "command": ["node", "tests/transcript-suggestion-boot-browser.mjs"],
+      "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/transcript-suggestion-boot"}
+    },
+    {
       "id": "composer-return",
       "command": ["node", "tests/composer-return-browser.mjs"],
       "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/composer-return"}

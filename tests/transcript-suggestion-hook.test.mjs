@@ -13,6 +13,29 @@ const {suggestionScope}=await server.ssrLoadModule('/src/transcript-suggestion.j
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 test.after(()=>server.close());
 
+test('hook mounts before client state and waits through unselected boot snapshots until eligible',async()=>{
+ const originals={window:globalThis.window,document:globalThis.document,sessionStorage:globalThis.sessionStorage};
+ globalThis.window=new EventTarget();globalThis.document=Object.assign(new EventTarget(),{hidden:false,hasFocus:()=>true});globalThis.sessionStorage={getItem:()=> 'true'};
+ try{
+  for(const initial of [undefined,null,{}, {sessions:[]},{selectedSessionId:undefined,sessions:[]},{selectedSessionId:null,sessions:[]}]){
+   let state=initial,root,suggestion;const calls=[];
+   const act=async(action,args)=>{calls.push({action,args});return {accepted:true,result:{...args,status:'pending',suggestion:null,configRevision:'boot-config',sourceKey:'boot-source'}}};
+   function Probe(){suggestion=useTranscriptSuggestion({state,readState:()=>state,act,blocked:false,canUse:()=>true});return null}
+   const render=()=>renderAct(async()=>{if(root)root.update(React.createElement(Probe));else root=create(React.createElement(Probe))});
+   try{
+    await render();assert.equal(suggestion.ghost,null);assert.deepEqual(calls,[]);
+    state={client:{hostInstanceId:crypto.randomUUID(),historyScope:'boot-principal'},selectedSessionId:null,view:{},sessions:[]};
+    publishSuggestionModels(suggestionScope(state),{suggestionModels:{enabled:true,revision:'boot-config'},providers:[]},0);
+    await render();assert.equal(suggestion.ghost,null);assert.deepEqual(calls,[]);
+    state.sessions=[{id:'s',status:'working',messages:[{id:'a',role:'assistant',text:'Interim',streaming:true}]}];state.selectedSessionId='s';
+    await render();assert.deepEqual(calls,[]);
+    state.sessions[0]={id:'s',status:'idle',messages:[{id:'a',role:'assistant',text:'Committed'}]};
+    await render();assert.equal(calls.filter(row=>row.action==='session.suggestion.request').length,1);
+   }finally{await renderAct(async()=>root?.unmount())}
+  }
+ }finally{Object.assign(globalThis,originals)}
+});
+
 async function scenario({wrongReady=false,ready=false}={}){
  const originals={window:globalThis.window,document:globalThis.document,sessionStorage:globalThis.sessionStorage};
  globalThis.window=new EventTarget();globalThis.document=Object.assign(new EventTarget(),{hidden:false,hasFocus:()=>true});globalThis.sessionStorage={getItem:()=> 'true'};

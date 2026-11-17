@@ -59,7 +59,7 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
   // or explicit configuration/source selection can allocate inference again.
   const attemptKey=witness&&JSON.stringify([nextScope,deliveryScope(state,session),session.id,witness.lastMessageId,configRevision,recipient,session.nextMessageRevision??0,session.interruptionRevision??0]);
   if(nextScope!==scope){scope=nextScope;spent.clear();ready.clear();suspend()}
-  if(current?.sessionId===state?.selectedSessionId&&(current.key!==key||!eligible&&!retainReady))ready.delete(current?.key);
+  if(current&&current.sessionId===state?.selectedSessionId&&(current.key!==key||!eligible&&!retainReady))ready.delete(current.key);
   if(current?.key!==key||current?.eligible!==eligible)suspend();
   current={key,attemptKey,witness,eligible,configRevision,sessionId:state?.selectedSessionId};
  }
