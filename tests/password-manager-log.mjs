@@ -4,9 +4,13 @@
 // a record that does not prove its point.
 export const read=text=>text.split('\n').map(line=>line.trim()).filter(Boolean);
 const message=name=>line=>line.startsWith('Message:')&&line.includes(name);
-// The browser asked the person, saved by itself, or opened its prompt. "Decision: DROP the password" is no offer.
-export const offers=lines=>lines.filter(line=>/Decision: (ASK|SAVE)|Show password prompt/.test(line));
-const decision=lines=>lines.findIndex(line=>/Decision: (ASK|SAVE)/.test(line));
+// The manager's decision to ask the person, or to save or update by itself. Its words differ between browser
+// versions ("Decision: SAVE the password" in Chromium 149, "Decision: Attempting to SAVE/UPDATE the password
+// without prompting the user" later), so every decision counts except the one that drops the value.
+const decided=line=>/Decision: (?!DROP\b)/.test(line);
+// Every such decision, and the prompt that the browser opened.
+export const offers=lines=>lines.filter(line=>decided(line)||/Show password prompt/.test(line));
+const decision=lines=>lines.findIndex(decided);
 // The field lines of the form that the message at `at` is about (the browser prints them under "Form fields:").
 function fields(lines,at){
  const next=lines.findIndex((line,i)=>i>at&&line.startsWith('Message:')),end=next<0?lines.length:next;

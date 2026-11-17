@@ -52,17 +52,25 @@ test('an offer for the key is found where it is made and when it comes late',()=
  assert.deepEqual(atSave.offers,['Message:  Decision: ASK the user','Message:  Show password prompt']);
  // After everything else, in a later reading of the same record.
  assert.equal(clientRecord(record(...client,ask),'ai-private-key').offers.length,2);
- // A save without a question is an offer too. A dropped value is not.
- assert.deepEqual(offers(record(say('Decision: SAVE the password'))),['Message:  Decision: SAVE the password']);
+ // A save without a question is an offer too, in the words of Chromium 149 and in the words of later versions.
+ for(const words of ['Decision: SAVE the password','Decision: Attempting to SAVE/UPDATE the password without prompting the user',
+  'Decision: UPDATE the saved credential with a new password','Decision: SAVE the newly created credential'])
+  assert.deepEqual(offers(record(say(words))),['Message:  '+words],words);
+ // A dropped value is not an offer.
  assert.deepEqual(offers(record(say('Decision: DROP the password'))),[]);
+ assert.deepEqual(clientRecord(record(...client,say('Decision: DROP the password')),'ai-private-key').offers,[]);
 });
 
 test('the record of the control page ties the offer to the control field',()=>{
  assert.deepEqual(controlRecord(record(...control),'key','ai-private-key'),{foreign:false,offered:true});
  // No decision yet.
  assert.deepEqual(controlRecord(record(newPage,keep(controlField),check('OnDynamicFormSubmission')),'key','ai-private-key'),{foreign:false,offered:false});
- // The prompt alone, without the manager's decision, is not tied to a field.
+ // The prompt alone, without the manager's decision, is not tied to a field. A dropped value is no offer.
  assert.equal(controlRecord(record(newPage,keep(controlField),say('Show password prompt')),'key','ai-private-key').offered,false);
+ assert.equal(controlRecord(record(newPage,keep(controlField),check('OnDynamicFormSubmission'),say('Decision: DROP the password')),'key','ai-private-key').offered,false);
+ // A later browser version writes other words for a save without a question.
+ const later=record(newPage,keep(controlField),check('OnDynamicFormSubmission'),say('Decision: Attempting to SAVE/UPDATE the password without prompting the user'));
+ assert.deepEqual(controlRecord(later,'key','ai-private-key'),{foreign:false,offered:true});
 });
 
 test('an offer in a record that holds the client field is not counted for the control',()=>{
