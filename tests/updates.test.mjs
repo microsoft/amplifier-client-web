@@ -962,6 +962,12 @@ test('before an AI connection the Updates page offers the connection and no inst
  await renderAct(async()=>connect[0].props.onClick());
  // The click opens Settings > AI connections and requests no installation.
  assert.deepEqual(calls,[['view.update',{patch:{panel:'settings',settingsSection:'setup',settingsExpanded:['ai-connections']}}]]);
+ // Inside Settings the page uses the navigation that Settings passes to it.
+ const opened=[];
+ await renderAct(async()=>root.update(React.createElement(UpdateSettings,{state:state(waitingUpdates),act:dispatch,navigate:page=>opened.push(page)})));
+ await renderAct(async()=>root.root.findAllByType('button').find(button=>button.findAllByType('span').some(span=>span.children.join('')==='Set up an AI connection')).props.onClick());
+ assert.deepEqual(opened,['ai-connections']);
+ assert.equal(calls.length,1);
  const html=render(waitingUpdates);
  assert.match(html,/Components update after you set up an AI connection/);
  assert.match(html,/Nothing failed\./);

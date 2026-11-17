@@ -12,7 +12,7 @@ test.after(()=>server.close());
 const field=(html,id)=>html.match(new RegExp(`<input[^>]*\\bid="${id}"[^>]*>`))?.[0]||'';
 
 // Chromium offers to save a password field with the purpose `off` or
-// `new-password` as a sign-in password. tests/ai-key-field-browser.mjs shows
+// `new-password` as a sign-in password. tests/first-connection-browser.mjs shows
 // that offer, and its absence, in a real browser.
 test('the AI key field is a hidden field with a label and is not a sign-in password',()=>{
  const html=renderToStaticMarkup(React.createElement(AIConnections,{navigate:()=>{},act:async()=>({accepted:true}),

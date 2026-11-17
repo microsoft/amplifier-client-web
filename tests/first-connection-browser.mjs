@@ -1,8 +1,13 @@
-// Real client rendering against synthetic HTTP/SSE state; no provider and no real key.
+// Real client rendering against synthetic HTTP/SSE state; no host, no provider and no real key.
+// The state is the one a new installation has before its first AI connection:
+// the host found component updates and waits for a connection
+// (currentStatus.action 'connect').
 //
-// Always: in Settings > AI connections the key field has its label, hides the
-// key, takes a paste, stays outside the client's view reports, and sends the
-// key only with the save.
+// Always:
+// 1. The welcome panel says that the components come after the connection and shows no spinner.
+// 2. The Updates page offers "Set up an AI connection" and no installation; the button opens AI connections.
+// 3. The key field has its label, hides the key, takes a paste, stays outside the
+//    client's view reports, and sends the key only with the save.
 //
 // With AMPLIFIER_TEST_FULL_CHROMIUM=<a full Chromium, Chrome or Edge binary> and
 // a display (for example under xvfb-run): the browser's own password manager
@@ -17,12 +22,20 @@ import {createServer} from 'vite';
 import {chromium,expect} from '@playwright/test';
 import {createShellHttpFixture,installFixtureEvents} from './shell-http-fixture.mjs';
 
-const artifacts=process.env.AMPLIFIER_TEST_ARTIFACTS||'output/ai-key-field';
+const artifacts=process.env.AMPLIFIER_TEST_ARTIFACTS||'output/first-connection';
 const fullChromium=process.env.AMPLIFIER_TEST_FULL_CHROMIUM;
 const key='sk-fixture-0123456789-not-a-real-key';
-const editor={step:'connect',id:'openai',module:'provider-openai',credentialMode:'private'};
-let state={revision:1,settings:{workspace:'/fixture',bundle:'anchors'},runtime:{available:true},
- view:{setupJourney:'connect',navPinned:true,panel:'settings',settingsSection:'setup',settingsExpanded:['ai-connections'],aiConnectionEditor:editor},
+const component=id=>({id,label:id,kind:'bundle',status:'update',missing:true,eligible:true,updateTier:'included',current:null,latest:'required'});
+// The host's own waiting state (amplifier_web/update_health.py `current`).
+const updates={phase:'checked',initialPreparation:true,lastCheck:1794900000,
+ application:{id:'application',kind:'app',label:'Amplifier Unified',current:'0.105.0',latest:'v0.105.0',status:'current'},
+ items:['computer-use','context-intelligence','imagegen','routing-matrix'].map(component),
+ sequence:{stage:'included',included:{available:4,missing:4},other:{available:0}},
+ currentStatus:{status:'waiting',title:'Components update after you set up an AI connection',
+  detail:'Nothing failed. Amplifier checks new components together with an AI connection, and none is set up yet. Set up an AI connection in Settings. The update can then start.',
+  actionRequired:false,action:'connect',component:null}};
+let state={revision:1,settings:{workspace:'/fixture',bundle:'anchors',updates:{}},runtime:{available:true},updates,
+ view:{setupJourney:'welcome',navPinned:true},
  sessions:[{id:'chat',sessionKind:'root',title:'Saved chat',workspace:'/fixture',workspaceId:'project',status:'idle',historyManaged:true,historyLoaded:true,messages:[]}],
  workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:'chat',selectedWorkspaceId:'project',
  setup:{configurationTarget:{kind:'global'},providers:[],providersLoadedAt:1,providersWorkspace:'/fixture'},
@@ -38,11 +51,11 @@ const control=`<!doctype html><meta charset="utf-8"><title>Control</title><div i
 let browser,context,vite,profile,failure;
 try{
  await mkdir(artifacts,{recursive:true});
- vite=await createServer({configFile:false,cacheDir:fileURLToPath(new URL('../output/.vite-ai-key-field-fixture',import.meta.url)),root:fileURLToPath(new URL('../',import.meta.url)),server:{host:'127.0.0.1',port:0,hmr:false}});
+ vite=await createServer({configFile:false,cacheDir:fileURLToPath(new URL('../output/.vite-first-connection-fixture',import.meta.url)),root:fileURLToPath(new URL('../',import.meta.url)),server:{host:'127.0.0.1',port:0,hmr:false}});
  await vite.listen();
  const origin=vite.resolvedUrls.local[0].replace(/\/$/,'');
  if(fullChromium){
-  profile=await mkdtemp(path.join(tmpdir(),'ai-key-field-'));
+  profile=await mkdtemp(path.join(tmpdir(),'first-connection-'));
   // Automation mode switches the browser's offer to save a password off.
   context=await chromium.launchPersistentContext(profile,{executablePath:fullChromium,headless:false,viewport:{width:1280,height:900},ignoreDefaultArgs:['--enable-automation'],args:['--no-first-run']});
  }else{
@@ -77,6 +90,37 @@ try{
  const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));
  await page.goto(origin+'/');
 
+ // 1. With no connection the app opens Settings > AI connections by itself.
+ const settings=page.locator('.a-settings-experience');
+ await expect(settings).toHaveAttribute('data-settings-page','ai-connections');
+ const welcome=page.getByRole('region',{name:'Get started',exact:true});
+ await expect(welcome.getByRole('heading',{name:'Welcome to Amplifier',exact:true})).toBeVisible();
+ await expect(welcome.getByRole('status')).toHaveText('Amplifier adds its remaining components after you connect an AI service.');
+ await expect(welcome.locator('.a-progress-spinner')).toHaveCount(0);
+ await page.screenshot({path:path.join(artifacts,'1-welcome-panel.png')});
+
+ // 2. The Updates page: one working action, and no installation.
+ await settings.locator('[data-settings-section="updates"]').click();
+ await expect(settings).toHaveAttribute('data-settings-page','updates');
+ const updatesPage=page.locator('[data-part="updates"]');
+ await expect(updatesPage.getByRole('heading',{name:updates.currentStatus.title,exact:true})).toBeVisible();
+ await expect(updatesPage.getByText(updates.currentStatus.detail,{exact:true})).toBeVisible();
+ await expect(updatesPage.locator('[data-part="application-update"] .a-progress-spinner')).toHaveCount(0);
+ await expect(updatesPage.getByRole('button',{name:'Update Amplifier'})).toHaveCount(0);
+ await expect(updatesPage.locator('[data-action="updates.install"]')).toHaveCount(0);
+ await expect(updatesPage.getByText('Last update issue')).toHaveCount(0);
+ await expect(updatesPage.getByRole('button',{name:'Check for updates',exact:true})).toBeEnabled();
+ const connect=updatesPage.getByRole('button',{name:'Set up an AI connection',exact:true});
+ await expect(connect).toBeEnabled();
+ await page.screenshot({path:path.join(artifacts,'2-updates-page.png')});
+ await connect.click();
+ await expect(settings).toHaveAttribute('data-settings-page','ai-connections');
+ await expect(page.getByRole('button',{name:'Connect AI',exact:true})).toBeVisible();
+ assert.deepEqual(calls.filter(call=>call.action.startsWith('updates.')),[]);
+
+ // 3. The key field. The host's connection editor at its step "Connect" is set here; no host runs.
+ await page.evaluate(editor=>window.amplifier.dispatch('view.update',{patch:{aiConnectionEditor:editor}}),
+  {step:'connect',id:'openai',module:'provider-openai',credentialMode:'private'});
  // The label names the field for a screen reader, and the field hides the key.
  const field=page.getByLabel('API key',{exact:true});
  await expect(field).toBeVisible();
@@ -89,7 +133,7 @@ try{
  await field.focus();
  await page.keyboard.press('ControlOrMeta+V');
  await expect(field).toHaveValue(key);
- await page.screenshot({path:path.join(artifacts,'key-field-filled.png')});
+ await page.screenshot({path:path.join(artifacts,'3-key-field-filled.png')});
 
  // The client's own view of the page never holds the key.
  const view=await page.evaluate(()=>window.amplifier.getState().renderedView);
@@ -133,7 +177,7 @@ try{
   coverage=`Password manager of ${version}: no offer to save the key after the client's save; the control page with the earlier field got the offer.`;
  }
  assert.deepEqual(errors,[]);
- console.log('PASS (synthetic client fixture): the AI key field has its label, hides the key, takes a paste, stays out of the client\u2019s view, and sends the key only with the save. '+coverage+' Real Microsoft Edge on Windows is NOT COVERED here.');
+ console.log('PASS (synthetic client fixture): before an AI connection the welcome panel has no spinner and the Updates page offers the connection and no installation; the AI key field has its label, hides the key, takes a paste, stays out of the client\u2019s view, and sends the key only with the save. '+coverage+' An actual host and real Microsoft Edge on Windows are NOT COVERED here.');
 }catch(error){failure=error;throw error}
 finally{
  await context?.close().catch(()=>{});await browser?.close().catch(()=>{});await vite?.close();
