@@ -5,7 +5,7 @@ const recoveryGuidance={'runtime-installed-source-mismatch':'A component changed
 // A component update checks the selected conversation profile (host: profile_catalog.incomplete).
 // The first text is the host's own text for this reason (update_diagnostics.failure_guidance).
 recoveryGuidance['ai-connection-needed']='This update needs an AI connection, and the selected conversation profile has none. Nothing was changed. Set up an AI connection in Settings, then update again.';
-recoveryGuidance['incomplete-conversation-profile']='The selected conversation profile is incomplete. Nothing was changed. Complete this profile or choose another in Bundles & modules, then update again.';
+recoveryGuidance['incomplete-conversation-profile']='The selected conversation profile is incomplete. Choose another profile in Bundles & modules, then update again.';
 recoveryGuidance['runtime-source-constraint']='A protected package source declaration conflicts with the checked update. Current components remain active. This does not establish local edits. Unchanged automatic attempts are paused. A compatible update to the declaring component or a deliberate source-configuration change is needed; do not remove pins or caches to bypass this check.';
 recoveryGuidance['runtime-resolution-mismatch']='The prepared component does not match its checked source revision. Current components remain active and unchanged automatic attempts are paused. Check current sources and share the update diagnostics if the mismatch remains.';
 Object.assign(recoveryGuidance,{

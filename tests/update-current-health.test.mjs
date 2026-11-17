@@ -41,3 +41,9 @@ test('a waiting test-runner update does not replace the host\u2019s waiting text
  assert.equal(result.title,waiting.title);
  assert.equal(result.connect,true);assert.equal(result.installable,false);
 });
+test('the waiting state as the host saves it, with its install request kept, is not busy and offers only the connection',()=>{
+ const result=updateOverview({...found,sequence:{...found.sequence,install:true},currentStatus:waiting});
+ assert.equal(result.title,waiting.title);
+ assert.equal(result.connect,true);assert.equal(result.installable,false);
+ assert.equal(result.busy,false);assert.equal(result.processing,false);
+});

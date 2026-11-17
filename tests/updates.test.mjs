@@ -942,7 +942,7 @@ const waitingStatus={status:'waiting',title:'Components update after you set up 
  detail:'Nothing failed. Amplifier checks new components together with an AI connection, and none is set up yet. Set up an AI connection in Settings. The update can then start.',
  actionRequired:false,action:'connect',component:null};
 const waitingUpdates={phase:'checked',initialPreparation:true,items:[{...component,missing:true}],
- sequence:{stage:'included',included:{available:1,missing:1}},currentStatus:waitingStatus};
+ sequence:{stage:'included',install:true,included:{available:1,missing:1}},currentStatus:waitingStatus};
 test('before an AI connection the Updates page offers the connection and no installation',async()=>{
  const calls=[];let root;
  const dispatch=async(...args)=>{calls.push(args);return {accepted:true}};
@@ -996,7 +996,9 @@ test('the two profile reasons of a component update have plain texts',()=>{
  // Word for word the host's text for this reason, so that the page does not hold two versions.
  assert.match(connection,/This update needs an AI connection, and the selected conversation profile has none\. Nothing was changed\. Set up an AI connection in Settings, then update again\./);
  const profile=failure('incomplete-conversation-profile');
- assert.match(profile,/The selected conversation profile is incomplete\. Nothing was changed\. Complete this profile or choose another in Bundles &amp; modules, then update again\./);
+ assert.match(profile,/The selected conversation profile is incomplete\. Choose another profile in Bundles &amp; modules, then update again\./);
+ // The host states "Nothing was changed" for the first reason only. The client adds no such claim of its own.
+ assert.doesNotMatch(profile,/Nothing was changed/);
  // A reason without a text shows only its recorded facts.
- assert.doesNotMatch(failure('some-other-reason'),/Nothing was changed/);
+ assert.doesNotMatch(failure('some-other-reason'),/Nothing was changed|conversation profile/);
 });

@@ -11,8 +11,10 @@
 //
 // With AMPLIFIER_TEST_FULL_CHROMIUM=<a full Chromium, Chrome or Edge binary> and
 // a display (for example under xvfb-run): the browser's own password manager
-// makes no offer to save the key after the save. The headless shell that the
-// other journeys use has no password manager, so it cannot show this part.
+// makes no offer to save the key, neither after the save nor when the page is
+// left. A control page with the earlier field then gets the offer, and the log
+// ties that offer to the control page's form. The headless shell that the other
+// journeys use has no password manager, so it cannot show this part.
 import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -30,7 +32,7 @@ const component=id=>({id,label:id,kind:'bundle',status:'update',missing:true,eli
 const updates={phase:'checked',initialPreparation:true,lastCheck:1794900000,
  application:{id:'application',kind:'app',label:'Amplifier Unified',current:'0.105.0',latest:'v0.105.0',status:'current'},
  items:['computer-use','context-intelligence','imagegen','routing-matrix'].map(component),
- sequence:{stage:'included',included:{available:4,missing:4},other:{available:0}},
+ sequence:{stage:'included',install:true,included:{available:4,missing:4},other:{available:0}},
  currentStatus:{status:'waiting',title:'Components update after you set up an AI connection',
   detail:'Nothing failed. Amplifier checks new components together with an AI connection, and none is set up yet. Set up an AI connection in Settings. The update can then start.',
   actionRequired:false,action:'connect',component:null}};
@@ -48,6 +50,7 @@ const errors=[],calls=[],bodies=[];
 const control=`<!doctype html><meta charset="utf-8"><title>Control</title><div id="root"><label for="key">API key</label>
 <input id="key" type="password" autocomplete="off" spellcheck="false"><button id="save">Save and check connection</button></div>
 <script>document.getElementById('save').onclick=async()=>{await fetch('/api/control',{method:'POST',body:'{}'});document.getElementById('root').innerHTML='<p>Saved</p>'}</script>`;
+const blank='<!doctype html><meta charset="utf-8"><title>Blank</title><p>Blank</p>';
 let browser,context,vite,profile,failure;
 try{
  await mkdir(artifacts,{recursive:true});
@@ -69,7 +72,15 @@ try{
   log=context.pages()[0]||await context.newPage();
   await log.goto('chrome://password-manager-internals/');
  }
- const offers=async()=>(await log.evaluate(()=>document.body.innerText)).split('\n').filter(line=>/Decision: ASK|Show password prompt/.test(line));
+ // The browser's own record of what its password manager saw and decided, in order.
+ const logLines=async()=>(await log.evaluate(()=>document.body.innerText)).split('\n');
+ const count=(lines,text)=>lines.filter(line=>line.includes(text)).length;
+ const offers=lines=>lines.filter(line=>/Decision: ASK|Show password prompt/.test(line));
+ const judged=async(event,before)=>{
+  // After the event, the manager logs its check for a prompt. Then its decision for that event is made.
+  const lines=await logLines(),at=lines.findLastIndex(line=>line.includes(event));
+  return count(lines,event)>before&&lines.slice(at).some(line=>line.includes('IsAutomaticSavePromptAvailable'));
+ };
  await context.addInitScript(installFixtureEvents);
  await context.route('**/api/**',async route=>{
   const request=route.request(),url=new URL(request.url());
@@ -87,6 +98,7 @@ try{
   return route.fulfill({json:{ok:true}});
  });
  await context.route('**/key-field-control',route=>route.fulfill({contentType:'text/html',body:control}));
+ await context.route('**/key-field-blank',route=>route.fulfill({contentType:'text/html',body:blank}));
  const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));
  await page.goto(origin+'/');
 
@@ -95,7 +107,7 @@ try{
  await expect(settings).toHaveAttribute('data-settings-page','ai-connections');
  const welcome=page.getByRole('region',{name:'Get started',exact:true});
  await expect(welcome.getByRole('heading',{name:'Welcome to Amplifier',exact:true})).toBeVisible();
- await expect(welcome.getByRole('status')).toHaveText('Amplifier adds its remaining components after you connect an AI service.');
+ await expect(welcome.getByRole('status')).toHaveText('Amplifier can add its remaining components after you connect an AI service.');
  await expect(welcome.locator('.a-progress-spinner')).toHaveCount(0);
  await page.screenshot({path:path.join(artifacts,'1-welcome-panel.png')});
 
@@ -145,6 +157,7 @@ try{
  // The save sends the key once. The connection is then saved and the field leaves the page.
  const save=page.getByRole('button',{name:'Save and check connection',exact:true});
  await expect(save).toBeEnabled();
+ const submissions=fullChromium?count(await logLines(),'OnDynamicFormSubmission'):0;
  await save.click();
  await expect.poll(()=>calls.some(call=>call.action==='providers.save')).toBe(true);
  const saved=calls.find(call=>call.action==='providers.save');
@@ -155,16 +168,24 @@ try{
  await page.evaluate(value=>window.emitState(value),shell.state());
  await expect(page.getByText('2 · Choose a model',{exact:true})).toBeVisible();
  await expect(page.locator('#ai-private-key')).toHaveCount(0);
- await page.waitForTimeout(fullChromium?3000:300);
+ await expect.poll(()=>bodies.filter(body=>body.includes(key)).length).toBe(1);
  assert.deepEqual(bodies.filter(body=>body.includes(key)).map(body=>JSON.parse(body).action),['providers.save']);
 
  let coverage='Password-manager offer NOT COVERED: set AMPLIFIER_TEST_FULL_CHROMIUM to a full Chromium, Chrome or Edge binary and run with a display.';
  if(fullChromium){
   const version=context.browser()?.version()||'version not reported';
-  const text=await log.evaluate(()=>document.body.innerText);
-  await writeFile(path.join(artifacts,'password-manager-client.log'),text);
-  assert.ok(text.trim(),'the password manager log is empty: this browser cannot show the offer');
-  assert.deepEqual(await offers(),[],'the browser decided to offer to save the AI key as a password');
+  const unjudged='the password manager did not judge this step: this browser cannot show that an offer is absent';
+  // First way to an offer: the save succeeded and the field left the page.
+  await expect.poll(()=>judged('OnDynamicFormSubmission',submissions),{timeout:15000,message:unjudged}).toBe(true);
+  assert.deepEqual(offers(await logLines()),[],'the browser decided to offer to save the AI key as a password after the save');
+  // Second way to an offer: the person leaves the page after the save.
+  const renders=count(await logLines(),'OnPasswordFormsRendered');
+  await page.goto(origin+'/key-field-blank');
+  await expect.poll(()=>judged('OnPasswordFormsRendered',renders),{timeout:15000,message:unjudged}).toBe(true);
+  const client=await logLines();
+  await writeFile(path.join(artifacts,'password-manager-client.log'),client.join('\n'));
+  assert.deepEqual(offers(client),[],'the browser decided to offer to save the AI key as a password when the page was left');
+  // The control: the same browser and the same log show an offer for the earlier field.
   const before=await page.goto(origin+'/key-field-control');
   assert.equal(before.status(),200);
   await page.locator('#key').focus();
@@ -172,9 +193,17 @@ try{
   await expect(page.locator('#key')).toHaveValue(key);
   await page.locator('#save').click();
   await expect(page.getByText('Saved',{exact:true})).toBeVisible();
-  await expect.poll(offers,{timeout:10000,message:'the control page got no offer: this run cannot show that an offer is absent'}).not.toEqual([]);
-  await writeFile(path.join(artifacts,'password-manager-with-control.log'),await log.evaluate(()=>document.body.innerText));
-  coverage=`Password manager of ${version}: no offer to save the key after the client's save; the control page with the earlier field got the offer.`;
+  await expect.poll(async()=>offers(await logLines()),{timeout:10000,message:'the control page got no offer: this run cannot show that an offer is absent'}).not.toEqual([]);
+  const all=await logLines();
+  await writeFile(path.join(artifacts,'password-manager-with-control.log'),all.join('\n'));
+  // The offer belongs to the control page: the log names the control's form last before the decision,
+  // and that form is not one that the client's page had.
+  const form=line=>line.startsWith('Signature of form:');
+  const asked=all.findIndex(line=>line.includes('Decision: ASK'));
+  const named=all.slice(0,asked).findLast(form);
+  assert.ok(asked>=client.length,'the offer is in the part of the log that follows the client');
+  assert.ok(named&&!client.filter(form).includes(named),'the offer follows a form of the client page, not the form of the control page');
+  coverage=`Password manager of ${version}: no offer to save the key after the client's save or when its page was left; the control page with the earlier field got the offer for its own form.`;
  }
  assert.deepEqual(errors,[]);
  console.log('PASS (synthetic client fixture): before an AI connection the welcome panel has no spinner and the Updates page offers the connection and no installation; the AI key field has its label, hides the key, takes a paste, stays out of the client\u2019s view, and sends the key only with the save. '+coverage+' An actual host and real Microsoft Edge on Windows are NOT COVERED here.');
