@@ -169,6 +169,7 @@ test('retained sidebar survives pending baseline but clears for new host, module
  const aged=structuredClone(next);aged.instances.chat.resources.context.value.view.navAge='24h';
  assert.deepEqual(resourceSnapshots(bootstrap,aged,changed,waiting).chat.navigationResourceRetained,{});
  assert.deepEqual(pendingSnapshots(bootstrap,previous,changed,'new-host').chat.navigationResourceRetained,{});
+ assert.deepEqual(pendingSnapshots({...bootstrap,shellBootstrapKey:'new-key'},previous,changed).chat.navigationResourceRetained,{});
  assert.equal(pendingSnapshots({...bootstrap,instanceGenerations:{...bootstrap.instanceGenerations,chat:2}},previous,changed).chat,undefined);
  assert.deepEqual(pendingSnapshots(bootstrap,previous,{...changed,resources:[]}).chat.navigationResourceRetained,{});
 });
@@ -201,6 +202,9 @@ test('H6: selection retains geometry, not a previous demand’s Answer requested
  next.instances.chat.resources.context.value.navigationActivityById={a:{kind:'working',label:'Working'}};
  const covered=sidebarReadingSnapshot(resourceSnapshots(bootstrap,next,changed,{chat:pending}).chat);
  assert.deepEqual(activityFor(covered.recentNavigation.items[0],covered),{kind:'working',label:'Working'});
+ const repeated=pendingSnapshots(bootstrap,{shellResources:next,snapshots:{chat:covered}},{...changed,id:3}).chat;
+ const repeatedReading=sidebarReadingSnapshot(repeated);
+ assert.equal(activityFor(repeatedReading.recentNavigation.items[0],repeatedReading).kind,'updating','another pending demand cannot inherit the last covered map');
 });
 
 test('fresh page fallbacks and custom snapshots never acquire retained activity provenance',()=>{

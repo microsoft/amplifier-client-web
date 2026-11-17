@@ -923,7 +923,8 @@ for(const registration of ['missing','unavailable'])test(`Recent retains canonic
    release({recentNavigation:empty(40,99)});
    await pending;
   });
-  assert.deepEqual(api.page.items,restored.items);assert.equal(api.page.scope.workspaceId,'pinned-missing');
+  assert.deepEqual(api.page.items,restored.items.map(row=>({...row,navigationActivityRetained:true})));
+  assert.equal(api.page.scope.workspaceId,'pinned-missing');
   assert.match(api.error,/changed during the read/);
  }finally{recentRead=previousRead;await act(async()=>root.unmount())}
 });
@@ -973,7 +974,7 @@ test('cold resource placeholders never claim empty catalogs and retained sidebar
 test('selected chat changes retain loaded Recent rows while only a current-selection page can settle expansion',async()=>{
  let current={...snapshot,recentNavigation:recentFixture(60,false,3),view:{navRecentLimit:60}},api,root;
  current.recentNavigation.items[0]={...current.recentNavigation.items[0],activity:{kind:'attention',label:'Answer requested'}};
- const original=JSON.stringify(current.recentNavigation);
+ const originalPage=current.recentNavigation,original=JSON.stringify(originalPage);
  const listeners=new Set();const readHost=recentHost({getSnapshot:()=>current,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn)}});
  function Probe(){api=useRecentShortcuts(readHost,current,async()=>({accepted:true}));return null}
  await act(async()=>{root=create(React.createElement(Probe))});
@@ -995,7 +996,7 @@ test('selected chat changes retain loaded Recent rows while only a current-selec
  await act(async()=>{root.update(React.createElement(Probe));listeners.forEach(fn=>fn());await pending});
  assert.equal(api.page.items.length,80);assert.equal(api.error,'');assert.equal(api.busy,false);
  assert.equal(api.page.items[0].navigationActivityRetained,undefined,'fresh accepted page restores normal fallback');
- assert.match(original,/Answer requested/);
+ assert.equal(JSON.stringify(originalPage),original,'retention never mutates cached source rows');
  await act(async()=>root.unmount());
 });
 

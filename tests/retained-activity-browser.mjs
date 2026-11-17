@@ -61,7 +61,7 @@ try{
   if(path==='/api/actions'){
    const envelope=request.postDataJSON(),body=envelope.action==='shell.command'?(envelope.args.command||envelope.args):envelope;
    calls.push(body);
-   assert.ok(['shell.report','runtime.control'].includes(body.action),'Passive details must not mutate: '+body.action);
+   assert.ok(['shell.report','runtime.control','theme.list'].includes(body.action),'Passive details must not mutate: '+body.action);
    return route.fulfill({json:{accepted:true,state:decorate(shell.state()),result:{}}});
   }
   return route.fulfill({json:{items:[]}});
@@ -89,6 +89,8 @@ try{
  const retained=await geometry();
  assert.equal(retained.rows,before.rows);assert.ok(Math.abs(retained.top-before.top)<1);
  assert.ok(Math.abs(retained.scrollTop-before.scrollTop)<1);
+ // Quiet mode discloses actions on row hover/focus rather than reserving width.
+ await pin.locator('.a-nav-chat-select').focus();
  await pin.getByRole('button',{name:'Details and actions for Question owner',exact:true}).click();
  const details=page.getByRole('dialog',{name:'Details for Question owner',exact:true});
  const detailStatus=details.locator('.a-navigation-detail-status strong');
@@ -109,7 +111,7 @@ try{
  await expect(detailStatus).toHaveText('Working');
  await page.screenshot({path:artifacts+'/fresh.png'});
  assert.deepEqual(errors,[]);
- assert.ok(calls.every(row=>['shell.report','runtime.control'].includes(row.action)));
+ assert.ok(calls.every(row=>['shell.report','runtime.control','theme.list'].includes(row.action)));
  proof.status='PASS';proof.errors=errors;proof.calls=calls;
  console.log(JSON.stringify(proof,null,2));
 }catch(error){
