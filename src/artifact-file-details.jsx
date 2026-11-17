@@ -2,6 +2,7 @@ import React,{useEffect,useRef,useState} from 'react';
 import {Download} from 'lucide-react';
 import {clientUrl} from './api';
 import {CopyControl} from './block-copy';
+import {CanvasControl} from './canvas-controls';
 
 const identityOf=({id,version,sessionId})=>JSON.stringify([id,version,sessionId]);
 async function inspect(target,dispatch){
@@ -13,15 +14,15 @@ async function inspect(target,dispatch){
 
 // A saved-version download is not a renderer lease. Fetching as bytes also makes
 // an HTTP refusal visible instead of navigating to an error page (or HTML).
-export function SavedFileDownload({target,dispatch,label='Download saved file',compact=false}){
- return <DownloadControl key={identityOf(target)} {...{target,dispatch,label,compact}}/>;
+export function SavedFileDownload({target,dispatch,label='Download saved file',compact=false,detailsFeedback=false}){
+ return <DownloadControl key={identityOf(target)} {...{target,dispatch,label,compact,detailsFeedback}}/>;
 }
-function DownloadControl({target,dispatch,label,compact}){
- const pending=useRef(null),mounted=useRef(true),[status,setStatus]=useState(''),[busy,setBusy]=useState(false);
+function DownloadControl({target,dispatch,label,compact,detailsFeedback}){
+ const pending=useRef(null),mounted=useRef(true),[status,setStatus]=useState(''),[busy,setBusy]=useState(false),[failed,setFailed]=useState(false);
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;pending.current?.abort()}},[]);
  async function save(){
   if(pending.current)return;
-  const controller=new AbortController();pending.current=controller;setBusy(true);setStatus('Preparing download…');
+  const controller=new AbortController();pending.current=controller;setBusy(true);setFailed(false);setStatus('Preparing download…');
   try{
    const value=await inspect(target,dispatch);
    if(!mounted.current)return;
@@ -36,10 +37,11 @@ function DownloadControl({target,dispatch,label,compact}){
    link.href=url;link.download=value.download.filename;link.click();
    setTimeout(()=>URL.revokeObjectURL(url),1000);
    setStatus('Download started. Check your browser’s downloads.');
-  }catch(error){if(mounted.current)setStatus(error.message||'The saved file could not be downloaded.')}
+  }catch(error){if(mounted.current){setFailed(true);setStatus(error.message||'The saved file could not be downloaded.')}}
   finally{pending.current=null;if(mounted.current)setBusy(false)}
  }
- return <div className="a-saved-file-download" data-compact={compact?'true':undefined}><button type="button" className={compact?'a-icon':'a-soft'} aria-label={label} aria-busy={busy} disabled={busy} onClick={save}><Download aria-hidden="true" focusable="false"/><span>{compact?'Download':label}</span></button><span role="status" aria-live="polite">{status}</span></div>;
+ const feedback=<span role="status" aria-live="polite">{status}</span>;
+ return <div className="a-saved-file-download" data-compact={compact?'true':undefined}><button type="button" className={compact?'a-icon':'a-soft'} aria-label={label} aria-busy={busy} disabled={busy} onClick={save}><Download aria-hidden="true" focusable="false"/><span>{compact?'Download':label}</span></button>{detailsFeedback?<CanvasControl inline={busy||failed}>{feedback}</CanvasControl>:feedback}</div>;
 }
 
 // One path/details owner for compact cards and the existing Canvas inspector.

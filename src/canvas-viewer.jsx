@@ -143,15 +143,15 @@ export function CanvasViewer({canvas,act,dispatch}){
  const quality=canvas.quality||{status:'not_checked',message:'Saved; rendering has not been checked.',diagnostics:[]};
  const error=quality.status==='issues',rendered=quality.status==='rendered';
  return <div className="a-canvas-viewer">
-  <CanvasControl><div className="a-canvas-toolbar">
+  <CanvasPrimaryAction><div className="a-canvas-toolbar a-canvas-view-choice">
    {rich&&<><button type="button" className="a-soft" aria-pressed={!view.source} data-action="canvas.view" onClick={()=>viewAction(canvas,act,{source:false})}><Eye/>Preview</button><button type="button" className="a-soft" aria-pressed={!!view.source} data-action="canvas.view" onClick={()=>viewAction(canvas,act,{source:true})}><Code/>Source</button></>}
+  </div></CanvasPrimaryAction>
+  <CanvasControl><div className="a-canvas-common-actions">
    <span className="a-canvas-format">{canvas.kind}</span>
    {canvas.kind==='markdown'&&<FormattedCopy source={source} identity={copyIdentity} sourceUrl={canvas.contentResource?clientUrl(`/api/canvas/${canvas.id}/source?version=${canvas.selectedVersion??canvas.revision??1}`):undefined}/>}
-  </div></CanvasControl>
-  <CanvasPrimaryAction><div className="a-canvas-common-actions">
    {!['image','pdf'].includes(canvas.kind)&&(primary||!inlineSourceCopy&&!(view.source&&canvas.contentResource))&&<button type="button" className="a-icon" aria-label="Copy canvas source" data-action="canvas.copy" onClick={()=>act('canvas.copy',{id:canvas.id})}><Copy/><span>Copy</span></button>}
-   {!['image','pdf'].includes(canvas.kind)&&dispatch&&<SavedFileDownload target={{id:canvas.id,version:canvas.selectedVersion??canvas.revision??canvas.latestVersion,sessionId:canvas.sessionId}} dispatch={dispatch} label="Download canvas source" compact/>}
-  </div></CanvasPrimaryAction>
+  </div></CanvasControl>
+  <CanvasPrimaryAction>{!['image','pdf'].includes(canvas.kind)&&dispatch&&<SavedFileDownload target={{id:canvas.id,version:canvas.selectedVersion??canvas.revision??canvas.latestVersion,sessionId:canvas.sessionId}} dispatch={dispatch} label="Download canvas source" compact detailsFeedback/>}</CanvasPrimaryAction>
   {canvas.kind==='image'&&dispatch&&<ImageActions canvas={canvas} dispatch={dispatch}/>}
   {referenceable&&<div className="a-canvas-reference" ref={quoteControl}><button type="button" className="a-soft" data-action="canvas.reference" disabled={quoting||!selection?.excerpt} onMouseDown={event=>event.preventDefault()} onClick={referenceText}>{quoting?'Adding reference…':'Reference in chat'}</button><span role="status" className="a-caption">{quoteNotice||selection?.error||(selection?.excerpt?`${[...selection.excerpt].length} characters selected`:'Select document text to quote in your draft.')}</span></div>}
   <div className="a-canvas-preview" ref={textBody} tabIndex={referenceable?0:undefined} aria-label={referenceable?'Document text':undefined}>
