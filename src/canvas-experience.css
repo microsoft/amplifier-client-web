@@ -1,29 +1,42 @@
-/* Canvas navigation is one level. The fixed slot + constant leading spacer keep
-   the tab viewport invariant while only the Overview button's paint contracts. */
+/* Both layouts share the same mounted reader and control portal targets. Only
+   chrome flows differently; its outer pane (not its content) drives Auto. */
 #amp-one .a-canvas-panel{container:canvas / inline-size}
-#amp-one.a-approachable-shell .a-canvas-head{display:flex;gap:4px;padding:4px;min-height:52px;height:52px;flex:none}
-#amp-one.a-chat-shell .a-canvas-head .a-icon{width:44px;min-width:44px;height:44px;min-height:44px;padding:8px}
-#amp-one.a-chat-shell .a-canvas-panel[data-focused=true] .a-canvas-head{height:52px;min-height:52px;padding:4px}
-#amp-one .a-canvas-navigation{display:flex;position:relative;align-items:stretch;flex:1;min-width:0;height:44px}
-#amp-one .a-canvas-overview-slot{flex:0 0 44px;position:relative;z-index:1}
-#amp-one.a-approachable-shell .a-canvas-panel .a-chat-overview-trigger{position:absolute;inset:0 auto 0 0;width:136px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:flex-start;gap:8px;padding:10px 12px;margin:0;border:0;border-radius:6px;background:var(--a-soft);color:var(--a-ink);overflow:hidden;transition:width 140ms ease-out}
-#amp-one.a-approachable-shell .a-canvas-panel .a-chat-overview-trigger>span{display:block;white-space:nowrap;opacity:1;transition:opacity 110ms ease-out}
-#amp-one.a-approachable-shell .a-canvas-navigation[data-scrolled=true] .a-chat-overview-trigger{width:44px}
-#amp-one.a-approachable-shell .a-canvas-navigation[data-scrolled=true] .a-chat-overview-trigger>span{opacity:0}
-#amp-one .a-canvas-document-tabs{display:flex;align-items:stretch;gap:4px;flex:1;min-width:0;padding-left:92px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;overscroll-behavior-x:contain;scroll-behavior:auto}
+#amp-one .a-canvas-head{flex:none}
+#amp-one.a-approachable-shell .a-canvas-head,#amp-one.a-chat-shell .a-canvas-panel[data-focused=true] .a-canvas-head{display:flex;gap:3px;padding:4px;min-height:42px;height:auto;min-width:0;max-width:100%;box-sizing:border-box;flex-wrap:nowrap}
+#amp-one.a-chat-shell .a-canvas-head .a-icon{width:32px;min-width:32px;height:32px;min-height:32px;padding:6px}
+#amp-one .a-canvas-navigation{display:flex;position:relative;align-items:stretch;flex:1;min-width:0;height:32px}
+#amp-one .a-canvas-overview-slot{flex:none}
+#amp-one.a-approachable-shell .a-canvas-panel .a-chat-overview-trigger{position:static;width:32px;min-width:32px;min-height:32px;height:32px;display:flex;align-items:center;justify-content:center;padding:6px;margin:0;border:0;border-radius:5px;background:transparent;color:var(--a-ink)}
+#amp-one.a-approachable-shell .a-canvas-panel .a-chat-overview-trigger>span{display:none}
+#amp-one .a-canvas-document-tabs{display:flex;align-items:stretch;gap:3px;flex:1;min-width:0;padding:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;overscroll-behavior-x:contain;scroll-behavior:auto}
+#amp-one .a-canvas-document-tabs[hidden],#amp-one .a-canvas-tab-scroll[hidden]{display:none}
 #amp-one .a-canvas-document-tabs::-webkit-scrollbar{display:none}
-#amp-one .a-canvas-document-entry{display:flex;align-items:stretch;flex:none;max-width:240px;border:1px solid var(--a-line);border-radius:6px}
+#amp-one .a-canvas-document-entry{display:flex;align-items:center;flex:0 0 auto;max-width:240px;border:0;border-radius:5px;background:var(--a-soft)}
+#amp-one .a-canvas-document-entry[data-selected=true]{background:var(--a-tint);box-shadow:inset 0 -2px var(--a-accent)}
 #amp-one .a-canvas-document-entry .a-canvas-document-tab{flex:1;min-width:0}
-#amp-one .a-canvas-tab-close{flex:none;color:var(--a-ink)}
-#amp-one.a-chat-shell .a-canvas-head>.a-canvas-dismiss{display:inline-flex;align-items:center;gap:5px;flex:none;white-space:nowrap;padding:8px}
-#amp-one .a-canvas-document-tab{display:flex;align-items:center;gap:7px;flex:0 0 auto;max-width:240px;min-height:44px;padding:8px 12px;background:transparent;color:var(--a-ink);border:0;border-radius:6px;text-align:left}
+#amp-one.a-chat-shell .a-canvas-head .a-canvas-tab-close{display:flex;flex:none;color:var(--a-muted);border:0;background:transparent;width:28px;min-width:28px;height:30px;min-height:30px;padding:6px}
+#amp-one.a-chat-shell .a-canvas-head>.a-canvas-dismiss{display:inline-flex;align-items:center;justify-content:center;flex:none;width:32px;height:32px;padding:6px}
+#amp-one .a-canvas-document-tab{display:flex;align-items:center;gap:6px;flex:0 0 auto;max-width:212px;min-height:32px;padding:6px 8px;background:transparent;color:var(--a-ink);border:0;border-radius:5px;text-align:left;font-size:13px}
 #amp-one .a-canvas-document-tab>span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-#amp-one .a-canvas-navigation [aria-selected=true]{background:var(--a-tint);box-shadow:inset 0 -2px var(--a-accent)}
 #amp-one.a-approachable-shell .a-canvas-panel .a-chat-overview-trigger[aria-selected=true]{background:var(--a-tint)}
 #amp-one :is(.a-canvas-head,.a-canvas-artifact-toolbar) svg{width:18px;height:18px;flex:none}
-#amp-one :is(.a-canvas-head,.a-canvas-artifact-toolbar) button{min-width:44px;min-height:44px}
+#amp-one :is(.a-canvas-head,.a-canvas-artifact-toolbar) button{min-width:32px;min-height:32px}
 #amp-one.a-chat-shell .a-canvas-head>[aria-label="Focus canvas"]{display:inline-flex}
-#amp-one .a-open-documents{flex:none;display:flex;align-items:center;gap:4px;padding:8px;white-space:nowrap}
+#amp-one .a-open-documents{flex:none;display:flex;align-items:center;gap:5px;padding:6px;white-space:nowrap;min-width:0}
+#amp-one .a-open-documents>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+#amp-one .a-canvas-tab-scroll{display:flex;flex:none}
+#amp-one .a-canvas-more{position:relative;flex:none}
+#amp-one .a-canvas-more>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:5px}
+#amp-one .a-canvas-more>summary::-webkit-details-marker{display:none}
+#amp-one .a-canvas-more-menu{position:absolute;right:0;top:100%;z-index:5;width:230px;max-width:calc(100vw - 24px);padding:12px;border:1px solid var(--a-line);border-radius:8px;background:var(--a-surface);box-shadow:0 8px 24px #0003}
+#amp-one .a-canvas-more-menu label{display:flex;align-items:center;justify-content:space-between;gap:8px}
+#amp-one .a-canvas-more-menu select{width:auto;min-height:36px}
+#amp-one .a-canvas-panel[data-navigation=compact] .a-canvas-chrome{display:flex;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--a-line)}
+#amp-one .a-canvas-panel[data-navigation=compact] .a-canvas-head{flex:1;min-width:180px;border:0}
+#amp-one .a-canvas-panel[data-navigation=compact] .a-canvas-navigation{flex:none}
+#amp-one .a-canvas-panel[data-navigation=compact] .a-open-documents{flex:1;min-width:50px}
+#amp-one .a-canvas-panel[data-navigation=compact] .a-open-documents>span{display:block}
+#amp-one .a-canvas-panel[data-navigation=compact] .a-canvas-artifact-toolbar{border:0}
 #amp-one .a-canvas-navigation-error{position:absolute;top:100%;left:8px;right:8px;z-index:3;padding:10px;border:1px solid var(--a-line);border-radius:8px;background:var(--a-bg);color:var(--a-ink);font-size:14px}
 #amp-one .a-open-documents small{font-variant-numeric:tabular-nums}
 #amp-one .a-open-documents-dialog{width:min(560px,calc(100vw - 24px));max-height:calc(100dvh - 24px);box-sizing:border-box;padding:16px;color:var(--a-ink);background:var(--a-bg);border:1px solid var(--a-line);border-radius:12px;box-shadow:0 12px 48px #0004;overflow:auto}
@@ -39,17 +52,27 @@
 #amp-one .a-open-documents-dialog strong{font-size:14px;font-weight:600}
 #amp-one .a-open-documents-dialog small{color:var(--a-muted)}
 #amp-one .a-open-documents-dialog button{min-height:44px;min-width:44px}
-#amp-one .a-canvas-artifact-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-height:48px;padding:0 6px;flex:none;border-bottom:1px solid var(--a-line)}
+/* The native dialog lives inside the compact header in DOM, but its close
+   controls are full-sized list actions, not the header's 32px mouse icons. */
+#amp-one.a-chat-shell .a-canvas-head .a-open-documents-dialog .a-icon{width:44px;min-width:44px;height:44px;min-height:44px;flex:none}
+#amp-one .a-canvas-artifact-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:4px;min-height:42px;padding:3px 6px;flex:none;border-bottom:1px solid var(--a-line)}
 #amp-one .a-canvas-refresh{flex:none}
 #amp-one .a-canvas-refresh[aria-disabled=true]{opacity:.65;cursor:progress}
 #amp-one .a-canvas-freshness{order:10;flex-basis:100%;min-width:0;padding:0 4px 6px;color:var(--a-muted);font-size:12px;line-height:1.4;overflow-wrap:anywhere}
 #amp-one .a-canvas-freshness[role=alert]{color:var(--a-ink)}
+#amp-one .a-canvas-reader>.a-canvas-freshness{flex:0 0 auto;order:0;max-height:30%;overflow:auto;padding:6px 10px;border-bottom:1px solid var(--a-line)}
 #amp-one .a-canvas-load-version{display:block;max-width:100%;min-height:44px;margin-top:4px;white-space:normal;text-align:left;overflow-wrap:anywhere}
 #amp-one .a-canvas-artifact-toolbar>strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
 #amp-one .a-canvas-artifact-toolbar[hidden]{display:none}
 #amp-one .a-canvas-common-actions{display:flex;align-items:center;gap:2px}
 #amp-one .a-canvas-common-actions .a-icon{display:flex;align-items:center;gap:5px;width:auto;padding:8px}
-#amp-one .a-canvas-primary-actions{flex:none}
+#amp-one .a-canvas-primary-actions{display:flex;align-items:center;flex-wrap:wrap;gap:4px;flex:0 1 auto;min-width:0;max-width:100%}
+#amp-one .a-canvas-primary-actions .a-canvas-toolbar{border:0;padding:0!important;gap:2px}
+#amp-one .a-canvas-primary-actions .a-canvas-view-choice button{font-size:12px;padding:5px 6px}
+#amp-one .a-canvas-primary-actions .a-canvas-view-choice svg{width:15px;height:15px}
+#amp-one .a-canvas-artifact-toolbar .a-saved-file-download>button{min-width:32px;min-height:32px;padding:6px}
+#amp-one .a-canvas-primary-actions .a-saved-file-download{max-width:100%;min-width:0}
+#amp-one .a-canvas-primary-actions .a-saved-file-download[data-compact=true]>button>span{display:none}
 #amp-one .a-canvas-details{display:flex;align-items:center;gap:5px}
 #amp-one .a-canvas-version-shortcut{font-variant-numeric:tabular-nums;white-space:nowrap;padding:5px 8px}
 #amp-one .a-canvas-location{display:flex;align-items:center;gap:8px}
@@ -116,24 +139,14 @@
  #amp-one .a-open-documents>span,#amp-one .a-canvas-dismiss>span,#amp-one .a-canvas-common-actions .a-icon>span,#amp-one .a-canvas-details>span{display:none}
  #amp-one .a-canvas-document-entry{max-width:180px}
 }
-/* A single row, even in a narrow split. Named 44px controls remain accessible.
-   On the smallest panes closing an individual tab lives in Open documents;
-   hiding that duplicate affords the selected document a readable label. */
-@container canvas (max-width:600px){
- #amp-one.a-approachable-shell .a-canvas-panel .a-chat-overview-trigger{width:44px;padding:12px}
- #amp-one.a-approachable-shell .a-canvas-panel .a-chat-overview-trigger>span{display:none}
- #amp-one .a-canvas-document-tabs{padding-left:0}
- #amp-one .a-canvas-document-entry{max-width:100%}
- #amp-one .a-canvas-document-tab{padding:8px;gap:4px}
- #amp-one .a-canvas-tab-close{display:none}
- #amp-one .a-canvas-document-tab>svg{display:none}
- #amp-one .a-open-documents{padding:8px 4px}
+@container canvas (max-width:700px){
+ #amp-one .a-canvas-panel[data-navigation=compact] .a-canvas-head{flex-basis:100%}
+ #amp-one .a-canvas-artifact-toolbar{flex:1;justify-content:flex-end}
+ #amp-one .a-canvas-document-entry{max-width:180px}
 }
-@container canvas (max-width:380px){
- #amp-one .a-canvas-artifact-toolbar>strong{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
- #amp-one .a-canvas-primary-actions{margin-left:auto}
-}
-@media(prefers-reduced-motion:reduce){
- #amp-one.a-approachable-shell .a-canvas-panel .a-chat-overview-trigger,#amp-one.a-approachable-shell .a-canvas-panel .a-chat-overview-trigger>span{transition:none}
- #amp-one .a-canvas-document-tabs{scroll-behavior:auto}
+@media(pointer:coarse){
+ #amp-one.a-approachable-shell .a-canvas-panel :is(.a-canvas-head,.a-canvas-artifact-toolbar) button,#amp-one.a-approachable-shell .a-canvas-panel .a-canvas-more>summary{min-height:44px;min-width:44px}
+ #amp-one .a-canvas-navigation{height:44px}
+ #amp-one .a-canvas-primary-actions .a-canvas-view-choice button{padding:6px}
+ #amp-one .a-canvas-primary-actions .a-canvas-view-choice svg{display:none}
 }

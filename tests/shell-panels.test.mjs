@@ -8,10 +8,18 @@ const server=await createServer({server:{middlewareMode:true,hmr:false},appType:
 const {ChatDetails,WorkspaceManager}=await server.ssrLoadModule('/src/shell/navigation-components.jsx');
 const {WorkspaceRail:Rail,ChatRename,AgentCanvas,CanvasToggle,A2UISurface,reopenCanvas,SessionHistoryControls}=await server.ssrLoadModule('/src/shell-panels.jsx');
 const {WorkHeader}=await server.ssrLoadModule('/src/work-shell.jsx');
-const {CanvasDocumentRefresh}=await server.ssrLoadModule('/src/canvas-controls.jsx');
+const {CanvasDocumentRefresh,canvasVersionLabel}=await server.ssrLoadModule('/src/canvas-controls.jsx');
 const {WorkNavigationContext}=await server.ssrLoadModule('/src/work-navigation.js');
 function WorkspaceRail(props){return React.createElement(Rail,{...props,shell:shellFor(props.state,props.act)})}
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+test('compact version label never calls an older retained executable preview Latest',()=>{
+ const view={runningVersion:1,latestVersion:2,selectedVersion:null,previewRetained:true};
+ assert.equal(canvasVersionLabel(view,'html'),'v1 · Retained');
+ assert.equal(canvasVersionLabel({...view,previewRetained:false},'html'),'v1 · Saved');
+ assert.equal(canvasVersionLabel({...view,runningVersion:2,previewRetained:false},'html'),'v2 · Latest');
+ assert.equal(canvasVersionLabel({...view,selectedVersion:1,previewRetained:false},'html'),'v1 · Read only');
+ assert.equal(canvasVersionLabel({...view,selectedVersion:1,previewRetained:false},'browser'),'v1 · Saved address');
+});
 test('document Refresh reads saved state only and ignores an obsolete response',async()=>{
  let root,resolve,reject,completion,calls=[];
  let view={viewId:'primary',resourceId:'one',resourceRevision:'body-one',selectedVersion:1,latestVersion:2};
@@ -342,7 +350,7 @@ test('Canvas Details and reader are stable siblings below the one navigation bar
   assert.equal(inspector.parent,reader.parent);
   assert.equal(reader.parent.props.className,'a-canvas-content');
   assert.equal(root.root.findByProps({className:'a-canvas-chrome'}).findAllByProps({id:'canvas-options'}).length,0);
-  assert.equal(reader.findAllByProps({className:'a-canvas-artifact-toolbar'}).length,1);
+  assert.equal(root.root.findByProps({className:'a-canvas-chrome'}).findAllByProps({className:'a-canvas-artifact-toolbar'}).length,1,'Stable toolbar flows with chrome, never with the reader');
   assert.equal(inspector.props.role,'region');assert.equal(inspector.props['aria-labelledby'],'canvas-details-title');
   for(const [open,visible] of [[true,true],[true,false],[true,true],[false,true]]){
    state={...state,view:{...state.view,canvasControlsExpanded:open},canvas:{...state.canvas,open:visible}};
@@ -362,7 +370,7 @@ test('Canvas Details resize, Escape priority and focus return follow the current
  const calls=[],doc={body:{},activeElement:null,addEventListener(name,fn){if(!listeners.has(name))listeners.set(name,new Set());listeners.get(name).add(fn)},removeEventListener(name,fn){listeners.get(name)?.delete(fn)},querySelector(){return invoker}};
  const node=area=>({area,isConnected:true,getClientRects:()=>[{}],closest:()=>null,focus(){doc.activeElement=this}});
  const invoker=node('reader'),readerField=node('reader'),close=node('inspector'),version=node('inspector'),newIntent=node('header');
- const panelNode={getBoundingClientRect:()=>({width}),contains:n=>['reader','inspector'].includes(n?.area),querySelector:()=>invoker};
+ const panelNode={getBoundingClientRect:()=>({width,height:800}),contains:n=>['reader','inspector'].includes(n?.area),querySelector:selector=>selector.startsWith('.a-canvas-')?null:invoker,addEventListener(){},removeEventListener(){}};
  const readerNode={contains:n=>n?.area==='reader'};
  const inspectorNode={contains:n=>n?.area==='inspector',querySelector:selector=>selector.includes('Artifact version')?version:close};
  const act=async(name,args)=>{calls.push({name,args});return {accepted:true}};
