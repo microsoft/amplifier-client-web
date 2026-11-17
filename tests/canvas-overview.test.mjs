@@ -125,7 +125,7 @@ async function controlledTabs(Component,run,{compact=false}={}){
    get root(){return root},get trigger(){return trigger},get strip(){return strip},
    async wheel(patch={}){let prevented=false;await act(async()=>stripListeners.get('wheel')({...{deltaX:0,deltaY:60,deltaMode:0,ctrlKey:false,metaKey:false},...patch,preventDefault(){prevented=true}}));return prevented},
    async scrollRight(){await act(async()=>root.root.findByProps({'aria-label':'Scroll document tabs right'}).props.onClick())},
-   async closeCurrent(){listeners.get('pointerdown')?.();await act(async()=>root.root.findByProps({className:'a-icon a-canvas-close-current'}).props.onClick())}
+   async closeCurrent(){listeners.get('pointerdown')?.();await act(async()=>{root.root.findByProps({className:'a-icon a-canvas-close-current'}).props.onClick()})}
   });
  }finally{if(root)await act(async()=>root.unmount());for(const key of keys)if(previous[key]===undefined)delete globalThis[key];else globalThis[key]=previous[key]}
 }
