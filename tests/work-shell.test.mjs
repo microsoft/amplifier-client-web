@@ -1000,6 +1000,37 @@ test('selected chat changes retain loaded Recent rows while only a current-selec
  await act(async()=>root.unmount());
 });
 
+test('Recent accepts server-retained provenance and clears it at equal-value completion without extra renders',async()=>{
+ const {resourceSnapshots}=await import('../src/shell/resources.js');
+ const {activityFor}=await import('../src/navigation-presentation.js');
+ const bootstrap={clientId:'client',hostInstanceId:'host',shellBootstrapKey:'key',
+  resolvedInstances:[{id:'chats',package:'builtin.chats'}],instanceGenerations:{chats:1}};
+ const wanted={id:1,scope:['a','b','chat',null,null],resources:['recentNavigation']};
+ const page=recentFixture(20,false,1,1);page.items[0].activity={kind:'attention',label:'Answer requested'};
+ const entry={generation:1,stateRevision:1,pending:{recentNavigation:{status:'pending'}},resources:{
+  context:{revision:1,value:{view:{},selectedSessionId:'a',selectedWorkspaceId:'b',navigationActivityById:{}}},
+  recentNavigation:{revision:1,value:{recentNavigation:page}},
+ }};
+ const envelope={clientId:'client',hostInstanceId:'host',bootstrapKey:'key',demandId:1,scope:wanted.scope,instances:{chats:entry}};
+ const original=JSON.stringify(envelope);
+ let current=resourceSnapshots(bootstrap,envelope,wanted).chats,api,root,renders=0;
+ const readHost=recentHost({getSnapshot:()=>current});
+ function Probe(){renders++;api=useRecentShortcuts(readHost,current,async()=>assert.fail('No write expected'));return null}
+ try{
+  await act(async()=>{root=create(React.createElement(Probe))});
+  assert.equal(activityFor(api.page.items[0],current).kind,'updating');
+  const completed=structuredClone(envelope);completed.instances.chats.stateRevision++;completed.instances.chats.pending={};
+  current=resourceSnapshots(bootstrap,completed,wanted).chats;
+  await act(async()=>root.update(React.createElement(Probe)));
+  assert.equal(activityFor(api.page.items[0],current).label,'Answer requested');
+  assert.equal(api.page.items[0].navigationActivityRetained,undefined);
+  const before=renders;
+  await act(async()=>root.update(React.createElement(Probe)));
+  assert.equal(renders,before+1,'same snapshot does not trigger another hook acceptance');
+  assert.equal(JSON.stringify(envelope),original);
+ }finally{if(root)await act(async()=>root.unmount())}
+});
+
 test('Recent retry waits for a pending resource baseline and a failure never also reports loading',async t=>{
  let current={...snapshot,recentNavigation:recentFixture()},api,root;const listeners=new Set();
  const readHost=recentHost({getSnapshot:()=>current,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn)}});
