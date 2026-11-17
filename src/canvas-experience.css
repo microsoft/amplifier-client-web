@@ -1,7 +1,8 @@
 /* Both layouts share the same mounted reader and control portal targets. Only
    chrome flows differently; its outer pane (not its content) drives Auto. */
 #amp-one .a-canvas-panel{container:canvas / inline-size}
-#amp-one.a-approachable-shell .a-canvas-head,#amp-one.a-chat-shell .a-canvas-panel[data-focused=true] .a-canvas-head{display:flex;gap:3px;padding:4px;min-height:42px;height:auto;flex:none}
+#amp-one .a-canvas-head{flex:none}
+#amp-one.a-approachable-shell .a-canvas-head,#amp-one.a-chat-shell .a-canvas-panel[data-focused=true] .a-canvas-head{display:flex;gap:3px;padding:4px;min-height:42px;height:auto;min-width:0;max-width:100%;box-sizing:border-box;flex-wrap:nowrap}
 #amp-one.a-chat-shell .a-canvas-head .a-icon{width:32px;min-width:32px;height:32px;min-height:32px;padding:6px}
 #amp-one .a-canvas-navigation{display:flex;position:relative;align-items:stretch;flex:1;min-width:0;height:32px}
 #amp-one .a-canvas-overview-slot{flex:none}
@@ -22,7 +23,7 @@
 #amp-one :is(.a-canvas-head,.a-canvas-artifact-toolbar) button{min-width:32px;min-height:32px}
 #amp-one.a-chat-shell .a-canvas-head>[aria-label="Focus canvas"]{display:inline-flex}
 #amp-one .a-open-documents{flex:none;display:flex;align-items:center;gap:5px;padding:6px;white-space:nowrap;min-width:0}
-#amp-one .a-open-documents>span{overflow:hidden;text-overflow:ellipsis}
+#amp-one .a-open-documents>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
 #amp-one .a-canvas-tab-scroll{display:flex;flex:none}
 #amp-one .a-canvas-more{position:relative;flex:none}
 #amp-one .a-canvas-more>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:5px}
@@ -51,6 +52,9 @@
 #amp-one .a-open-documents-dialog strong{font-size:14px;font-weight:600}
 #amp-one .a-open-documents-dialog small{color:var(--a-muted)}
 #amp-one .a-open-documents-dialog button{min-height:44px;min-width:44px}
+/* The native dialog lives inside the compact header in DOM, but its close
+   controls are full-sized list actions, not the header's 32px mouse icons. */
+#amp-one.a-chat-shell .a-canvas-head .a-open-documents-dialog .a-icon{width:44px;min-width:44px;height:44px;min-height:44px;flex:none}
 #amp-one .a-canvas-artifact-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:4px;min-height:42px;padding:3px 6px;flex:none;border-bottom:1px solid var(--a-line)}
 #amp-one .a-canvas-refresh{flex:none}
 #amp-one .a-canvas-refresh[aria-disabled=true]{opacity:.65;cursor:progress}
@@ -68,6 +72,7 @@
 #amp-one .a-canvas-primary-actions .a-canvas-view-choice svg{width:15px;height:15px}
 #amp-one .a-canvas-artifact-toolbar .a-saved-file-download>button{min-width:32px;min-height:32px;padding:6px}
 #amp-one .a-canvas-primary-actions .a-saved-file-download{max-width:100%;min-width:0}
+#amp-one .a-canvas-primary-actions .a-saved-file-download[data-compact=true]>button>span{display:none}
 #amp-one .a-canvas-details{display:flex;align-items:center;gap:5px}
 #amp-one .a-canvas-version-shortcut{font-variant-numeric:tabular-nums;white-space:nowrap;padding:5px 8px}
 #amp-one .a-canvas-location{display:flex;align-items:center;gap:8px}
