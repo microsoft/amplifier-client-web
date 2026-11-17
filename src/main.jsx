@@ -1021,7 +1021,7 @@ function App(){
  useAppearanceCache({root,shell,namespace:appearance.namespace,scheme:requestedScheme,mode:themeScheme,preview,compositionId:composedAppearance.id,
   activeScope:appearance.activeScope,storageVersion:appearanceCacheLocal.storageVersion,confirmed:appearanceCacheConfirmed,
   invalidate:!!appearanceCacheLocal.error||!!state&&(!hasAppearanceIdentity(state.appearance)||state.appearance.availability==='failed')});
- const instanceAccent=useInstanceAccent({root,ready:shell.ready&&!!state,namespace:appearance.namespace,confirmed:appearanceCacheConfirmed,preview:preview||!!shell.data?.preview,css:activeCss,scheme:themeScheme,accent:presentation.accent,compositionId:composedAppearance.id});
+ const instanceAccent=useInstanceAccent({root,ready:shell.ready&&!!state&&hasAppearanceIdentity(state.appearance)&&state.appearance.availability!=='failed',namespace:hasAppearanceIdentity(state?.appearance)?state.appearance.namespace:undefined,confirmed:appearanceCacheConfirmed,preview:preview||!!shell.data?.preview,css:activeCss,scheme:themeScheme,accent:presentation.accent,compositionId:composedAppearance.id});
  useLayoutEffect(()=>{updateInstanceHead(state?.instanceBranding,document,instanceAccent.committed)},[state?.instanceBranding?.name,state?.instanceBranding?.revision,state?.instanceBranding?.colorMode,state?.instanceBranding?.customIcon,instanceAccent.committed]);
  useLayoutEffect(()=>bindWindowControlsOverlay(root.current),[shell.ready,!!state]);
  const newChatPending=!session&&outbox.entries.some(row=>!row.closed&&outboxMatches(row,outboxSource)&&row.sessionId===null&&['sending','unknown'].includes(row.status));

@@ -14,15 +14,24 @@ export function useInstanceAccent({root,ready,namespace,confirmed,preview,css,sc
  const [colors,setColors]=useState({namespace:null,rendered:null,committed:null});
  useLayoutEffect(()=>{
   const app=root.current;
-  if(!app||!ready||!namespace||!compositionId)return;
+  if(!app||!ready){
+   // Even while no root is mounted, a known new owner cannot inherit the
+   // former owner's installed accent if its identity later becomes unknown.
+   if(namespace)setColors(previous=>previous.namespace===namespace?previous:{namespace,rendered:null,committed:null});
+   return;
+  }
   let frame=null,active=true;
   const sync=()=>{
    if(!active)return;
    const rendered=renderedInstanceAccent(app);
    setColors(previous=>{
-    const committed=confirmed&&!preview?rendered:previous.namespace===namespace?previous.committed:null;
-    if(previous.namespace===namespace&&previous.rendered===rendered&&previous.committed===committed)return previous;
-    return {namespace,rendered,committed};
+    // A mounted root can render Reference without an appearance identity or
+    // composition. Sample it for visible icons, but don't promote that sample
+    // to install metadata or forget the last confirmed namespace.
+    const owner=namespace||previous.namespace;
+    const committed=namespace&&compositionId&&confirmed&&!preview?rendered:previous.namespace===owner?previous.committed:null;
+    if(previous.namespace===owner&&previous.rendered===rendered&&previous.committed===committed)return previous;
+    return {namespace:owner,rendered,committed};
    });
   };
   const schedule=()=>{if(frame===null)frame=window.requestAnimationFrame(()=>{frame=null;sync()})};
