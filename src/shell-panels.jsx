@@ -12,6 +12,7 @@ import {ShellModules,ShellSlot} from './shell/runtime';
 export {ChatRename} from './shell/navigation-components';
 import {ChatAgeFilter} from './shell/navigation-components';
 import {CanvasTabs,SavedArtifacts,BrowserAddress,chatArtifacts} from './canvas-library';
+import {useCanvasNavigation} from './canvas-navigation.jsx';
 import React,{useContext,useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {WorkNavigationContext} from './work-navigation';
 import {Info,SlidersHorizontal,MoreHorizontal,FolderOpen,FolderPlus,MessageCircle,MessageSquarePlus,Plus,PanelLeft,PanelRight,Search,Pencil,Trash2,X,Check,FileText,ChevronRight,Library,Globe,Maximize2,Minimize2,ArrowLeft,Pin,RefreshCw,LoaderCircle,AlertCircle} from 'lucide-react';
@@ -94,6 +95,11 @@ export function AgentCanvas({state,act,dispatch=act,suppressed=false,settingsSur
  const changeDraft=value=>patch(act,{canvasDraft:{...draft,...value},...((value.open||value.browser)?{canvasControlsExpanded:true}:{})});
  const overview=showingOverview(state);
  const visible=!suppressed&&!!state.selectedSessionId&&!!canvas.open,covered=visible&&controls&&detailsOverlay;
+ const navigation=useCanvasNavigation(panel,visible),navigationMenu=useRef(null);
+ useEffect(()=>{
+  const dismiss=event=>{const menu=navigationMenu.current;if(menu?.open&&!menu.contains(event.target))menu.open=false};
+  document.addEventListener('pointerdown',dismiss);return()=>document.removeEventListener('pointerdown',dismiss);
+ },[]);
  // Measure the Canvas, not the window: a narrow split pane also needs the sheet.
  // The observed content box is independent of the inspector's own width.
  useLayoutEffect(()=>{
@@ -175,26 +181,27 @@ export function AgentCanvas({state,act,dispatch=act,suppressed=false,settingsSur
  },[visible,overview,state.selectedSessionId,draft.delivery,draft.permissionHistoryKey]);
  if(!mounted.current)return null;
  const latestEvent=canvas.events?.at(-1);
- return <CanvasVersionLoadProvider view={resourceView}><CanvasPrimaryActionsHost.Provider value={actionsHost}><CanvasControlsHost.Provider value={controlsHost}><aside ref={panel} id="workspace-canvas" className="a-canvas-panel" hidden={suppressed||!canvas.open||!state.selectedSessionId} inert={suppressed||!canvas.open||!state.selectedSessionId} aria-hidden={suppressed||!canvas.open||!state.selectedSessionId||undefined} data-part="canvas" data-mode={overview?'overview':'artifact'} data-focused={focused} data-controls={controls} data-pinned={!!view.canvasControlsPinned} aria-label="Canvas" role={focused?'dialog':undefined} aria-modal={focused||undefined} aria-owns={focused?'canvas-toggle':undefined} onKeyDown={event=>{
+ return <CanvasVersionLoadProvider view={resourceView}><CanvasPrimaryActionsHost.Provider value={actionsHost}><CanvasControlsHost.Provider value={controlsHost}><aside ref={panel} id="workspace-canvas" className="a-canvas-panel" hidden={suppressed||!canvas.open||!state.selectedSessionId} inert={suppressed||!canvas.open||!state.selectedSessionId} aria-hidden={suppressed||!canvas.open||!state.selectedSessionId||undefined} data-part="canvas" data-navigation={navigation.mode} data-navigation-preference={navigation.preference} data-mode={overview?'overview':'artifact'} data-focused={focused} data-controls={controls} data-pinned={!!view.canvasControlsPinned} aria-label="Canvas" role={focused?'dialog':undefined} aria-modal={focused||undefined} aria-owns={focused?'canvas-toggle':undefined} onKeyDown={event=>{
+  if(event.key==='Escape'&&navigationMenu.current?.open){event.preventDefault();navigationMenu.current.open=false;navigationMenu.current.querySelector('summary')?.focus();return}
   if(controls&&event.key==='Escape'&&!event.defaultPrevented&&!event.target.closest('dialog[open]')){event.preventDefault();closeControls()}
  }}>
 
   {!focused&&!layout.overlay&&<PaneResizer layout={layout} pane="canvas"/>}
   <div className="a-canvas-chrome">
-   <header className="a-canvas-head"><CanvasTabs state={state} act={act} dispatch={dispatch} overview={overview} onOverview={()=>patch(act,{settingsCanvas:false,canvasControlsExpanded:false,canvasDraft:{...draft,library:true,open:false,browser:false}})}/>
+   <header className="a-canvas-head"><CanvasTabs state={state} act={act} dispatch={dispatch} overview={overview} compact={navigation.mode==='compact'} onInteraction={navigation.interaction} onOverview={()=>patch(act,{settingsCanvas:false,canvasControlsExpanded:false,canvasDraft:{...draft,library:true,open:false,browser:false}})}/>
+    <details ref={navigationMenu} className="a-canvas-more" onBlur={event=>{if(event.relatedTarget&&!event.currentTarget.contains(event.relatedTarget))event.currentTarget.open=false}}><summary aria-label="More canvas options" title="More canvas options"><MoreHorizontal/></summary><div className="a-canvas-more-menu"><label>Navigation<select aria-label="Canvas navigation" value={navigation.preference} onChange={event=>navigation.choose(event.target.value)}><option value="auto">Auto</option><option value="tabs">Tabs</option><option value="compact">Compact</option></select></label><p className="a-caption">Auto uses tabs when this pane is wide and tall. Your choice stays on this browser.</p><button type="button" className="a-soft" onClick={()=>{navigationMenu.current.open=false;openControls()}}>Canvas details</button></div></details>
     <button type="button" className="a-icon" aria-label={focused?'Exit canvas focus':'Focus canvas'} aria-pressed={focused} data-action="view.update" onClick={()=>patch(act,{canvasFocused:!focused})}>{focused?<Minimize2/>:<Maximize2/>}</button>
-    <button type="button" className="a-soft a-canvas-dismiss" aria-label="Close canvas panel" title="Return to chat — keeps open documents and edits" data-action="canvas.visibility" onClick={()=>act('canvas.visibility',{open:false})}><X aria-hidden="true"/><span>Close Canvas</span></button>
+    <button type="button" className="a-soft a-canvas-dismiss" aria-label="Close canvas panel" title="Hide Canvas — keeps open documents and edits" data-action="canvas.visibility" onClick={()=>act('canvas.visibility',{open:false})}><PanelRight aria-hidden="true"/></button>
    </header>
-  </div>
-  <CanvasDetailsAction.Provider value={{expanded:controls,toggle:()=>controls?closeControls():openControls()}}><div ref={contentRef} className="a-canvas-content" data-details-overlay={detailsOverlay}>
-   <div ref={readerRef} className="a-canvas-reader" inert={covered} aria-hidden={covered||undefined}>
    <div className="a-canvas-artifact-toolbar" hidden={overview||!hasContent||canvas.kind==='context-inspector'}>
-    <strong title={canvas.title}>{canvas.title}</strong>
-    {resourceView?.versions?.length>0&&canvas.kind!=='context-inspector'&&<button type="button" className="a-canvas-version-shortcut a-soft" aria-label="Choose artifact version" aria-expanded={controls} aria-controls="canvas-options" onClick={()=>openControls('version')}>v{resourceView.runningVersion??resourceView.selectedVersion??resourceView.latestVersion}{resourceView.selectedVersion!=null?' · Saved':''}</button>}
-    {resourceView?.versions?.length>0&&!canvas.app&&!['settings','context-inspector','browser','mcp-app'].includes(canvas.kind)&&<CanvasDocumentRefresh key={state.selectedSessionId+':'+resourceView.resourceId+':'+(resourceView.selectedVersion??'latest')} view={resourceView} dispatch={dispatch}/>}
+    {resourceView?.versions?.length>0&&canvas.kind!=='context-inspector'&&<button type="button" className="a-canvas-version-shortcut a-soft" aria-label="Choose artifact version" aria-expanded={controls} aria-controls="canvas-options" onClick={()=>openControls('version')}>v{resourceView.runningVersion??resourceView.selectedVersion??resourceView.latestVersion}{resourceView.selectedVersion!=null?(canvas.kind==='browser'?' · Saved address':' · Read only'):' · Latest'}</button>}
     <div ref={setActionsHost} className="a-canvas-primary-actions"/>
     <button type="button" className="a-soft a-canvas-details" aria-label="Canvas details" aria-expanded={controls} aria-controls="canvas-options" onClick={()=>controls?closeControls():openControls()}><Info/><span>Details</span></button>
    </div>
+  </div>
+  <CanvasDetailsAction.Provider value={{expanded:controls,toggle:()=>controls?closeControls():openControls()}}><div ref={contentRef} className="a-canvas-content" data-details-overlay={detailsOverlay}>
+   <div ref={readerRef} className="a-canvas-reader" inert={covered} aria-hidden={covered||undefined}>
+   {resourceView?.versions?.length>0&&!canvas.app&&!['settings','context-inspector','browser','mcp-app'].includes(canvas.kind)&&<CanvasDocumentRefresh key={state.selectedSessionId+':'+resourceView.resourceId+':'+(resourceView.selectedVersion??'latest')} view={resourceView} dispatch={dispatch}/>}
   <div className="a-canvas-body">
    {settings&&<div className="a-settings-canvas">{settingsSurface}</div>}
    <div key={state.selectedSessionId??'draft'} hidden={settings} className="a-canvas-session-body">

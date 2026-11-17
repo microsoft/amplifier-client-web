@@ -71,12 +71,12 @@ export function CanvasDocumentRefresh({view,dispatch}){
   finally{pending.current=false}
  };
  return <>
-  <button type="button" className="a-soft a-canvas-refresh" aria-label="Refresh document" title="Check saved content and versions without reloading the preview or reading the source file" aria-disabled={!!shown?.pending} onClick={refresh}>Refresh</button>
-  <div className="a-canvas-freshness" role={shown?.error?'alert':'status'} aria-live="polite">
+  <CanvasControl><button type="button" className="a-soft a-canvas-refresh" aria-label="Refresh document" title="Check saved content and versions without reloading the preview or reading the source file" aria-disabled={!!shown?.pending} onClick={refresh}>Refresh</button></CanvasControl>
+  <CanvasControl inline={!!(view.previewRetained||shown?.pending||shown?.error||shownLoad?.pending||shownLoad?.error||shownLoad?.needsCheck)}><div className="a-canvas-freshness" role={shown?.error?'alert':'status'} aria-live="polite">
    {shown?.pending?'Checking saved content…':shown?.error?`Could not refresh: ${shown.error} ${shownLoad?.needsCheck?'The Load outcome still needs a saved-state check.':'The open document is retained.'}`:shownLoad?.needsCheck?'Saved preview status needs confirmation':`${shown?.checkedVersion===versionOf(view)?'Checked · ':''}${identity} · ${freshness}`}
    {view.previewRetained&&<button type="button" className="a-soft a-canvas-load-version" aria-disabled={!!shownLoad?.pending||!!shownLoad?.needsCheck} onClick={loadVersion}>{shownLoad?.pending?'Loading saved version…':`Load v${view.latestVersion} — resets preview and runs its code`}</button>}
    {shownLoad?.error&&<p role={shownLoad.source==='details'?undefined:'alert'}>{shownLoad.error}</p>}
-  </div>
+  </div></CanvasControl>
  </>;
 }
 export const usePrimaryCanvas=()=>useContext(CanvasPrimaryActionsHost)!==undefined;

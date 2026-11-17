@@ -1,6 +1,7 @@
 import {CanvasControl} from './canvas-controls';
 import React,{useEffect,useLayoutEffect,useRef,useState} from 'react';
-import {FileText,Globe,Settings,X,ExternalLink,RotateCw,ArrowRight,Library,PanelsTopLeft} from 'lucide-react';
+import {FileText,Globe,Settings,X,ExternalLink,RotateCw,ArrowRight,Library,PanelsTopLeft,ChevronLeft,ChevronRight,ChevronDown} from 'lucide-react';
+import {canvasTabLabels} from './canvas-navigation.js';
 import {filterList} from './list-filter';
 import {useCanvasReading} from './canvas-overview-state';
 const inChat=(state,row)=>row.sessionId===state.selectedSessionId&&row.workspaceId===state.selectedWorkspaceId;
@@ -12,10 +13,29 @@ export function closeCanvasDialog(dialog,focus){
  if(dialog?.open)dialog.close();
  requestAnimationFrame(focus);
 }
-export function CanvasTabs({state,act,dispatch=act,overview=false,onOverview}){
+export function CanvasTabs({state,act,dispatch=act,overview=false,onOverview,compact=false,onInteraction}){
  const rows=chatArtifacts(state).filter(r=>r.tabOpen),strip=useRef(null),tabs=useRef(null),dialog=useRef(null),trigger=useRef(null);
  const [scrolled,setScrolled]=useState(false),[open,setOpen]=useState(false),[query,setQuery]=useState(''),[error,setError]=useState(''),[pending,setPending]=useState(false);
  const [focusId,setFocusId]=useState(null),selectedId=overview?'overview':state.canvas?.id;
+ const labels=canvasTabLabels(rows),active=rows.find(row=>row.id===selectedId);
+ const [edges,setEdges]=useState({left:false,right:false});
+ const updateEdges=()=>{const node=strip.current;if(node)setEdges({left:node.scrollLeft>1,right:node.scrollLeft<node.scrollWidth-node.clientWidth-1})};
+ useEffect(()=>{onInteraction?.(open||pending);return()=>onInteraction?.(false)},[open,pending]);
+ useLayoutEffect(()=>{
+  const node=strip.current;if(!node)return;
+  updateEdges();const observer=new ResizeObserver(updateEdges);observer.observe(node);return()=>observer.disconnect();
+ },[rows.length,compact]);
+ const scroll=direction=>{const node=strip.current;if(node){node.scrollLeft+=direction*Math.max(120,node.clientWidth*.75);updateEdges()}};
+ useEffect(()=>{
+  const node=strip.current;if(!node)return;
+  const wheel=event=>{
+   if(event.ctrlKey||event.metaKey||Math.abs(event.deltaX)>Math.abs(event.deltaY))return;
+   const delta=event.deltaY*(event.deltaMode===1?24:event.deltaMode===2?node.clientWidth:1);
+   if(delta<0?node.scrollLeft<=0:node.scrollLeft>=node.scrollWidth-node.clientWidth-1)return;
+   event.preventDefault();node.scrollLeft+=delta;updateEdges();
+  };
+  node.addEventListener('wheel',wheel,{passive:false});return()=>node.removeEventListener('wheel',wheel);
+ },[]);
  const tabFocus=focusId==='overview'||rows.some(row=>row.id===focusId)?focusId:selectedId;
  useEffect(()=>{const focused=tabs.current?.querySelector('[role=tab]:focus');setFocusId(focused?focused.dataset.artifactId||'overview':selectedId)},[selectedId,state.selectedSessionId]);
  const focusIntent=useRef(0),dialogGeneration=useRef(0);
@@ -27,7 +47,7 @@ export function CanvasTabs({state,act,dispatch=act,overview=false,onOverview}){
  const current=useRef(state);current.current=state;
  useCanvasReading(strip,state.selectedSessionId,'tabs',!!state.canvas?.open);
  const reveal=id=>{const node=strip.current,tab=[...(node?.querySelectorAll('[role=tab]')||[])].find(el=>el.dataset.artifactId===id);if(!tab)return;const outer=node.getBoundingClientRect(),inner=(tab.closest?.('.a-canvas-document-entry')||tab).getBoundingClientRect();if(inner.left<outer.left)node.scrollLeft+=inner.left-outer.left;else if(inner.right>outer.right)node.scrollLeft+=Math.min(inner.left-outer.left,inner.right-outer.right)};
- useLayoutEffect(()=>{if(state.canvas?.open&&!overview)reveal(state.canvas?.id)},[state.canvas?.id]);
+ useLayoutEffect(()=>{if(state.canvas?.open&&!overview){reveal(state.canvas?.id);updateEdges()}},[state.canvas?.id,compact]);
  useLayoutEffect(()=>{
   const node=strip.current;if(!node||!state.canvas?.open||overview)return;
   const observer=new ResizeObserver(()=>reveal(state.canvas?.id));observer.observe(node);
@@ -51,7 +71,8 @@ export function CanvasTabs({state,act,dispatch=act,overview=false,onOverview}){
     // The receipt is accepted; its React state commit may follow this frame.
     // The requested tab already exists. Do not gate focus on that later commit.
     if(focusIntent.current!==intent||latest.selectedSessionId!==sessionId||dialog.current?.open||!latest.canvas?.open)return;
-    reveal(row.id);[...(strip.current?.querySelectorAll('[role=tab]')||[])].find(el=>el.dataset.artifactId===row.id)?.focus({preventScroll:true});
+    if(compact)trigger.current?.focus({preventScroll:true});
+    else{reveal(row.id);[...(strip.current?.querySelectorAll('[role=tab]')||[])].find(el=>el.dataset.artifactId===row.id)?.focus({preventScroll:true})}
    });
   }catch(err){setError(err.message)}finally{setPending(false)}
  }
@@ -69,6 +90,7 @@ export function CanvasTabs({state,act,dispatch=act,overview=false,onOverview}){
    if(result?.accepted)requestAnimationFrame(()=>{
     if(!ownsInteraction())return;
     if(fromDialog)dialog.current?.querySelector('input,button')?.focus({preventScroll:true});
+    else if(compact)trigger.current?.focus({preventScroll:true});
     else tabs.current?.querySelector('[aria-selected=true]')?.focus({preventScroll:true});
    });
    else setError(String(result?.error?.message||result?.error||'The tab was not closed. Your current view was kept.'));
@@ -76,26 +98,29 @@ export function CanvasTabs({state,act,dispatch=act,overview=false,onOverview}){
  }
  const filtered=filterList(rows,query,row=>[row.title,row.kind]);
  const keyboard=event=>{
+  if(compact)return;
   const target=event.target.closest('[role=tab]');if(!target)return;
   const list=[...tabs.current.querySelectorAll('[role=tab]')],index=list.indexOf(target);
   if(event.key==='Delete'&&target.dataset.artifactId){event.preventDefault();const row=rows.find(row=>row.id===target.dataset.artifactId);if(row)remove(row);return}
   const next=event.key==='ArrowRight'?(index+1)%list.length:event.key==='ArrowLeft'?(index+list.length-1)%list.length:event.key==='Home'?0:event.key==='End'?list.length-1:null;
   if(next===null)return;event.preventDefault();setFocusId(list[next].dataset.artifactId||'overview');list[next].focus({preventScroll:true});if(list[next].dataset.artifactId)reveal(list[next].dataset.artifactId);
  };
- return <><div ref={tabs} className="a-canvas-navigation" role="tablist" aria-label="Canvas views" data-scrolled={scrolled} onKeyDown={keyboard}>
-  <div className="a-canvas-overview-slot"><button type="button" className="a-chat-overview-trigger" role="tab" aria-label="Chat overview" aria-selected={overview} tabIndex={tabFocus==='overview'?0:-1} onClick={()=>{setError('');onOverview?.()}}><Library aria-hidden="true"/><span>Overview</span></button></div>
-  <div ref={strip} className="a-canvas-document-tabs" onScroll={event=>setScrolled(event.currentTarget.scrollLeft>4)}>{rows.map(row=><div key={row.id} className="a-canvas-document-entry" role="presentation">
-   <button type="button" role="tab" className="a-canvas-document-tab" aria-selected={!overview&&row.id===state.canvas?.id} tabIndex={tabFocus===row.id?0:-1} data-artifact-id={row.id} title={row.title} data-action="canvas.select" onClick={()=>choose(row)} onMouseDown={event=>{if(event.button===1)event.preventDefault()}} onAuxClick={event=>{if(event.button===1){event.preventDefault();remove(row)}}}>{row.kind==='browser'?<Globe/>:row.kind==='settings'?<Settings/>:<FileText/>}<span>{row.title}</span></button>
+ return <><div ref={tabs} className="a-canvas-navigation" role={compact?'group':'tablist'} aria-label="Canvas views" data-scrolled={scrolled} onKeyDown={keyboard}>
+  <div className="a-canvas-overview-slot"><button type="button" className="a-chat-overview-trigger" role={compact?undefined:'tab'} aria-label="Chat overview" aria-selected={compact?undefined:overview} aria-pressed={compact?overview:undefined} tabIndex={compact||tabFocus==='overview'?0:-1} onClick={()=>{setError('');onOverview?.()}}><Library aria-hidden="true"/><span>Overview</span></button></div>
+  <div ref={strip} className="a-canvas-document-tabs" hidden={compact} onScroll={event=>{setScrolled(event.currentTarget.scrollLeft>4);updateEdges()}}>{rows.map((row,index)=><div key={row.id} className="a-canvas-document-entry" role="presentation" data-selected={!overview&&row.id===state.canvas?.id}>
+   <button type="button" role="tab" className="a-canvas-document-tab" aria-label={row.title} aria-selected={!overview&&row.id===state.canvas?.id} tabIndex={tabFocus===row.id?0:-1} data-artifact-id={row.id} title={row.title} data-action="canvas.select" onClick={()=>choose(row)} onMouseDown={event=>{if(event.button===1)event.preventDefault()}} onAuxClick={event=>{if(event.button===1){event.preventDefault();remove(row)}}}>{row.kind==='browser'?<Globe/>:row.kind==='settings'?<Settings/>:<FileText/>}<span>{labels[index]}</span></button>
    <button type="button" className="a-icon a-canvas-tab-close" aria-label={`Close tab ${row.title}`} title={`Close tab ${row.title} — keeps saved output`} data-action="canvas.tabClose" aria-disabled={pending} onClick={()=>remove(row)}><X aria-hidden="true"/></button>
   </div>)}</div>
- </div><button ref={trigger} type="button" className="a-open-documents a-soft" aria-label={`Open documents, ${rows.length} open`} aria-haspopup="dialog" aria-expanded={open} onClick={()=>{dialogGeneration.current++;setOpen(true)}}><PanelsTopLeft aria-hidden="true"/><span>Open documents</span><small>{rows.length}</small></button>
+ </div><div className="a-canvas-tab-scroll" hidden={compact}><button type="button" className="a-icon" aria-label="Scroll document tabs left" disabled={!edges.left} onClick={()=>scroll(-1)}><ChevronLeft/></button><button type="button" className="a-icon" aria-label="Scroll document tabs right" disabled={!edges.right} onClick={()=>scroll(1)}><ChevronRight/></button></div>
+ <button ref={trigger} type="button" className="a-open-documents a-soft" aria-label={`Open documents, ${rows.length} open${compact&&active?`, ${active.title}`:''}`} title={compact?active?.title:undefined} aria-haspopup="dialog" aria-expanded={open} onKeyDown={event=>{if(compact&&event.key==='Delete'&&active){event.preventDefault();remove(active)}}} onClick={()=>{dialogGeneration.current++;setOpen(true)}}><PanelsTopLeft aria-hidden="true"/><span>{compact?(overview?'Chat overview':active?.title||'Open documents'):'All documents'}</span><small>{rows.length}</small>{compact&&<ChevronDown/>}</button>
+ {compact&&active&&<button type="button" className="a-icon a-canvas-close-current" aria-label={`Close tab ${active.title}`} title="Close current document — keeps saved output" aria-disabled={pending} onClick={()=>remove(active)}><X/></button>}
  <dialog ref={dialog} className="a-open-documents-dialog" aria-label="Open documents" onClick={event=>{if(event.target===event.currentTarget){const r=event.currentTarget.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)close()}}} onCancel={event=>{event.preventDefault();close()}} onClose={()=>setOpen(false)}>
   <header><h2>Open documents</h2><button type="button" className="a-icon" aria-label="Close open documents" onClick={close}><X/></button></header>
   <input type="search" aria-label="Find an open document" placeholder="Find an open document…" value={query} onChange={event=>setQuery(event.target.value)}/>
   {error&&<p role="alert">{error}</p>}
   <ul>{filtered.map(row=><li key={row.id} aria-current={!overview&&row.id===state.canvas?.id?'true':undefined}><button type="button" onClick={()=>choose(row)} disabled={pending}><FileText/><span><strong>{row.title}</strong><small>{row.kind}{!overview&&row.id===state.canvas?.id?' · Selected':''}</small></span></button><button type="button" className="a-icon" disabled={pending} aria-label={`Close tab ${row.title}`} onClick={()=>remove(row)}><X/></button></li>)}</ul>
   {!filtered.length&&<p>{rows.length?'No matching open documents.':'No documents are open. Saved outputs remain in Overview.'}</p>}
-  <p className="a-caption">{rows.length} open · {chatArtifacts(state).length} saved outputs</p>
+  <p className="a-caption" role="status">{query?`${filtered.length} matching · `:''}{rows.length} open · {chatArtifacts(state).length} saved outputs</p>
  </dialog>{error&&!open&&<p role="alert" className="a-canvas-navigation-error">{error}</p>}</>;
 }
 export function SavedArtifacts({state,act,compact=false,onFilter}){

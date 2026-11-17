@@ -342,7 +342,7 @@ test('Canvas Details and reader are stable siblings below the one navigation bar
   assert.equal(inspector.parent,reader.parent);
   assert.equal(reader.parent.props.className,'a-canvas-content');
   assert.equal(root.root.findByProps({className:'a-canvas-chrome'}).findAllByProps({id:'canvas-options'}).length,0);
-  assert.equal(reader.findAllByProps({className:'a-canvas-artifact-toolbar'}).length,1);
+  assert.equal(root.root.findByProps({className:'a-canvas-chrome'}).findAllByProps({className:'a-canvas-artifact-toolbar'}).length,1,'Stable toolbar flows with chrome, never with the reader');
   assert.equal(inspector.props.role,'region');assert.equal(inspector.props['aria-labelledby'],'canvas-details-title');
   for(const [open,visible] of [[true,true],[true,false],[true,true],[false,true]]){
    state={...state,view:{...state.view,canvasControlsExpanded:open},canvas:{...state.canvas,open:visible}};
@@ -362,7 +362,7 @@ test('Canvas Details resize, Escape priority and focus return follow the current
  const calls=[],doc={body:{},activeElement:null,addEventListener(name,fn){if(!listeners.has(name))listeners.set(name,new Set());listeners.get(name).add(fn)},removeEventListener(name,fn){listeners.get(name)?.delete(fn)},querySelector(){return invoker}};
  const node=area=>({area,isConnected:true,getClientRects:()=>[{}],closest:()=>null,focus(){doc.activeElement=this}});
  const invoker=node('reader'),readerField=node('reader'),close=node('inspector'),version=node('inspector'),newIntent=node('header');
- const panelNode={getBoundingClientRect:()=>({width}),contains:n=>['reader','inspector'].includes(n?.area),querySelector:()=>invoker};
+ const panelNode={getBoundingClientRect:()=>({width,height:800}),contains:n=>['reader','inspector'].includes(n?.area),querySelector:selector=>selector.startsWith('.a-canvas-')?null:invoker,addEventListener(){},removeEventListener(){}};
  const readerNode={contains:n=>n?.area==='reader'};
  const inspectorNode={contains:n=>n?.area==='inspector',querySelector:selector=>selector.includes('Artifact version')?version:close};
  const act=async(name,args)=>{calls.push({name,args});return {accepted:true}};

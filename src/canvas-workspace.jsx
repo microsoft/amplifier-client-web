@@ -119,7 +119,6 @@ function ResourceView({view,state,dispatch,recovery}){
  if(canvas?.kind==='context-inspector')return <section className="a-resource-view" data-canvas-view={view.viewId} aria-label="Context inspector view"><div className="a-resource-renderer"><Renderer key={view.resourceId} view={view} canvas={canvas} dispatch={dispatch} recovery={recovery}/></div></section>;
  return <CanvasViewControls label="Artifact controls"><section className="a-resource-view" data-canvas-view={view.viewId} aria-label="Artifact view">
   <CanvasControl><div className="a-resource-view-controls a-canvas-toolbar">
-   <strong>{canvas?.title}</strong>
    {!!view.versions?.length&&<><label>Version<select aria-label="Artifact version" disabled={!!unresolved} value={view.selectedVersion??'latest'} onChange={event=>choose(event.target.value==='latest'?null:Number(event.target.value))}>
     <option value="latest">Latest · Version {view.latestVersion}</option>
     {view.versions.slice().reverse().map(version=><option key={version.version} value={version.version}>Version {version.version}{version.createdAt?' · '+new Date(version.createdAt*1000).toLocaleString():''}</option>)}
