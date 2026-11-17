@@ -6,12 +6,12 @@
 <title>Open from Windows - Amplifier</title>
 <link rel="stylesheet" href="/app-pages.css">
 </head><body><main>
-<h1>Open from your owner launcher</h1>
-<p id="entry-status" role="status">Run <code>amplifier-unified open</code> with the same data folder and port on the Windows computer running this host.</p>
-<p>No Windows password or Hello PIN is needed. Remote browser pairing is not available in this candidate.</p>
+<h1>Open Amplifier on this PC</h1>
+<p id="entry-status" role="status">Open Amplifier from the Start menu: Amplifier Unified. If the Start menu has no such entry, run this: amplifier-unified open.</p>
+<p>Amplifier then opens in your browser. It asks for no Windows password and no PIN.</p>
 <form id="browser-entry" method="post" action="/api/browser-entry/redeem" hidden>
 <input type="hidden" name="csrf" value="__CSRF__">
 <input type="hidden" name="ticket" value="">
 </form>
-<noscript>JavaScript is required for the one-use owner handoff. Open from the owner launcher again after enabling it.</noscript>
+<noscript>This page needs JavaScript. Turn JavaScript on in this browser. Then open Amplifier again.</noscript>
 </main></body></html>
