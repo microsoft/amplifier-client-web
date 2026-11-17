@@ -112,3 +112,30 @@ test('retained rows use current dependency result and neutral facts without inve
   assert.equal(activityFor(chat,{navigationActivityById:{manager:value}}),value);
  }
 });
+
+test('only explicitly retained rows need exact-ID coverage before claiming a current status',()=>{
+ for(const row of [
+  {status:'working',activity:{kind:'attention',label:'Answer requested'}},
+  {status:'working'},{status:'idle'},{status:'error'},
+  {questions:[{id:'one',status:'pending',required:true},{id:'two',status:'pending',required:true}]},
+  {questions:[{status:'answered',delivery:{status:'unknown'}}]},
+ ]){
+  const chat={id:'owner',...row,navigationActivityRetained:true},before=JSON.stringify(chat);
+  for(const state of [undefined,{}, {navigationActivityById:{}},{navigationActivityById:{other:{kind:'working',label:'Working'}}}])
+   assert.deepEqual(activityFor(chat,state),{kind:'updating',label:'Updating status…'});
+  assert.equal(JSON.stringify(chat),before);
+ }
+ const chat={id:'owner',navigationActivityRetained:true,activity:{kind:'attention',label:'Answer requested'}};
+ for(const current of [
+  {kind:'working',label:'Working'},{kind:'idle',label:'Idle'},
+  {kind:'attention',label:'Answer requested',pendingQuestions:2},
+  {kind:'attention',label:'Check answer delivery'},
+ ]){
+  assert.equal(activityFor(chat,{navigationActivityById:{owner:current}}),current);
+ }
+ const normal={id:'normal',status:'working',questions:[{status:'answered'},{status:'pending',required:true}]};
+ assert.equal(activityFor(normal,{navigationActivityById:{}}).label,'Answer requested','ordinary current rows keep legitimate question priority');
+ for(const status of ['unknown','rejected'])
+  assert.equal(activityFor({questions:[{status:'answered',delivery:{status}}]}).label,'Check answer delivery');
+ assert.equal(activityFor({id:'constructor',navigationActivityRetained:true},{navigationActivityById:{}}).kind,'updating');
+});

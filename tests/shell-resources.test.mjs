@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {shellScope,resourceSnapshots,retainResourceVersions,pendingSnapshots,sidebarReadingSnapshot} from '../src/shell/resources.js';
 import {createShellDiagnostics} from '../src/shell/diagnostics.js';
+import {activityFor} from '../src/navigation-presentation.js';
 const bootstrap={clientId:'client',hostInstanceId:'host',shellBootstrapKey:'key',resolvedInstances:[{id:'chat',package:'builtin.chats'},{id:'button',package:'builtin.actions'},{id:'custom',package:'custom.sidebar'}],instanceGenerations:{chat:1,button:2,custom:3}};
 const demand={id:1,scope:['chat','workspace','chat',null,null],resources:['sidebarSearch']};
 const envelope=()=>({
@@ -170,4 +171,44 @@ test('retained sidebar survives pending baseline but clears for new host, module
  assert.deepEqual(pendingSnapshots(bootstrap,previous,changed,'new-host').chat.navigationResourceRetained,{});
  assert.equal(pendingSnapshots({...bootstrap,instanceGenerations:{...bootstrap.instanceGenerations,chat:2}},previous,changed).chat,undefined);
  assert.deepEqual(pendingSnapshots(bootstrap,previous,{...changed,resources:[]}).chat.navigationResourceRetained,{});
+});
+
+test('H6: selection retains geometry, not a previous demand’s Answer requested coverage',()=>{
+ const {wanted,value}=readingFixture(),entry=value.instances.chat;
+ const chat={id:'a',status:'working',activity:{kind:'attention',label:'Answer requested'}};
+ entry.resources.recentNavigation.value={recentNavigation:{items:[chat],total:1},recentShortcuts:[chat]};
+ entry.resources.pinnedNavigation.value={pinnedNavigation:{items:[{id:'session:a',kind:'session',row:chat}],total:1}};
+ entry.resources.context.value.navigationActivityById={a:chat.activity};
+ const snapshots=resourceSnapshots(bootstrap,value,wanted),previous={shellResources:value,snapshots};
+ const before=JSON.stringify(previous),changed={...wanted,id:2,scope:['b','workspace','chat',null,null]};
+ const pending=pendingSnapshots(bootstrap,previous,changed).chat;
+ assert.deepEqual(pending.navigationActivityById,{});
+ const reading=sidebarReadingSnapshot(pending),row=reading.recentNavigation.items[0];
+ assert.equal(row.id,'a');assert.equal(row.status,'working');
+ assert.equal(row.navigationActivityRetained,true);
+ assert.deepEqual(activityFor(row,reading),{kind:'updating',label:'Updating status…'});
+ assert.equal(activityFor(reading.pinnedNavigation.items[0].row,reading).kind,'updating');
+ assert.equal(activityFor(reading.recentShortcuts[0],reading).kind,'updating');
+ assert.equal(snapshots.chat.recentNavigation.items[0].navigationActivityRetained,undefined);
+ assert.equal(JSON.stringify(previous),before,'reading markers cannot mutate cached source rows');
+ const next=structuredClone(value);next.demandId=2;next.scope=changed.scope;next.instances.chat.stateRevision=2;
+ next.instances.chat.pending={recentNavigation:{status:'pending'},pinnedNavigation:{status:'pending'}};
+ next.instances.chat.resources={context:next.instances.chat.resources.context};
+ next.instances.chat.resources.context.value.navigationActivityById={};
+ const absent=sidebarReadingSnapshot(resourceSnapshots(bootstrap,next,changed,{chat:pending}).chat);
+ assert.equal(activityFor(absent.recentNavigation.items[0],absent).kind,'updating');
+ next.instances.chat.stateRevision++;
+ next.instances.chat.resources.context.value.navigationActivityById={a:{kind:'working',label:'Working'}};
+ const covered=sidebarReadingSnapshot(resourceSnapshots(bootstrap,next,changed,{chat:pending}).chat);
+ assert.deepEqual(activityFor(covered.recentNavigation.items[0],covered),{kind:'working',label:'Working'});
+});
+
+test('fresh page fallbacks and custom snapshots never acquire retained activity provenance',()=>{
+ const {wanted,value}=readingFixture();
+ const fresh=sidebarReadingSnapshot(resourceSnapshots(bootstrap,value,wanted).chat);
+ assert.equal(fresh.recentNavigation.items[0].navigationActivityRetained,undefined);
+ const mixed={...fresh,navigationResourceRetained:{recentNavigation:{recentNavigation:{items:[{id:'old'}]}}}};
+ assert.equal(sidebarReadingSnapshot(mixed).recentNavigation,fresh.recentNavigation,'current page overrides retained geometry');
+ const changed={...wanted,id:2},previous={snapshots:{custom:{ownField:42,generation:3}}};
+ assert.deepEqual(pendingSnapshots(bootstrap,previous,changed).custom,previous.snapshots.custom);
 });

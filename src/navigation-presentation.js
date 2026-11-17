@@ -26,6 +26,7 @@ export function activityFor(chat,state){
  const activities=state?.navigationActivityById;
  const current=activities&&Object.hasOwn(activities,chat.id)?activities[chat.id]:null;
  if(current)return presentActivity(current);
+ if(chat.navigationActivityRetained)return {kind:'updating',label:'Updating status…'};
  if(chat.activity)return presentActivity(chat.activity);
  if(chat.approvals?.some(row=>row.status==null||row.status==='pending'))return {kind:'attention',label:'Approval requested'};
  if(chat.questions?.some(row=>row.status==='pending'&&row.required))return {kind:'attention',label:'Answer requested'};
