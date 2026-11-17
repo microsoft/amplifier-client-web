@@ -11,7 +11,7 @@ if(process.argv.includes('--preflight')){
  await transformWithEsbuild(await readFile(root+fixture,'utf8'),fixture,{loader:'jsx',jsx:'automatic'});
  console.log('Suggestion fixture JSX preflight passed; browser not run.');
 }else{
- let vite,browser;
+ let vite,browser,page;
  const errors=[],api=[],report={scope:'real production components/controller, synthetic visibility/focus and action adapter; no installed/provider/physical IME proof'};
  await mkdir(output,{recursive:true});
  try{
@@ -19,7 +19,7 @@ if(process.argv.includes('--preflight')){
    if(req.url!=='/suggestion-mounted')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><main id="amp-one"><div id="fixture"></div></main><script type="module" src="/'+fixture+'"></script>');
   })}}]});
   await vite.listen();browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}:{})});
-  const page=await browser.newPage({viewport:{width:1100,height:900},hasTouch:true});
+  page=await browser.newPage({viewport:{width:1100,height:900},hasTouch:true});
   page.on('pageerror',error=>errors.push(error.message));await page.route('**/api/**',route=>{api.push(route.request().url());return route.abort()});
   await page.addInitScript(()=>{
    window.fixtureDemand={visible:true,focused:true};
@@ -47,7 +47,7 @@ if(process.argv.includes('--preflight')){
   assert.equal((await calls('session.suggestion.status')).at(-1).args.requestId,attemptA,'Revisit reads same ready attempt');
   assert.equal((await calls('session.suggestion.cancel')).some(row=>row.args.requestId===attemptA),false,'Leaving ready never cancels it');
   await demand(false);await expect(ghost).toHaveCount(0);await demand(true);await expect(ghost).toBeVisible();assert.equal((await requests()).length,2);
-  await editor.focus();await editor.press('Shift+Tab');assert.equal((await snapshot()).draft,'');await editor.focus();await editor.press('Tab');
+  await editor.focus();await editor.press('Shift+Tab');assert.equal((await snapshot()).draft,'');await editor.focus();await expect(editor).toBeFocused();await expect(ghost).toBeVisible();await editor.press('Tab');
   await expect.poll(async()=>(await snapshot()).doc.content[0].content?.[0]?.text).toBe('**literal** @participant /not-a-command');
   await editor.press('ControlOrMeta+z');await expect.poll(async()=>(await snapshot()).draft).toBe('');await expect(ghost).toHaveCount(0);
   await demand(false);await demand(true);await expect(ghost).toHaveCount(0);assert.equal((await requests()).length,2,'Acceptance/Undo cannot re-infer or restore');
@@ -108,6 +108,6 @@ if(process.argv.includes('--preflight')){
   assert.deepEqual((await snapshot()).sends,[]);assert.deepEqual(errors,[]);assert.deepEqual(api,[]);
   report.settings={sharedProviderModelEffort:true,ordinaryCatalogDiscovery:true,effortRoundtrip:true,AdvancedPrompt:true,resetHostDefault:true,failedSaveKeepsEdits:true,separateFieldSaves:true,noChatConfiguration:true};report.status='PASS';report.snapshot=await snapshot();report.errors=errors;report.api=api;
   console.log('PASS: selected visible focused visits, ready status-only restore, pending cancellation/dedup, safe acceptance, shared catalog/model/effort, Advanced prompt/reset/save.');
- }catch(error){report.status='FAIL';report.error=error.stack;throw error}
+ }catch(error){report.status='FAIL';report.error=error.stack;report.errors=errors;report.api=api;report.failure=await page?.evaluate(()=>({snapshot:window.suggestionFixture?.snapshot(),demand:window.fixtureDemand,hidden:document.hidden,focused:document.hasFocus(),active:document.activeElement?.outerHTML.slice(0,500),preview:document.querySelector('.a-composer-suggestion')?.outerHTML})).catch(()=>null);throw error}
  finally{await writeFile(output+'/result.json',JSON.stringify(report,null,2)+'\n');await browser?.close();await vite?.close()}
 }

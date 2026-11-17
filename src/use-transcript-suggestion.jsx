@@ -17,7 +17,7 @@ export function useTranscriptSuggestion({state,readState,act,blocked,canUse,reci
  }});
  const owner=controller.current,witness=suggestionWitness(state),eligible=enabled&&visible&&focused&&connected&&config?.enabled===true&&!blocked&&suggestionEligible(state);
  if(previousRecipient.current!==recipient){owner.invalidate();previousRecipient.current=recipient}
- const trigger=JSON.stringify([witness?.key,config?.revision]);
+ const trigger=JSON.stringify([witness?.key,config?.revision,recipient]);
  owner.observe(state,config?.revision,eligible,{retainReady:!visible||!focused,recipient});
  useEffect(()=>{
   const hide=()=>{if(document.hidden)owner.suspend();setVisible(!document.hidden)};
@@ -37,8 +37,10 @@ export function useTranscriptSuggestion({state,readState,act,blocked,canUse,reci
     const receipt=await act(action,requestArgs,{feedback:false,suggestionIsCurrent:current});
     if(!current())return;
     const result=receipt?.accepted&&receipt.result;
-    terminal=!!result&&result.status!=='pending';
     const received=owner.receive(args,result);
+    // Only a verified ready response may suppress cleanup cancellation. An
+    // unrelated/malformed terminal string is not evidence about this attempt.
+    terminal=received&&result.status==='ready';
     refresh(value=>value+1);
     if(!received)return;
     if(result.status==='pending'&&Date.now()<deadline)timer=setTimeout(()=>poll('session.suggestion.status',{sessionId:args.sessionId,requestId:args.requestId}),350);

@@ -82,6 +82,7 @@ export function SuggestionSettings({state,act,navigate}){
    <ModelSelect key={value.provider} id={id+'-model'} label="Suggestion model" value={value.model||''} entry={entry} state={state} act={act} disabled={busy||!chosen} onChange={model=>edit({model,effort:null})}/>
    <ReasoningEffort controlId={id+'-effort'} choices={choices} value={value.effort||''} disabled={busy||!chosen||!value.model} onChange={event=>edit({effort:choices[Number(event.currentTarget.value)]})} unavailable={entry?.phase==='error'?'Model capabilities unavailable.':entry?.metadata||chosen?.configSchema||chosen?.info?.config_fields?'Reasoning effort is not configurable for this model.':'Loading model capabilities…'}/>
    {value.effort?<button type="button" className="a-link" disabled={busy} onClick={()=>edit({effort:null})}>Use provider default effort</button>:<p className="a-caption">Uses the provider’s default effort.</p>}
+   <p className="a-caption">Higher reasoning effort can increase tokens and cost.</p>
    <button type="button" className="a-link" disabled={busy||!chosen||entry?.phase==='working'} onClick={()=>refreshCatalog(true)}>Refresh suggestion models</button>
    {catalogError&&<p role="status">{catalogError}</p>}
    <p className="a-caption">Uses this connection’s saved account, independently of the chat model. Choose a low-cost model if preferred. No model is selected automatically and there is no fallback.</p>
