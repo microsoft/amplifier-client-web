@@ -37,7 +37,10 @@ export function useInstanceAccent({root,ready,namespace,confirmed,preview,css,sc
   const schedule=()=>{if(frame===null)frame=window.requestAnimationFrame(()=>{frame=null;sync()})};
   sync();
   const observer=new MutationObserver(schedule);
-  observer.observe(app,{attributes:true,attributeFilter:['class','style','data-theme-scheme','data-layout','data-density','data-decorations']});
+  // Appearance CSS can target any root attribute, including work surface and
+  // detail state. Observe only the root (not its frequently changing subtree);
+  // the temporary color probe and icon/head updates cannot trigger this observer.
+  observer.observe(app,{attributes:true});
   const media=['(prefers-color-scheme: dark)','(forced-colors: active)','(prefers-contrast: more)'].map(query=>window.matchMedia(query));
   for(const query of media)query.addEventListener('change',schedule);
   window.addEventListener('resize',schedule);

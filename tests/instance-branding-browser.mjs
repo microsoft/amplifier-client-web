@@ -19,7 +19,7 @@ const bundle=await build({
   import {instanceIcon,updateInstanceHead} from './src/instance-branding.js';
   import {InstanceBrandingSettings} from './src/instance-branding.jsx';
   const initial={css:'#amp-one{--tone:light-dark(#48646d,#a4d5df);--a-accent:var(--tone)}',
-   scheme:'light',accent:'',preview:false,shellPreview:false,confirmed:true,namespace:'fixture',compositionId:'selected',mounted:true,revision:'one',colorMode:'appearance',customIcon:false};
+   scheme:'light',accent:'',preview:false,shellPreview:false,confirmed:true,namespace:'fixture',compositionId:'selected',surface:'chat',interfaceDetail:'standard',mounted:true,revision:'one',colorMode:'appearance',customIcon:false};
   function Fixture(){
    const [config,setConfig]=useState(initial),root=useRef(null);
    window.renders=(window.renders||0)+1;
@@ -37,7 +37,7 @@ const bundle=await build({
     return {accepted:true,result:next};
    }
    if(!config.mounted)return <div>Appearance unavailable</div>;
-   return <div id="amp-one" ref={root} style={{colorScheme:config.scheme,...(config.accent?{'--a-accent':config.accent}:{})}}>
+   return <div id="amp-one" ref={root} data-work-surface={config.surface} data-interface-detail={config.interfaceDetail} data-appearance-composition={config.compositionId} style={{colorScheme:config.scheme,...(config.accent?{'--a-accent':config.accent}:{})}}>
     <style>{config.css}</style>
     <img id="shell-icon" src={instanceIcon(branding,192,colors.rendered)}/>
     <InstanceBrandingSettings state={{instanceBranding:branding}} act={action} navigate={()=>{}} instanceAccent={colors.rendered}/>
@@ -87,6 +87,53 @@ try{
  await expect.poll(()=>other.locator('link[rel="manifest"]').getAttribute('href')).toBe('/manifest.webmanifest?v=one&accent=fedcba');
  assert.equal(await head(),'/manifest.webmanifest?v=one&accent=48646d','Browser profiles do not replace each other');
  await other.close();
+
+ // The composition and CSS stay unchanged while navigation alone changes a
+ // root selector. Visible icons and confirmed install metadata must follow it.
+ const surfaceCss='#amp-one[data-work-surface="chat"]{--a-accent:#112233} #amp-one[data-work-surface="home"]{--a-accent:#445566}';
+ await page.evaluate(css=>window.configure({css}),surfaceCss);
+ await expect.poll(head).toBe('/manifest.webmanifest?v=one&accent=112233');
+ assert.equal(await page.locator('#amp-one').getAttribute('data-appearance-composition'),'selected');
+ await page.evaluate(()=>window.configure({surface:'home'}));
+ assert.equal(await page.locator('#amp-one').evaluate(node=>getComputedStyle(node).getPropertyValue('--a-accent').trim()),'#445566');
+ await expect.poll(shell).toBe('/instance-icon/192.png?v=one&accent=445566');
+ await expect.poll(preview).toBe('/instance-icon/192.png?v=one&accent=445566');
+ await expect.poll(head).toBe('/manifest.webmanifest?v=one&accent=445566');
+ assert.equal(await page.locator('#amp-one').getAttribute('data-appearance-composition'),'selected');
+ await page.evaluate(()=>window.configure({preview:true}));
+ await page.evaluate(()=>window.configure({surface:'chat'}));
+ await expect.poll(shell).toBe('/instance-icon/192.png?v=one&accent=112233');
+ assert.equal(await head(),'/manifest.webmanifest?v=one&accent=445566','Navigation in a preview cannot update installed metadata');
+ await page.evaluate(()=>window.configure({preview:false}));
+ await expect.poll(head).toBe('/manifest.webmanifest?v=one&accent=112233');
+ await page.evaluate(()=>window.configure({confirmed:false}));
+ await page.evaluate(()=>window.configure({surface:'home'}));
+ await expect.poll(shell).toBe('/instance-icon/192.png?v=one&accent=445566');
+ assert.equal(await head(),'/manifest.webmanifest?v=one&accent=112233','Unconfirmed navigation cannot update installed metadata');
+ await page.evaluate(()=>window.configure({confirmed:true}));
+ await expect.poll(head).toBe('/manifest.webmanifest?v=one&accent=445566');
+ // A different supported root attribute must not require another allowlist edit.
+ await page.evaluate(()=>window.configure({css:'#amp-one[data-interface-detail="standard"]{--a-accent:#778899} #amp-one[data-interface-detail="detailed"]{--a-accent:#aabbcc}'}));
+ await expect.poll(head).toBe('/manifest.webmanifest?v=one&accent=778899');
+ await page.evaluate(()=>window.configure({interfaceDetail:'detailed'}));
+ await expect.poll(shell).toBe('/instance-icon/192.png?v=one&accent=aabbcc');
+ await expect.poll(head).toBe('/manifest.webmanifest?v=one&accent=aabbcc');
+ await page.evaluate(()=>{
+  window.surfaceChanges=0;
+  window.surfaceObserver=new MutationObserver(changes=>{window.surfaceChanges+=changes.length});
+  window.surfaceObserver.observe(document.head,{subtree:true,attributes:true,attributeFilter:['href']});
+  window.surfaceObserver.observe(document.querySelector('#amp-one'),{subtree:true,attributes:true,attributeFilter:['src']});
+  window.surfaceStyleReads=0;
+  window.originalComputedStyle=window.getComputedStyle;
+  window.getComputedStyle=function(node,...args){if(node.id==='amp-one')window.surfaceStyleReads++;return window.originalComputedStyle.call(window,node,...args)};
+ });
+ await page.waitForTimeout(200);
+ const surfaceBefore=await page.evaluate(()=>({renders:window.renders,changes:window.surfaceChanges,reads:window.surfaceStyleReads}));
+ await page.waitForTimeout(300);
+ assert.deepEqual(await page.evaluate(()=>({renders:window.renders,changes:window.surfaceChanges,reads:window.surfaceStyleReads})),surfaceBefore,'Root-attribute changes settle without a sampling, render or URL-mutation loop');
+ await page.evaluate(()=>{window.surfaceObserver.disconnect();window.getComputedStyle=window.originalComputedStyle});
+ await page.evaluate(()=>window.configure({css:'#amp-one{--tone:light-dark(#48646d,#a4d5df);--a-accent:var(--tone)}'}));
+ await expect.poll(head).toBe('/manifest.webmanifest?v=one&accent=48646d');
 
  // CSS color functions, custom variables and document scheme resolve in-browser.
  await page.evaluate(()=>window.configure({scheme:'light dark'}));
