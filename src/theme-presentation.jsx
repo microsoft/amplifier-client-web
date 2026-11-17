@@ -1,10 +1,42 @@
 import React,{useEffect,useLayoutEffect,useState} from 'react';
+import {renderedInstanceAccent} from './instance-branding.js';
 import './theme-presentation.css';
 
 export function useThemeScheme(requested){
  const [dark,setDark]=useState(()=>typeof matchMedia==='function'&&matchMedia('(prefers-color-scheme: dark)').matches);
  useEffect(()=>{const query=matchMedia('(prefers-color-scheme: dark)'),changed=()=>setDark(query.matches);changed();query.addEventListener('change',changed);return()=>query.removeEventListener('change',changed)},[]);
  return requested==='dark'||(requested==='system'&&dark)?'dark':'light';
+}
+
+// Preview CSS is visible in this document, but must not replace the last
+// confirmed appearance used by installed-app metadata.
+export function useInstanceAccent({root,ready,namespace,confirmed,preview,css,scheme,accent,compositionId}){
+ const [colors,setColors]=useState({namespace:null,rendered:null,committed:null});
+ useLayoutEffect(()=>{
+  const app=root.current;
+  if(!app||!ready||!namespace||!compositionId)return;
+  let frame=null,active=true;
+  const sync=()=>{
+   if(!active)return;
+   const rendered=renderedInstanceAccent(app);
+   setColors(previous=>{
+    const committed=confirmed&&!preview?rendered:previous.namespace===namespace?previous.committed:null;
+    if(previous.namespace===namespace&&previous.rendered===rendered&&previous.committed===committed)return previous;
+    return {namespace,rendered,committed};
+   });
+  };
+  const schedule=()=>{if(frame===null)frame=window.requestAnimationFrame(()=>{frame=null;sync()})};
+  sync();
+  const observer=new MutationObserver(schedule);
+  observer.observe(app,{attributes:true,attributeFilter:['class','style','data-theme-scheme','data-layout','data-density','data-decorations']});
+  const media=['(prefers-color-scheme: dark)','(forced-colors: active)','(prefers-contrast: more)'].map(query=>window.matchMedia(query));
+  for(const query of media)query.addEventListener('change',schedule);
+  window.addEventListener('resize',schedule);
+  return()=>{active=false;observer.disconnect();for(const query of media)query.removeEventListener('change',schedule);window.removeEventListener('resize',schedule);if(frame!==null)window.cancelAnimationFrame(frame)};
+ },[root,ready,namespace,confirmed,preview,css,scheme,accent,compositionId]);
+ // An unavailable appearance is not an instruction to replace confirmed
+ // install metadata. A known new namespace must not reuse the old color.
+ return !namespace||colors.namespace===namespace?colors:{rendered:null,committed:null};
 }
 
 // Browser chrome follows the rendered Reference composition, not a separate
