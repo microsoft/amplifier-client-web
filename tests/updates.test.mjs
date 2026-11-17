@@ -978,13 +978,19 @@ test('before an AI connection the Updates page offers the connection and no inst
 });
 
 test('an earlier failure record is not shown as the last update issue while the host waits for an AI connection',()=>{
- const diagnostics={attemptId:'old',events:[{id:'e1',attemptId:'old',phase:'ecosystem-probe',status:'failed'}],
+ const diagnostics={attemptId:'old',events:[{id:'e1',attemptId:'old',phase:'ecosystem-probe',status:'failed',reason:'ai-connection-needed',exitCode:7}],
   lastFailure:{attemptId:'old',kind:'ecosystem',phase:'ecosystem-probe',status:'failed',reason:'ai-connection-needed'}};
  const html=render({...waitingUpdates,diagnostics});
  assert.doesNotMatch(html,/Last update issue/);
  assert.doesNotMatch(html,/a-update-failure/);
- // The record stays available in the update details.
  assert.match(html,/View update details/);
+ // The record stays in the update details: the attempt, its failed phase with the recorded facts, and the receipt.
+ const details=render({...waitingUpdates,diagnostics},{maintenanceDraft:{updateDiagnosticsExpanded:true}});
+ assert.doesNotMatch(details,/Last update issue|a-update-failure/);
+ assert.match(details,/Latest attempt <code>old<\/code>/);
+ assert.match(details,/<li class="failed"><div>.*?<span>Check bundles and modules<\/span><span class="a-update-phase-status">Failed<\/span><\/div><p class="a-caption">This update needs an AI connection, and the selected conversation profile has none\. Nothing was changed\. Set up an AI connection in Settings, then update again\. · Exit 7<\/p><\/li>/);
+ const receipt=details.match(/<textarea id="update-diagnostic-receipt"[^>]*>([^<]*)<\/textarea>/)?.[1].replaceAll('&quot;','"')||'';
+ assert.match(receipt,/"reason": ?"ai-connection-needed"/);assert.match(receipt,/"exitCode": ?7/);
  // The same record is the last update issue in every state that is not waiting or current.
  assert.match(render({...waitingUpdates,diagnostics,currentStatus:{status:'action-required',title:'Update could not finish',detail:'x',actionRequired:true,action:'diagnostics'}}),/Last update issue: Check bundles and modules/);
 });

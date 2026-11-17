@@ -11,9 +11,11 @@
 //
 // With AMPLIFIER_TEST_FULL_CHROMIUM=<a full Chromium, Chrome or Edge binary> and
 // a display (for example under xvfb-run): the browser's own password manager
-// makes no offer to save the key, neither after the save nor when the page is
-// left. A control page with the earlier field then gets the offer, and the log
-// ties that offer to the control page's form. The headless shell that the other
+// kept the pasted key, judged the save and the leaving of the page, and made no
+// offer to save the key. A second browser of the same kind, which holds only a
+// control page with the earlier field, gets the offer. Each browser has its own
+// record, so no offer can be counted for the wrong page. The record of the
+// first browser is read once more at the end. The headless shell that the other
 // journeys use has no password manager, so it cannot show this part.
 import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,rm,writeFile} from 'node:fs/promises';
@@ -23,11 +25,12 @@ import {fileURLToPath} from 'node:url';
 import {createServer} from 'vite';
 import {chromium,expect} from '@playwright/test';
 import {createShellHttpFixture,installFixtureEvents} from './shell-http-fixture.mjs';
+import {read,clientRecord,controlRecord} from './password-manager-log.mjs';
 
 const artifacts=process.env.AMPLIFIER_TEST_ARTIFACTS||'output/first-connection';
 const fullChromium=process.env.AMPLIFIER_TEST_FULL_CHROMIUM;
 const key='sk-fixture-0123456789-not-a-real-key';
-const component=id=>({id,label:id,kind:'bundle',status:'update',missing:true,eligible:true,updateTier:'included',current:null,latest:'required'});
+const component=id=>({id,label:id,kind:'bundle',status:'update',missing:true,updateTier:'included',current:null,latest:'required'});
 // The host's own waiting state (amplifier_web/update_health.py `current`).
 const updates={phase:'checked',initialPreparation:true,lastCheck:1794900000,
  application:{id:'application',kind:'app',label:'Amplifier Unified',current:'0.105.0',latest:'v0.105.0',status:'current'},
@@ -46,47 +49,42 @@ let state={revision:1,settings:{workspace:'/fixture',bundle:'anchors',updates:{}
 const shell=createShellHttpFixture(()=>state);
 const errors=[],calls=[],bodies=[];
 // The page that the client had before this change: the same kind of field, the
-// same save, and the field leaves the page. It proves that this browser and
-// this log show an offer when one is made.
-const control=`<!doctype html><meta charset="utf-8"><title>Control</title><div id="root"><label for="key">API key</label>
+// same save, and the field leaves the page. It proves that this kind of browser
+// makes an offer for the earlier field and records it.
+const earlier=`<!doctype html><meta charset="utf-8"><title>Control</title><div id="root"><label for="key">API key</label>
 <input id="key" type="password" autocomplete="off" spellcheck="false"><button id="save">Save and check connection</button></div>
 <script>document.getElementById('save').onclick=async()=>{await fetch('/api/control',{method:'POST',body:'{}'});document.getElementById('root').innerHTML='<p>Saved</p>'}</script>`;
 const blank='<!doctype html><meta charset="utf-8"><title>Blank</title><p>Blank</p>';
-let browser,context,vite,profile,failure;
+let browser,context,vite,failure;
+const full=[];
+// A full browser with its own profile and its own record of what its password manager saw and decided, in order.
+async function fullBrowser(){
+ const profile=await mkdtemp(path.join(tmpdir(),'first-connection-'));
+ // Automation mode switches the browser's offer to save a password off.
+ const opened=await chromium.launchPersistentContext(profile,{executablePath:fullChromium,headless:false,viewport:{width:1280,height:900},ignoreDefaultArgs:['--enable-automation'],args:['--no-first-run']});
+ full.push({context:opened,profile});
+ // The record is written only while this page is open.
+ const log=opened.pages()[0]||await opened.newPage();
+ await log.goto('chrome://password-manager-internals/');
+ return {context:opened,lines:async()=>read(await log.evaluate(()=>document.body.innerText))};
+}
 try{
  await mkdir(artifacts,{recursive:true});
  vite=await createServer({configFile:false,cacheDir:fileURLToPath(new URL('../output/.vite-first-connection-fixture',import.meta.url)),root:fileURLToPath(new URL('../',import.meta.url)),server:{host:'127.0.0.1',port:0,hmr:false}});
  await vite.listen();
  const origin=vite.resolvedUrls.local[0].replace(/\/$/,'');
+ let client;
  if(fullChromium){
-  profile=await mkdtemp(path.join(tmpdir(),'first-connection-'));
-  // Automation mode switches the browser's offer to save a password off.
-  context=await chromium.launchPersistentContext(profile,{executablePath:fullChromium,headless:false,viewport:{width:1280,height:900},ignoreDefaultArgs:['--enable-automation'],args:['--no-first-run']});
+  client=await fullBrowser();context=client.context;
  }else{
   browser=await chromium.launch({headless:true,...(process.env.UNIFIED_BROWSER_SINGLE_PROCESS?{args:['--no-zygote','--single-process','--disable-gpu']}:{})});
   context=await browser.newContext({viewport:{width:1280,height:900}});
  }
  await context.grantPermissions(['clipboard-read','clipboard-write'],{origin});
- let log;
- if(fullChromium){
-  // The log records only while this page is open.
-  log=context.pages()[0]||await context.newPage();
-  await log.goto('chrome://password-manager-internals/');
- }
- // The browser's own record of what its password manager saw and decided, in order.
- const logLines=async()=>(await log.evaluate(()=>document.body.innerText)).split('\n');
- const count=(lines,text)=>lines.filter(line=>line.includes(text)).length;
- const offers=lines=>lines.filter(line=>/Decision: ASK|Show password prompt/.test(line));
- const judged=async(event,before)=>{
-  // After the event, the manager logs its check for a prompt. Then its decision for that event is made.
-  const lines=await logLines(),at=lines.findLastIndex(line=>line.includes(event));
-  return count(lines,event)>before&&lines.slice(at).some(line=>line.includes('IsAutomaticSavePromptAvailable'));
- };
  await context.addInitScript(installFixtureEvents);
  await context.route('**/api/**',async route=>{
   const request=route.request(),url=new URL(request.url());
   if(request.method()==='POST')bodies.push(request.postData()||'');
-  if(url.pathname==='/api/control')return route.fulfill({json:{accepted:true}});
   const shellResponse=shell.response(request);
   if(shellResponse!==undefined)return route.fulfill({json:shellResponse});
   if(url.pathname==='/api/state')return route.fulfill({json:shell.state()});
@@ -98,8 +96,7 @@ try{
   }
   return route.fulfill({json:{ok:true}});
  });
- await context.route('**/key-field-control',route=>route.fulfill({contentType:'text/html',body:control}));
- await context.route('**/key-field-blank',route=>route.fulfill({contentType:'text/html',body:blank}));
+ await context.route('**/key-field-blank*',route=>route.fulfill({contentType:'text/html',body:blank}));
  const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));
  await page.goto(origin+'/');
 
@@ -159,7 +156,6 @@ try{
  // The save sends the key once. The connection is then saved and the field leaves the page.
  const save=page.getByRole('button',{name:'Save and check connection',exact:true});
  await expect(save).toBeEnabled();
- const submissions=fullChromium?count(await logLines(),'OnDynamicFormSubmission'):0;
  await save.click();
  await expect.poll(()=>calls.some(call=>call.action==='providers.save')).toBe(true);
  const saved=calls.find(call=>call.action==='providers.save');
@@ -177,41 +173,48 @@ try{
  if(fullChromium){
   const version=context.browser()?.version()||'version not reported';
   const unjudged='the password manager did not judge this step: this browser cannot show that an offer is absent';
-  // First way to an offer: the save succeeded and the field left the page.
-  await expect.poll(()=>judged('OnDynamicFormSubmission',submissions),{timeout:15000,message:unjudged}).toBe(true);
-  assert.deepEqual(offers(await logLines()),[],'the browser decided to offer to save the AI key as a password after the save');
+  const record=async()=>clientRecord(await client.lines(),'ai-private-key');
+  // First way to an offer: the save succeeded and the field left the page. The manager kept the key and checked.
+  await expect.poll(async()=>(await record()).judgedSave,{timeout:15000,message:unjudged}).toBe(true);
+  assert.equal((await record()).judgedLeaving,false,'the record holds a new page before the page was left');
   // Second way to an offer: the person leaves the page after the save.
-  const renders=count(await logLines(),'OnPasswordFormsRendered');
   await page.goto(origin+'/key-field-blank');
-  await expect.poll(()=>judged('OnPasswordFormsRendered',renders),{timeout:15000,message:unjudged}).toBe(true);
-  const client=await logLines();
-  await writeFile(path.join(artifacts,'password-manager-client.log'),client.join('\n'));
-  assert.deepEqual(offers(client),[],'the browser decided to offer to save the AI key as a password when the page was left');
-  // The control: the same browser and the same log show an offer for the earlier field.
-  const before=await page.goto(origin+'/key-field-control');
-  assert.equal(before.status(),200);
-  await page.locator('#key').focus();
-  await page.keyboard.press('ControlOrMeta+V');
-  await expect(page.locator('#key')).toHaveValue(key);
-  await page.locator('#save').click();
-  await expect(page.getByText('Saved',{exact:true})).toBeVisible();
-  await expect.poll(async()=>offers(await logLines()),{timeout:10000,message:'the control page got no offer: this run cannot show that an offer is absent'}).not.toEqual([]);
-  const all=await logLines();
-  await writeFile(path.join(artifacts,'password-manager-with-control.log'),all.join('\n'));
-  // The offer belongs to the control page: the log names the control's form last before the decision,
-  // and that form is not one that the client's page had.
-  const form=line=>line.startsWith('Signature of form:');
-  const asked=all.findIndex(line=>line.includes('Decision: ASK'));
-  const named=all.slice(0,asked).findLast(form);
-  assert.ok(asked>=client.length,'the offer is in the part of the log that follows the client');
-  assert.ok(named&&!client.filter(form).includes(named),'the offer follows a form of the client page, not the form of the control page');
-  coverage=`Password manager of ${version}: no offer to save the key after the client's save or when its page was left; the control page with the earlier field got the offer for its own form.`;
+  await expect.poll(async()=>(await record()).judgedLeaving,{timeout:15000,message:unjudged}).toBe(true);
+  // A further page: when the record holds it, everything that the two checks decided is in the record too.
+  await page.goto(origin+'/key-field-blank?after');
+  await expect.poll(async()=>(await record()).complete,{timeout:15000,message:unjudged}).toBe(true);
+  await writeFile(path.join(artifacts,'password-manager-client.log'),(await client.lines()).join('\n'));
+  assert.deepEqual((await record()).offers,[],'the browser decided to offer to save the AI key as a password');
+  assert.deepEqual(await record(),{kept:true,judgedSave:true,judgedLeaving:true,complete:true,offers:[]},unjudged);
+  // The control: a second browser of the same kind. It never holds the client page, so its record is the control's alone.
+  const control=await fullBrowser();
+  await control.context.grantPermissions(['clipboard-read','clipboard-write'],{origin});
+  await control.context.route('**/key-field-control',route=>route.fulfill({contentType:'text/html',body:earlier}));
+  await control.context.route('**/api/control',route=>route.fulfill({json:{accepted:true}}));
+  const controlPage=await control.context.newPage();
+  assert.equal((await controlPage.goto(origin+'/key-field-control')).status(),200);
+  await controlPage.evaluate(text=>navigator.clipboard.writeText(text),key);
+  await controlPage.locator('#key').focus();
+  await controlPage.keyboard.press('ControlOrMeta+V');
+  await expect(controlPage.locator('#key')).toHaveValue(key);
+  await controlPage.locator('#save').click();
+  await expect(controlPage.getByText('Saved',{exact:true})).toBeVisible();
+  const shown=async()=>controlRecord(await control.lines(),'key','ai-private-key');
+  await expect.poll(async()=>(await shown()).offered,{timeout:15000,message:'the control page got no offer for its own field: this run cannot show that an offer is absent'}).toBe(true);
+  await writeFile(path.join(artifacts,'password-manager-control.log'),(await control.lines()).join('\n'));
+  assert.deepEqual(await shown(),{foreign:false,offered:true});
+  // Last: the first browser stayed open all the time. Its record still holds no offer.
+  await writeFile(path.join(artifacts,'password-manager-client-final.log'),(await client.lines()).join('\n'));
+  assert.deepEqual((await record()).offers,[],'the browser decided late to offer to save the AI key as a password');
+  coverage=`Password manager of ${version}: it kept the pasted key, judged the save and the leaving of the page, and made no offer, also not later; a second browser with only the control page and the earlier field got the offer for that field.`;
  }
  assert.deepEqual(errors,[]);
  console.log('PASS (synthetic client fixture): before an AI connection the welcome panel has no spinner and the Updates page offers the connection and no installation; the AI key field has its label, hides the key, takes a paste, stays out of the client\u2019s view, and sends the key only with the save. '+coverage+' An actual host and real Microsoft Edge on Windows are NOT COVERED here.');
 }catch(error){failure=error;throw error}
 finally{
- await context?.close().catch(()=>{});await browser?.close().catch(()=>{});await vite?.close();
- if(profile)await rm(profile,{recursive:true,force:true}).catch(()=>{});
+ if(!fullChromium)await context?.close().catch(()=>{});
+ for(const {context:opened} of full)await opened.close().catch(()=>{});
+ await browser?.close().catch(()=>{});await vite?.close();
+ for(const {profile} of full)await rm(profile,{recursive:true,force:true}).catch(()=>{});
  if(failure)console.error('FAIL: '+failure.message.split('\n')[0]);
 }
