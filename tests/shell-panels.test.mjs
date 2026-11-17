@@ -8,10 +8,18 @@ const server=await createServer({server:{middlewareMode:true,hmr:false},appType:
 const {ChatDetails,WorkspaceManager}=await server.ssrLoadModule('/src/shell/navigation-components.jsx');
 const {WorkspaceRail:Rail,ChatRename,AgentCanvas,CanvasToggle,A2UISurface,reopenCanvas,SessionHistoryControls}=await server.ssrLoadModule('/src/shell-panels.jsx');
 const {WorkHeader}=await server.ssrLoadModule('/src/work-shell.jsx');
-const {CanvasDocumentRefresh}=await server.ssrLoadModule('/src/canvas-controls.jsx');
+const {CanvasDocumentRefresh,canvasVersionLabel}=await server.ssrLoadModule('/src/canvas-controls.jsx');
 const {WorkNavigationContext}=await server.ssrLoadModule('/src/work-navigation.js');
 function WorkspaceRail(props){return React.createElement(Rail,{...props,shell:shellFor(props.state,props.act)})}
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+test('compact version label never calls an older retained executable preview Latest',()=>{
+ const view={runningVersion:1,latestVersion:2,selectedVersion:null,previewRetained:true};
+ assert.equal(canvasVersionLabel(view,'html'),'v1 · Retained');
+ assert.equal(canvasVersionLabel({...view,previewRetained:false},'html'),'v1 · Saved');
+ assert.equal(canvasVersionLabel({...view,runningVersion:2,previewRetained:false},'html'),'v2 · Latest');
+ assert.equal(canvasVersionLabel({...view,selectedVersion:1,previewRetained:false},'html'),'v1 · Read only');
+ assert.equal(canvasVersionLabel({...view,selectedVersion:1,previewRetained:false},'browser'),'v1 · Saved address');
+});
 test('document Refresh reads saved state only and ignores an obsolete response',async()=>{
  let root,resolve,reject,completion,calls=[];
  let view={viewId:'primary',resourceId:'one',resourceRevision:'body-one',selectedVersion:1,latestVersion:2};

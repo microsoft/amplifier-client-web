@@ -13,9 +13,9 @@ test('actual pane hook defers navigation, settles idle focus, persists override 
  let root,width=1100,height=800,resize,menu=false,navigation;
  const listen=(name,fn)=>{if(!listeners.has(name))listeners.set(name,new Set());listeners.get(name).add(fn)};
  const unlisten=(name,fn)=>listeners.get(name)?.delete(fn);
- const trigger={focus(){document.activeElement=this}},tab={};
+ const trigger={focus(){document.activeElement=this}},tab={},arrow={};
  const node={getBoundingClientRect:()=>({width,height}),addEventListener:listen,removeEventListener:unlisten,
-  querySelector:selector=>selector==='.a-canvas-chrome'?{contains:target=>[tab,trigger].includes(target)}:selector==='.a-canvas-more[open]'?(menu?{}:null):selector==='.a-canvas-document-tabs'?{contains:target=>target===tab}:selector==='.a-open-documents'?trigger:null};
+  querySelector:selector=>selector==='.a-canvas-chrome'?{contains:target=>[tab,trigger,arrow].includes(target)}:selector==='.a-canvas-more[open]'?(menu?{}:null):selector==='.a-canvas-document-tabs'?{contains:target=>target===tab}:selector==='.a-canvas-tab-scroll'?{contains:target=>target===arrow}:selector==='.a-open-documents'?trigger:null};
  globalThis.IS_REACT_ACT_ENVIRONMENT=true;
  globalThis.document={activeElement:null,addEventListener:listen,removeEventListener:unlisten};
  globalThis.window={localStorage:{getItem:key=>stored.get(key),setItem:(key,value)=>stored.set(key,value)},addEventListener:listen,removeEventListener:unlisten};
@@ -30,6 +30,10 @@ test('actual pane hook defers navigation, settles idle focus, persists override 
   await act(async()=>new Promise(resolve=>setTimeout(resolve,650)));
   assert.equal(navigation.mode,'compact','idle focus does not defer forever');assert.equal(document.activeElement,trigger);
   document.activeElement=null;await measure(1100,800);assert.equal(navigation.mode,'tabs');
+  document.activeElement=arrow;await measure(890,800);
+  await act(async()=>new Promise(resolve=>setTimeout(resolve,650)));
+  assert.equal(navigation.mode,'compact');assert.equal(document.activeElement,trigger,'hidden scroll arrows transfer focus to stable picker too');
+  document.activeElement=null;await measure(1100,800);
   menu=true;await measure(1100,500);assert.equal(navigation.mode,'tabs','open menu defers height switch');
   menu=false;await act(async()=>{for(const fn of listeners.get('toggle')||[])fn()});assert.equal(navigation.mode,'compact');
   await act(async()=>navigation.interaction(true));await measure(1100,800);assert.equal(navigation.mode,'compact','pending action owns navigation');

@@ -134,7 +134,7 @@ function ResourceView({view,state,dispatch,recovery}){
   </div></CanvasControl>
   {view.selectedVersion!=null&&<p role="status" className="a-renderer-notice">{canvas?.kind==='browser'?'Saved address · Website is live':'Saved version · Read only'}{canvas?.kind==='mcp-app'&&<button type="button" className="a-link" onClick={()=>run('canvas.select',{id:view.resourceId})}>Open live view</button>}</p>}
   {error&&<p role="alert" className="a-renderer-notice">{error}</p>}
-  {load?.selection===selection&&load.source==='details'&&load.error&&(load.needsCheck||load.binding===binding)&&<CanvasControl><p role="alert" className="a-renderer-notice">{load.error}{load.needsCheck&&' Close Canvas details to use Refresh.'}</p></CanvasControl>}
+  {load?.selection===selection&&load.source==='details'&&load.error&&(load.needsCheck||load.binding===binding)&&<CanvasControl><p role="alert" className="a-renderer-notice">{load.error}{load.needsCheck&&' Use Refresh in Canvas details to check the current version.'}</p></CanvasControl>}
   <div className="a-resource-renderer">{canvas?.app?<CanvasAppViewer key={view.resourceId+':'+(view.selectedVersion??'latest')} canvas={canvas} dispatch={dispatch}/>:canvas?<Renderer key={view.resourceId+':'+(view.renderIdentity||view.resourceRevision+':'+view.generation)} view={view} canvas={canvas} dispatch={dispatch} recovery={recovery} connectionKey={connectionKey}/>:<p role="status">Loading saved artifact…</p>}</div>
  </section></CanvasViewControls>;
 }

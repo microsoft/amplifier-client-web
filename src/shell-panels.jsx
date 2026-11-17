@@ -4,7 +4,7 @@ import {PublishingSettings} from './publishing';
 import {ChatOverview} from './work-overview';
 import {PermissionHistory,approvalGroups} from './approval-card';
 import {NavigationOpen,useModalFocus,navigationExpanded} from './responsive-navigation';
-import {CanvasControlsHost,CanvasPrimaryActionsHost,CanvasDocumentRefresh,CanvasVersionLoadProvider,CanvasDetailsAction} from './canvas-controls';
+import {CanvasControlsHost,CanvasPrimaryActionsHost,CanvasDocumentRefresh,CanvasVersionLoadProvider,CanvasDetailsAction,canvasVersionLabel} from './canvas-controls';
 import {CanvasOverviewSection,useCanvasReading,useCanvasOverviewState} from './canvas-overview-state';
 import {CanvasWorkspace} from './canvas-workspace';
 import {McpAppVisibilityProvider} from './mcp-app-lifecycle';
@@ -194,7 +194,7 @@ export function AgentCanvas({state,act,dispatch=act,suppressed=false,settingsSur
     <button type="button" className="a-soft a-canvas-dismiss" aria-label="Close canvas panel" title="Hide Canvas — keeps open documents and edits" data-action="canvas.visibility" onClick={()=>act('canvas.visibility',{open:false})}><PanelRight aria-hidden="true"/></button>
    </header>
    <div className="a-canvas-artifact-toolbar" hidden={overview||!hasContent||canvas.kind==='context-inspector'}>
-    {resourceView?.versions?.length>0&&canvas.kind!=='context-inspector'&&<button type="button" className="a-canvas-version-shortcut a-soft" aria-label="Choose artifact version" aria-expanded={controls} aria-controls="canvas-options" onClick={()=>openControls('version')}>v{resourceView.runningVersion??resourceView.selectedVersion??resourceView.latestVersion}{resourceView.selectedVersion!=null?(canvas.kind==='browser'?' · Saved address':' · Read only'):' · Latest'}</button>}
+    {resourceView?.versions?.length>0&&canvas.kind!=='context-inspector'&&<button type="button" className="a-canvas-version-shortcut a-soft" aria-label="Choose artifact version" aria-expanded={controls} aria-controls="canvas-options" onClick={()=>openControls('version')}>{canvasVersionLabel(resourceView,canvas.kind)}</button>}
     <div ref={setActionsHost} className="a-canvas-primary-actions"/>
     <button type="button" className="a-soft a-canvas-details" aria-label="Canvas details" aria-expanded={controls} aria-controls="canvas-options" onClick={()=>controls?closeControls():openControls()}><Info/><span>Details</span></button>
    </div>

@@ -30,6 +30,10 @@ export function useCanvasVersionLoad(){
 }
 export const canvasLoadSelection=view=>JSON.stringify([view.resourceId,view.selectedVersion]);
 export const canvasLoadBinding=view=>JSON.stringify([view.resourceId,view.resourceRevision,view.generation]);
+export const canvasVersionLabel=(view,kind)=>{
+ const version=view.runningVersion??view.selectedVersion??view.latestVersion;
+ return `v${version} · ${view.previewRetained?'Retained':view.selectedVersion!=null?(kind==='browser'?'Saved address':'Read only'):version===view.latestVersion?'Latest':'Saved'}`;
+};
 export const acceptedCanvasLoad=receipt=>receipt?.stateConfirmation?.status==='unconfirmed'
  ?{needsCheck:true,accepted:receipt,error:`Load v${receipt.result.runningVersion} was accepted. The displayed version could not be confirmed. Refresh to check before another Load.`}:null;
 export const failedCanvasLoad=error=>({needsCheck:!!error.unconfirmed,error:error.unconfirmed?'Version load completion is unconfirmed. Refresh to check the current version before another Load.':`${error.message} The current preview is retained.`});

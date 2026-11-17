@@ -21,7 +21,7 @@ export function useCanvasNavigation(panel,visible){
     if(focused&&!settled){timer=setTimeout(()=>update(true),600);return}
    }
    modeRef.current=next;setMode(next);
-   if(next==='compact'&&node.querySelector('.a-canvas-document-tabs')?.contains(document.activeElement))node.querySelector('.a-open-documents')?.focus({preventScroll:true});
+   if(next==='compact'&&(node.querySelector('.a-canvas-document-tabs')?.contains(document.activeElement)||node.querySelector('.a-canvas-tab-scroll')?.contains(document.activeElement)))node.querySelector('.a-open-documents')?.focus({preventScroll:true});
    if(next==='tabs'&&document.activeElement&&node.querySelector('.a-canvas-close-current')===document.activeElement)node.querySelector('.a-open-documents')?.focus({preventScroll:true});
   };
   measure.current=update;update();

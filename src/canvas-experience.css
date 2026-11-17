@@ -140,7 +140,7 @@
  #amp-one .a-canvas-document-entry{max-width:180px}
 }
 @media(pointer:coarse){
- #amp-one.a-chat-shell .a-canvas-head .a-icon,#amp-one .a-canvas-more>summary,#amp-one :is(.a-canvas-head,.a-canvas-artifact-toolbar) button,#amp-one.a-approachable-shell .a-canvas-panel .a-chat-overview-trigger{min-height:44px;min-width:44px}
+ #amp-one.a-approachable-shell .a-canvas-panel :is(.a-canvas-head,.a-canvas-artifact-toolbar) button,#amp-one.a-approachable-shell .a-canvas-panel .a-canvas-more>summary{min-height:44px;min-width:44px}
  #amp-one .a-canvas-navigation{height:44px}
  #amp-one .a-canvas-primary-actions .a-canvas-view-choice button{padding:6px}
  #amp-one .a-canvas-primary-actions .a-canvas-view-choice svg{display:none}
