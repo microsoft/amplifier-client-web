@@ -91,11 +91,14 @@ export function updateOverview(updates={},options={},attentionItems=[]){
  const notice={phase:restartFailed||updates.error||['error','interrupted'].includes(updates.phase)?'error':updates.pendingRestart||overview.active||replacement?'working':updates.phase==='installed'?'success':'neutral',
   message:updates.error||(['error','interrupted'].includes(updates.phase)?updates.detail||'The update did not finish.':overview.active||replacement||overview.pending||updates.phase==='installed'?updates.detail:'')};
  const attention=attentionItems.filter(item=>item.id==='updates:current'&&item.actionRequired);
- const result={...overview,attention,application:{state:appState,label:appLabels[appState]||appState,detail:appDetail},notice};
  // The bundled host owns current health. Historical receipts and read badges
  // cannot override it or independently classify the installation.
  const current=updates.currentStatus;
- if(current&&(!overview.active&&!overview.pending||current.actionRequired)){
+ // The host starts no component update before an AI connection exists: an
+ // install request changes nothing. The page offers the connection instead.
+ const connect=current?.action==='connect';
+ const result={...overview,...(connect?{installable:false}:{}),connect,attention,application:{state:appState,label:appLabels[appState]||appState,detail:appDetail},notice};
+ if(current&&(!overview.active&&!overview.pending||current.actionRequired||connect)){
   const tone={current:'ready',working:'working',waiting:'working',retrying:'working',
    available:'available',protected:'error','action-required':'error',unverified:'error',unchecked:'neutral'}[current.status]||'neutral';
   return {...result,title:current.title,detail:current.detail,tone,current,

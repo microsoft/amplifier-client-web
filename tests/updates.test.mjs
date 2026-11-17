@@ -936,3 +936,60 @@ test('failed optional tool preserves retry and skip while app check and installa
  assert.equal(root.root.findAllByProps({'data-action':'updates.install'}).length,0);
  await renderAct(async()=>root.unmount());
 });
+
+// The host's own waiting state (amplifier_web/update_health.py `current`).
+const waitingStatus={status:'waiting',title:'Components update after you set up an AI connection',
+ detail:'Nothing failed. Amplifier checks new components together with an AI connection, and none is set up yet. Set up an AI connection in Settings. The update can then start.',
+ actionRequired:false,action:'connect',component:null};
+const waitingUpdates={phase:'checked',initialPreparation:true,items:[{...component,missing:true}],
+ sequence:{stage:'included',included:{available:1,missing:1}},currentStatus:waitingStatus};
+test('before an AI connection the Updates page offers the connection and no installation',async()=>{
+ const calls=[],opened=[];let root;
+ const dispatch=async(...args)=>{calls.push(args);return {accepted:true}};
+ await renderAct(async()=>{root=create(React.createElement(UpdateSettings,{state:state(waitingUpdates),act:dispatch,navigate:page=>opened.push(page)}))});
+ const buttons=root.root.findAllByType('button');
+ const named=name=>buttons.filter(button=>button.findAllByType('span').some(span=>span.children.join('')===name));
+ assert.equal(named('Update Amplifier').length,0);
+ assert.equal(buttons.filter(button=>button.props['data-action']==='updates.install').length,0);
+ const connect=named('Set up an AI connection');
+ assert.equal(connect.length,1);
+ assert.equal(connect[0].props.className,'a-primary');
+ assert.equal(connect[0].props.disabled,undefined);
+ // One main action: the check stays available beside it.
+ assert.equal(buttons.filter(button=>button.props.className==='a-primary').length,1);
+ assert.equal(named('Check for updates').length,1);
+ assert.equal(named('Check for updates')[0].props.disabled,false);
+ await renderAct(async()=>connect[0].props.onClick());
+ assert.deepEqual(opened,['ai-connections']);
+ assert.deepEqual(calls.filter(([action])=>action==='updates.install'),[]);
+ const html=render(waitingUpdates);
+ assert.match(html,/Components update after you set up an AI connection/);
+ assert.match(html,/Nothing failed\./);
+ // The same rows offer the installation when the host does not wait.
+ const ready=render({...waitingUpdates,currentStatus:undefined});
+ assert.match(ready,/data-action="updates\.install"/);assert.match(ready,/Update Amplifier/);
+ assert.doesNotMatch(ready,/Set up an AI connection/);
+});
+
+test('an earlier failure record is not shown as the last update issue while the host waits for an AI connection',()=>{
+ const diagnostics={attemptId:'old',events:[{id:'e1',attemptId:'old',phase:'ecosystem-probe',status:'failed'}],
+  lastFailure:{attemptId:'old',kind:'ecosystem',phase:'ecosystem-probe',status:'failed',reason:'ai-connection-needed'}};
+ const html=render({...waitingUpdates,diagnostics});
+ assert.doesNotMatch(html,/Last update issue/);
+ assert.doesNotMatch(html,/a-update-failure/);
+ // The record stays available in the update details.
+ assert.match(html,/View update details/);
+ // The same record is the last update issue in every state that is not waiting or current.
+ assert.match(render({...waitingUpdates,diagnostics,currentStatus:{status:'action-required',title:'Update could not finish',detail:'x',actionRequired:true,action:'diagnostics'}}),/Last update issue: Check bundles and modules/);
+});
+
+test('the two profile reasons of a component update have plain texts',()=>{
+ const failure=reason=>render({phase:'error',error:'x',sequence:{stage:'included'},diagnostics:{attemptId:'a',events:[],
+  lastFailure:{attemptId:'a',kind:'ecosystem',phase:'ecosystem-probe',status:'failed',reason,errorType:'ValueError'}}});
+ const connection=failure('ai-connection-needed');
+ assert.match(connection,/This update needs an AI connection\. The selected conversation profile has none\. Nothing was changed\. Set up an AI connection in Settings, then update again\./);
+ const profile=failure('incomplete-conversation-profile');
+ assert.match(profile,/The selected conversation profile is incomplete\. Nothing was changed\. Choose a complete profile in Bundles &amp; modules, then update again\./);
+ // A reason without a text shows only its recorded facts.
+ assert.doesNotMatch(failure('some-other-reason'),/Nothing was changed/);
+});

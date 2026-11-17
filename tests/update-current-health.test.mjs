@@ -17,3 +17,27 @@ test('transient backoff is visible without a red action chore',()=>{
  const result=updateOverview({...base,currentStatus:{status:'retrying',title:'Update will retry later',detail:'Bounded retry',actionRequired:false}});
  assert.equal(result.tone,'working');assert.equal(result.failed,false);
 });
+
+// The host's own waiting state (amplifier_web/update_health.py `current`): a
+// component update is found, and no AI connection exists yet.
+const waiting={status:'waiting',title:'Components update after you set up an AI connection',
+ detail:'Nothing failed. Amplifier checks new components together with an AI connection, and none is set up yet. Set up an AI connection in Settings. The update can then start.',
+ actionRequired:false,action:'connect',component:null};
+const found={phase:'checked',application:{status:'current',current:'0.104.1'},initialPreparation:true,
+ items:[{id:'imagegen',label:'imagegen',status:'update',missing:true}],sequence:{stage:'included',included:{available:1,missing:1}}};
+test('before an AI connection the overview offers the connection, not an installation',()=>{
+ const result=updateOverview({...found,currentStatus:waiting});
+ assert.equal(result.title,waiting.title);assert.equal(result.detail,waiting.detail);
+ assert.equal(result.connect,true);
+ assert.equal(result.installable,false);
+ assert.equal(result.failed,false);assert.equal(result.processing,false);
+ // The same rows are installable when the host does not wait for a connection.
+ const ready=updateOverview({...found,currentStatus:{status:'available',title:'Updates available',detail:'Ready.',actionRequired:false,action:'install'}});
+ assert.equal(ready.installable,true);assert.equal(ready.connect,false);
+});
+test('a waiting test-runner update does not replace the host\u2019s waiting text or bring the installation back',()=>{
+ const result=updateOverview({...found,currentStatus:waiting,pendingSmartTools:[{id:'runner',runnerSource:true}]});
+ assert.equal(result.pending,true);
+ assert.equal(result.title,waiting.title);
+ assert.equal(result.connect,true);assert.equal(result.installable,false);
+});

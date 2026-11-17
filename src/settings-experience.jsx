@@ -85,7 +85,7 @@ export function SettingsExperience({state,session,act,dispatch,open,close=()=>ac
  else if(page==='defaults')content=<BundleDefaults {...props}/>;
  else if(['app-bundles','add-bundles'].includes(page))content=<BundleSettings {...props}/>;
  else if(['smart-tools','tool-connections'].includes(page))content=<SmartToolsSettings {...props} simple={page==='smart-tools'} navigateSettings={navigate}/>;
- else if(page==='updates')content=<UpdateSettings {...props}/>;
+ else if(page==='updates')content=<UpdateSettings {...props} navigate={navigate}/>;
  else if(page==='ready-conversations')content=state.runtime?.retention?<WorkerRetentionSettings {...props}/>:<p>This host does not expose conversation readiness settings.</p>;
  else if(page==='install-app')content=<InstallAppSettings/>;
  else if(page==='desktop')content=<DesktopReadiness {...props} globalOnly/>;
