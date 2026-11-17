@@ -139,6 +139,33 @@ test('changelog separates installed, upcoming and earlier versions and escapes a
  assert.match(html,/available offline/);
 });
 
+test('changelog adds noninteractive day headings without changing release disclosures or notices',async()=>{
+ const calls=[];let root;
+ const entries=[
+  {...release,date:'2026-11-17'},
+  {...release,version:'0.6.3',date:'2026-11-17',notices:[]},
+  {...release,version:'0.6.2',date:'2026-11-16',notices:[]},
+  {...release,version:'0.6.1',date:'invalid',notices:[]},
+ ];
+ try{
+  await renderAct(async()=>{root=create(React.createElement(UpdateSettings,{state:state({application:{...application,releaseNotes:entries}}),act:(...args)=>calls.push(args)}))});
+  const history=root.root.findByProps({'aria-label':'Changelog'});
+  const headings=history.findAllByProps({className:'a-release-day-heading'});
+  assert.deepEqual(headings.map(node=>renderToStaticMarkup(React.createElement('div',null,node.props.children))),[
+   '<div><span><time dateTime="2026-11-17">November 17, 2026</time> · 2 releases</span></div>',
+   '<div><span><time dateTime="2026-11-16">November 16, 2026</time> · 1 release</span></div>',
+   '<div><span>Undated · 1 release</span></div>',
+  ]);
+  assert.ok(headings.every(node=>node.type==='h4'));
+  assert.equal(history.findByProps({className:'a-update-disclosure'}).props.open,undefined);
+  assert.deepEqual(history.findAllByProps({className:'a-release-entry'}).map(node=>node.props.open),[true,true,false,false]);
+  assert.equal(history.findAllByType('details').length,5,'No day disclosure or additional click');
+  assert.equal(history.findAllByProps({className:'a-release-impact'}).length,1);
+  assert.match(JSON.stringify(root.toJSON()),/Counts reflect listed releases/);
+  assert.deepEqual(calls,[]);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+
 test('reviewing a high-impact notice uses its fingerprint and retains the changelog',async()=>{
  const calls=[];let root;
  const initial={...state({application:{...application,releaseNotes:[release],status:'update'}}),attention:{items:[{id:noticeId,read:false,fingerprint:'notice-v1'}]}};

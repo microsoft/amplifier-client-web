@@ -41,6 +41,9 @@
 .a-release-notice{display:grid;gap:7px;margin:12px 0;padding:12px 14px;border:1px solid var(--a-line,#dce3ef);border-left:3px solid var(--a-accent,#6556bd);border-radius:8px;font-size:var(--a-text-base,14px);line-height:1.55}
 #amp-one .a-release-notice p{margin:0}
 .a-release-notice button{justify-self:start}
+#amp-one .a-release-day-heading{display:flex;align-items:center;gap:12px;margin:24px 0 0;color:var(--a-muted);font-size:var(--a-text-sm,13px);font-weight:500;line-height:1.5}
+.a-release-day-heading>span{min-width:0}
+.a-release-day-heading::after{content:"";flex:1 0 24px;border-top:1px solid var(--a-line)}
 .a-release-entry{padding:12px 0;border-bottom:1px solid var(--a-line,#dce3ef);font-size:var(--a-text-base,14px);line-height:1.55}
 .a-release-entry summary{cursor:pointer}
 .a-release-entry summary>.a-caption{margin-left:8px;white-space:nowrap}

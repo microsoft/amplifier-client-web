@@ -1,7 +1,7 @@
 import React from 'react';
 import {AlertCircle,Check} from 'lucide-react';
 import {ReadWhenVisible} from './attention.jsx';
-import {updateReleaseSummary,releaseEntries} from './update-release-summary';
+import {updateReleaseSummary,releaseEntries,releaseDayGroups} from './update-release-summary';
 
 function useNotesState(application,context){
  const entries=releaseEntries(application.releaseNotes);
@@ -63,15 +63,18 @@ export function ReleaseHistory({application,state,act}){
  return <section className="a-release-history" aria-label="Changelog">
   <details className="a-update-disclosure"><summary>Changelog</summary>
   <div className="a-update-disclosure-body">
-  <p className="a-caption">Application release history · installed notes are available offline.</p>
+  <p className="a-caption">Application release history · installed notes are available offline. Counts reflect listed releases.</p>
   {application.releaseNotesWarning&&<p className="a-release-notes-warning" role="status">{application.releaseNotesWarning} {tag&&<a href={'https://github.com/microsoft/amplifier-unified/releases/tag/'+tag} target="_blank" rel="noreferrer">View published release</a>}</p>}
   {!entries&&!application.releaseNotesWarning&&<p className="a-caption" role="status">{message}</p>}
   {entries?.length===0&&<p className="a-caption">No release notes are included with this installation.</p>}
-  {(entries||[]).map(release=><details key={release.version} className="a-release-entry" open={release.version===application.current||newer(release.version,application.current)}>
+  {releaseDayGroups(entries||[]).map(group=><React.Fragment key={group.date||'undated'}>
+  <h4 className="a-release-day-heading"><span>{group.date?<time dateTime={group.date}>{group.label}</time>:group.label} · {group.count} {group.count===1?'release':'releases'}</span></h4>
+  {group.entries.map(release=><details key={release.version} className="a-release-entry" open={release.version===application.current||newer(release.version,application.current)}>
    <summary><strong>{release.version} · {release.title}</strong><span className="a-caption">{status(release,application)}</span>{release.notices.length>0&&<span className="a-release-impact">High impact</span>}</summary>
    <ul>{release.changes.map((change,i)=><li key={i}>{change}</li>)}</ul>
    {release.notices.map(notice=><div key={notice.id} className="a-release-notice archived"><ReadWhenVisible item={(state.attention?.items||[]).find(item=>item.id===identity(release,notice))} act={act}><Notice notice={notice}/></ReadWhenVisible>{reviewed.has(identity(release,notice))&&<span className="a-release-reviewed"><Check aria-hidden="true"/>Reviewed</span>}</div>)}
   </details>)}
+  </React.Fragment>)}
   </div></details>
  </section>;
 }
