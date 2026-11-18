@@ -60,9 +60,12 @@ export function AssistedSettingsButton({state,dispatch,disabled=false,onBeforeSt
 export function SetupJourney({state,act,dispatch,onBeforeStart}){
  const journey=state.view?.setupJourney,providers=(state.setup?.providers||[]).filter(p=>p.enabled!==false),ready=providers.some(p=>!p.authenticationRequired&&(p.config?.default_model||p.config?.model));
  const updates=state.updates||{},preparing=updates.initialPreparation&&updates.sequence?.stage!=='complete',failed=updates.error||['error','interrupted'].includes(updates.phase);
+ // The host starts no component update before an AI connection exists, so nothing is in progress.
+ // After the person connects, the host's status can be a moment behind: then the panel makes no claim.
+ const waiting=updates.currentStatus?.action==='connect',missing=['included','other'].some(tier=>updates.sequence?.[tier]?.missing>0);
  if(!['welcome','connect'].includes(journey))return null;
  return <section className="a-setup-journey" aria-label="Get started"><h3>{ready?'Your first connection is ready':'Welcome to Amplifier'}</h3><p>{ready?'Finish setting up with your assistant, or jump straight into your own work.':'Connect one AI service to start. You can use an existing account and add more services later.'}</p>
-  {preparing&&<p role="status">{!failed&&<LoaderCircle className="a-progress-spinner"/>}{failed?'Some components need attention. Open Updates for details.':'Getting Amplifier ready. You can set up your connection while components prepare.'}</p>}
+  {waiting?!ready&&<p role="status">{missing?'Amplifier can add its remaining components after you connect an AI service.':'Amplifier can update its components after you connect an AI service.'}</p>:preparing&&<p role="status">{!failed&&<LoaderCircle className="a-progress-spinner"/>}{failed?'Some components need attention. Open Updates for details.':'Getting Amplifier ready. You can set up your connection while components prepare.'}</p>}
   {ready&&<div className="a-dialog-actions"><AssistedSettingsButton state={state} dispatch={dispatch} onBeforeStart={onBeforeStart} label="Set up with the assistant"/><button type="button" className="a-primary" onClick={async()=>{if(onBeforeStart&&!(await onBeforeStart()))return;await act('view.update',{patch:{panel:null,settingsCanvas:false,setupJourney:'done'}});await act('session.draft',{})}}><MessageSquare/>Start a chat</button></div>}
   <p className="a-caption">{ready?'Optional tour: files, Canvas, workspaces, plans, voice, and images.':'Keys and sign-in details stay in connection settings.'}</p>
  </section>;

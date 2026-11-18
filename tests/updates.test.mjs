@@ -963,3 +963,83 @@ test('failed optional tool preserves retry and skip while app check and installa
  assert.equal(root.root.findAllByProps({'data-action':'updates.install'}).length,0);
  await renderAct(async()=>root.unmount());
 });
+
+// The host's own waiting state (amplifier_web/update_health.py `current`).
+const waitingStatus={status:'waiting',title:'Components update after you set up an AI connection',
+ detail:'Nothing failed. Amplifier checks new components together with an AI connection, and none is set up yet. Set up an AI connection in Settings. The update can then start.',
+ actionRequired:false,action:'connect',component:null};
+const waitingUpdates={phase:'checked',initialPreparation:true,items:[{...component,missing:true}],
+ sequence:{stage:'included',install:true,included:{available:1,missing:1}},currentStatus:waitingStatus};
+test('before an AI connection the Updates page offers the connection and no installation',async()=>{
+ const calls=[];let root;
+ const dispatch=async(...args)=>{calls.push(args);return {accepted:true}};
+ await renderAct(async()=>{root=create(React.createElement(UpdateSettings,{state:state(waitingUpdates),act:dispatch}))});
+ const buttons=root.root.findAllByType('button');
+ const named=name=>buttons.filter(button=>button.findAllByType('span').some(span=>span.children.join('')===name));
+ assert.equal(named('Update Amplifier').length,0);
+ assert.equal(buttons.filter(button=>button.props['data-action']==='updates.install').length,0);
+ const connect=named('Set up an AI connection');
+ assert.equal(connect.length,1);
+ assert.equal(connect[0].props.className,'a-primary');
+ assert.equal(connect[0].props.disabled,undefined);
+ // One main action: the check stays available beside it.
+ assert.equal(buttons.filter(button=>button.props.className==='a-primary').length,1);
+ assert.equal(named('Check for updates').length,1);
+ assert.equal(named('Check for updates')[0].props.disabled,false);
+ await renderAct(async()=>connect[0].props.onClick());
+ // The click opens Settings > AI connections and requests no installation.
+ assert.deepEqual(calls,[['view.update',{patch:{panel:'settings',settingsSection:'setup',settingsExpanded:['ai-connections']}}]]);
+ // Inside Settings the page uses the navigation that Settings passes to it.
+ const opened=[];
+ await renderAct(async()=>root.update(React.createElement(UpdateSettings,{state:state(waitingUpdates),act:dispatch,navigate:page=>opened.push(page)})));
+ await renderAct(async()=>root.root.findAllByType('button').find(button=>button.findAllByType('span').some(span=>span.children.join('')==='Set up an AI connection')).props.onClick());
+ assert.deepEqual(opened,['ai-connections']);
+ assert.equal(calls.length,1);
+ const html=render(waitingUpdates);
+ assert.match(html,/Components update after you set up an AI connection/);
+ assert.match(html,/Nothing failed\./);
+ // The same rows offer the installation when the host does not wait.
+ const ready=render({...waitingUpdates,currentStatus:undefined});
+ assert.match(ready,/data-action="updates\.install"/);assert.match(ready,/Update Amplifier/);
+ assert.doesNotMatch(ready,/Set up an AI connection/);
+});
+
+test('an earlier failure record is not shown as the last update issue while the host waits for an AI connection',()=>{
+ const diagnostics={attemptId:'old',events:[{id:'e1',attemptId:'old',phase:'ecosystem-probe',status:'failed',reason:'ai-connection-needed',exitCode:7}],
+  lastFailure:{attemptId:'old',kind:'ecosystem',phase:'ecosystem-probe',status:'failed',reason:'ai-connection-needed'}};
+ const html=render({...waitingUpdates,diagnostics});
+ assert.doesNotMatch(html,/Last update issue/);
+ assert.doesNotMatch(html,/a-update-failure/);
+ assert.match(html,/View update details/);
+ // The record stays in the update details: the attempt, its failed phase with the recorded facts, and the receipt.
+ const details=render({...waitingUpdates,diagnostics},{maintenanceDraft:{updateDiagnosticsExpanded:true}});
+ assert.doesNotMatch(details,/Last update issue|a-update-failure/);
+ assert.match(details,/Latest attempt <code>old<\/code>/);
+ assert.match(details,/<li class="failed"><div>.*?<span>Check bundles and modules<\/span><span class="a-update-phase-status">Failed<\/span><\/div><p class="a-caption">This update needs an AI connection, and the selected conversation profile has none\. Nothing was changed\. Set up an AI connection in Settings, then update again\. · Exit 7<\/p><\/li>/);
+ const receipt=details.match(/<textarea id="update-diagnostic-receipt"[^>]*>([^<]*)<\/textarea>/)?.[1].replaceAll('&quot;','"')||'';
+ assert.match(receipt,/"reason": ?"ai-connection-needed"/);assert.match(receipt,/"exitCode": ?7/);
+ // The same record is the last update issue in every state that is not waiting or current.
+ assert.match(render({...waitingUpdates,diagnostics,currentStatus:{status:'action-required',title:'Update could not finish',detail:'x',actionRequired:true,action:'diagnostics'}}),/Last update issue: Check bundles and modules/);
+});
+
+test('the two profile reasons of a component update have plain texts',()=>{
+ const failure=reason=>render({phase:'error',error:'x',sequence:{stage:'included'},diagnostics:{attemptId:'a',events:[],
+  lastFailure:{attemptId:'a',kind:'ecosystem',phase:'ecosystem-probe',status:'failed',reason,errorType:'ValueError'}}});
+ const connection=failure('ai-connection-needed');
+ // Word for word the host's text for this reason, so that the page does not hold two versions.
+ assert.match(connection,/This update needs an AI connection, and the selected conversation profile has none\. Nothing was changed\. Set up an AI connection in Settings, then update again\./);
+ const profile=failure('incomplete-conversation-profile');
+ assert.match(profile,/The selected conversation profile is incomplete\. Choose another profile in Bundles &amp; modules, then update again\./);
+ // The host states "Nothing was changed" for the first reason only. The client adds no such claim of its own.
+ assert.doesNotMatch(profile,/Nothing was changed/);
+ // A reason without a text shows only its recorded facts.
+ assert.doesNotMatch(failure('some-other-reason'),/Nothing was changed|conversation profile/);
+});
+
+test('no batch is called current while the host waits for an AI connection',()=>{
+ // Recorded on Windows before this change: the finished application batch stayed "Current batch: application".
+ const diagnostics={attemptId:'app',batch:{attemptId:'app',kind:'application',components:['application'],componentCount:1,startedAt:1}};
+ assert.doesNotMatch(render({...waitingUpdates,diagnostics}),/Current batch/);
+ // A batch that runs is still named.
+ assert.match(render({...waitingUpdates,diagnostics,phase:'validating',currentStatus:{status:'working',title:'Updating Amplifier',detail:'x',actionRequired:false,action:null}}),/Current batch: application/);
+});

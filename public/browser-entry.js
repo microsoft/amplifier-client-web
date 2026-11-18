@@ -6,7 +6,8 @@
   window.history.replaceState(null, "", window.location.pathname + window.location.search);
   const fail = () => {
     document.getElementById("entry-status").textContent =
-      "Open from the owner launcher again: amplifier-unified open.";
+      "Open Amplifier from the Start menu: Amplifier Unified. " +
+      "If the Start menu has no such entry, run this: amplifier-unified open.";
   };
   const form = document.getElementById("browser-entry");
   const params = new URLSearchParams(fragment.slice(1));
