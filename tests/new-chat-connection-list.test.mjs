@@ -8,6 +8,7 @@ globalThis.window=new EventTarget();
 const server=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
 const {ModelControl}=await server.ssrLoadModule('/src/chat-controls.jsx');
 const {useConnectionSetup}=await server.ssrLoadModule('/src/setup-journey.jsx');
+const {useDraftDiscovery}=await server.ssrLoadModule('/src/use-draft-discovery.js');
 test.after(()=>server.close());
 
 // The host keeps ONE record of the connection list for every owner and every
@@ -85,6 +86,10 @@ for(const kind of ['none','folder'])test('a new chat keeps its connection list w
   for(const [name,other] of [['Settings',SETTINGS],['a read with no owner',NO_OWNER],['another new chat',drafts[kind==='none'?'folder':'none'].args]]){
    await t.receive({setup:hostRecord(other)});right(t.popup(),'after '+name);
   }
+  // The same workspace text with the other kind of location is another owner.
+  const twin=kind==='none'?{workspace:''}:{workspace:'/folder',location:{kind:'managed'}};
+  await t.receive({setup:{...hostRecord(twin,[{...connection,id:'other',displayName:'Other provider'}]),providersRequestedWorkspace:own.workspace}});
+  right(t.popup(),'after a record with the same workspace text');
   await t.wait();
   assert.deepEqual(t.lists(),[],'A kept list needs no new request');
   // The host drops a model refresh for a record of another owner. The list
@@ -108,9 +113,10 @@ test('a new chat whose own read was replaced asks again, at most three times',as
   // ended. The tab then gets the other owner's record, not its own.
   await t.receive({setup:hostRecord(NO_OWNER)});await t.wait();
   assert.deepEqual(t.lists(),[own,own]);
-  await t.receive({setup:hostRecord(SETTINGS)});await t.wait();
+  // A second read of the same other owner is a new record too.
+  await t.receive({setup:hostRecord(NO_OWNER)});await t.wait();
   assert.deepEqual(t.lists(),[own,own,own]);
-  for(const other of [NO_OWNER,SETTINGS,NO_OWNER]){await t.receive({setup:hostRecord(other)});await t.wait()}
+  for(const other of [SETTINGS,NO_OWNER,SETTINGS]){await t.receive({setup:hostRecord(other)});await t.wait()}
   assert.deepEqual(t.lists(),[own,own,own],'The requests stop: no loop with a host that never answers this owner');
   await t.receive({setup:hostRecord(own)});right(t.popup(),'its own record');
   await t.receive({setup:hostRecord(SETTINGS)});await t.wait();right(t.popup(),'kept');
@@ -200,6 +206,27 @@ test('a saved change or a host restart ends the kept list',async()=>{
    assert.deepEqual(t.popup().connections,[],name+': the earlier list is not shown');
    await t.wait();
    assert.deepEqual(t.lists(),[own],name+': the new chat asks for its list again');
+   // The saved defaults can arrive before the list. The read that already
+   // runs for this record is not sent a second time.
+   await t.receive({draftDefaults:{[drafts.none.key]:defaults()}});await t.wait();
+   assert.deepEqual(t.lists(),[own],name+': one request for one record');
   }finally{await t.close()}
  }
+});
+
+test('a retry gives the list requests of a new chat a new start',async()=>{
+ const calls=[],act=async(name,args)=>{calls.push({name,args});return {accepted:true}};
+ let discovery,root,displaced='first';
+ function Probe(){discovery=useDraftDiscovery({enabled:true,setup:drafts.none.draft,defaults:{phase:'ready'},configurationRevision:0,act,needsProviders:true,displaced});return null}
+ const wait=()=>renderAct(async()=>{await new Promise(resolve=>setTimeout(resolve,300))});
+ const record=async name=>{displaced=name;await renderAct(async()=>root.update(React.createElement(Probe)));await wait()};
+ try{
+  await renderAct(async()=>{root=create(React.createElement(Probe))});await wait();
+  for(const name of ['second','third','fourth','fifth'])await record(name);
+  assert.equal(calls.length,3,'Three requests for one key');
+  await renderAct(async()=>discovery.retry());await wait();
+  assert.deepEqual(calls.map(row=>row.name),Array(4).fill('providers.list'),'The retry asks once more');
+  await record('sixth');await record('seventh');await record('eighth');
+  assert.equal(calls.length,6,'And is bounded in the same way');
+ }finally{await renderAct(async()=>root?.unmount())}
 });
