@@ -2,14 +2,14 @@ import {useEffect,useRef,useState} from 'react';
 import {draftDefaultsKey} from './new-chat';
 
 // One shared record cannot hold two owners. A new chat with no list asks once
-// for each record of another owner, at most this often for one key and retry.
-// Two tabs with different new chats then cannot ask without end.
+// for each record of another owner, at most this often until it holds a
+// complete list. Two tabs with different new chats then cannot ask without end.
 const LIST_READS=3;
 
 // A read receipt is not a resolved catalog. Retry discarded/missing results
 // and host changes; never permanently latch a draft as already requested.
-export function useDraftDiscovery({enabled,setup,defaults,configurationRevision,hostInstanceId,act,needsProviders,displaced=''}){
- const [attempt,retry]=useState(0),[status,setStatus]=useState({}),latest=useRef(),requested=useRef(),listed=useRef({});
+export function useDraftDiscovery({enabled,setup,defaults,configurationRevision,hostInstanceId,act,needsProviders,displaced='',listKept=false}){
+ const [attempt,retry]=useState(0),[status,setStatus]=useState({}),[stalled,setStalled]=useState(''),latest=useRef(),requested=useRef(),listed=useRef({});
  latest.current={act,needsProviders,displaced};
  const key=JSON.stringify([draftDefaultsKey(setup),configurationRevision,hostInstanceId]);
  const managed=setup.location?.kind==='managed',turn=key+'|'+attempt;
@@ -41,16 +41,23 @@ export function useDraftDiscovery({enabled,setup,defaults,configurationRevision,
   },250);
   return()=>{live=false;clearTimeout(timer);clearTimeout(slow)};
  },[enabled,key,defaults.phase,attempt]);
- // Another owner's read can replace the shared record before this chat ever
- // receives its own. Each such record is a new reason to ask; the same record
- // is not, because this chat's read for it may still run.
+ // Another owner's read can replace the shared record before this chat holds
+ // a complete list. Each such record is a new reason to ask. The same record
+ // is not, while this chat's read for it can still be answered.
  useEffect(()=>{
-  if(!enabled||(!setup.workspace&&!managed)||defaults.phase!=='ready'||!needsProviders)return;
+  // A complete list of its own ends the count: a later need starts a new one.
+  if(listKept){listed.current={};setStalled('');return}
+  // The host shows this chat's own record: its read was answered. The same
+  // other record can come back (the host restores Settings' copy).
+  if(!displaced){listed.current.displaced=null;return}
+  if(!enabled||(!setup.workspace&&!managed)||defaults.phase!=='ready')return;
   const last=listed.current;
-  if(last.turn===turn&&(last.displaced===displaced||last.count>=LIST_READS))return;
+  if(last.turn===turn&&last.displaced===displaced)return;
+  if(last.turn===turn&&last.count>=LIST_READS){setStalled(turn);return}
   const timer=setTimeout(list,250);
   return()=>clearTimeout(timer);
- },[enabled,key,defaults.phase,attempt,needsProviders,displaced]);
+ },[enabled,key,defaults.phase,attempt,listKept,displaced]);
  const current=status.key===key&&status.attempt===attempt&&defaults.phase!=='ready'?status:{};
- return {...current,retry:()=>retry(value=>value+1)};
+ // Stalled: the requests ended without a list. Nothing is loading then.
+ return {...current,listStalled:stalled===turn&&needsProviders,retry:()=>retry(value=>value+1)};
 }

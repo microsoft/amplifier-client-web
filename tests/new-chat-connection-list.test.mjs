@@ -19,10 +19,12 @@ test.after(()=>server.close());
 const DATA='/data',DEFAULT='/default';
 const connection={id:'one',module:'provider-test',displayName:'Test provider',enabled:true,sharedCatalogKey:'account-one',info:{config_fields:[{id:'reasoning_effort',choices:['low','high']}]}};
 let clock=0;
-function hostRecord(args={},providers=[connection]){
+// `phase`: the host publishes a list first with no model catalogs (null here),
+// then with catalogs that load ('working'), then complete ('ready').
+function hostRecord(args={},providers=[connection],phase='ready'){
  const target=args.configurationTarget||null,managed=target?target.kind==='global':args.location?.kind==='managed';
  const workspace=managed?DATA:args.workspace||DEFAULT;
- return {configurationTarget:target,providers,providerCatalogs:Object.fromEntries(providers.map(row=>[row.id,{sharedCatalogKey:row.sharedCatalogKey,phase:'ready',models:['first','second']}])),
+ return {configurationTarget:target,providers,providerCatalogs:phase?Object.fromEntries(providers.map(row=>[row.id,{sharedCatalogKey:row.sharedCatalogKey,phase,models:phase==='ready'?['first','second']:[]}])):{},
   providersWorkspace:workspace,providersRequestedWorkspace:'workspace' in args?args.workspace:workspace,providersLocation:{kind:managed?'managed':'workspace'},providersLoadedAt:++clock};
 }
 const SETTINGS={configurationTarget:{kind:'global'}},NO_OWNER={};
@@ -102,7 +104,7 @@ for(const kind of ['none','folder'])test('a new chat keeps its connection list w
  }finally{await t.close()}
 });
 
-test('a new chat whose own read was replaced asks again, at most three times',async()=>{
+test('a new chat with no list asks again for each other record, at most three times',async()=>{
  const own=drafts.none.args,t=tab(newChat('none',hostRecord(SETTINGS)));
  try{
   await t.mount();await t.wait();
@@ -116,11 +118,67 @@ test('a new chat whose own read was replaced asks again, at most three times',as
   // A second read of the same other owner is a new record too.
   await t.receive({setup:hostRecord(NO_OWNER)});await t.wait();
   assert.deepEqual(t.lists(),[own,own,own]);
+  assert.equal(t.popup().placeholder,'Loading connections…','The third request can still be answered');
   for(const other of [SETTINGS,NO_OWNER,SETTINGS]){await t.receive({setup:hostRecord(other)});await t.wait()}
   assert.deepEqual(t.lists(),[own,own,own],'The requests stop: no loop with a host that never answers this owner');
+  // Nothing is loading now. The popup says so, and one control repairs it.
+  let view=t.popup();
+  assert.equal(view.placeholder,'Connections unavailable');
+  assert.match(view.text,/Model capabilities unavailable\./);
+  assert.doesNotMatch(view.text,/Loading|is not available in this configuration scope|not in the discovered list/);
+  assert.match(view.text,/Selected: Test provider · first/);
+  assert.equal(view.refreshDisabled,false);
+  await t.click('Refresh this connection');
+  assert.deepEqual(t.calls.at(-1),{name:'providers.list',args:{...own,refresh:true}});
   await t.receive({setup:hostRecord(own)});right(t.popup(),'its own record');
   await t.receive({setup:hostRecord(SETTINGS)});await t.wait();right(t.popup(),'kept');
-  assert.equal(t.lists().length,3);
+  assert.equal(t.lists().length,4);
+  // A complete list ended the count. After a host restart the kept list ends,
+  // and this chat asks again and says that it loads.
+  await t.receive({client:{hostInstanceId:'host-2'},setup:hostRecord(NO_OWNER)});
+  assert.equal(t.popup().placeholder,'Loading connections…');
+  await t.wait();
+  assert.equal(t.lists().length,5,'A complete list ended the count');
+ }finally{await t.close()}
+});
+
+test('a list that was replaced before its model catalogs were complete is not kept',async()=>{
+ const own=drafts.none.args;
+ for(const phase of [null,'working','queued']){
+  const t=tab(newChat('none',hostRecord(own,[connection],phase))),name='catalogs '+phase;
+  try{
+   await t.mount();
+   assert.deepEqual(t.popup().connections,['one'],name+': the own record is shown while the host works on it');
+   // The host sends later results only into the shared record. A copy of
+   // this state would show a model list that loads without end.
+   await t.receive({setup:hostRecord(SETTINGS)});
+   const view=t.popup();
+   assert.deepEqual(view.connections,[],name);assert.equal(view.placeholder,'Loading connections…',name);
+   assert.match(view.text,/Selected: Test provider · first/,name);
+   assert.doesNotMatch(view.text,/Loading provider models|not in the discovered list|Manual ID/,name);
+   await t.wait();
+   assert.deepEqual(t.lists(),[own],name+': the chat asks for its list again');
+   await t.receive({setup:hostRecord(own)});
+   await t.receive({setup:hostRecord(SETTINGS)});await t.wait();
+   right(t.popup(),name+': the complete list is kept');
+   assert.deepEqual(t.lists(),[own],name);
+  }finally{await t.close()}
+ }
+});
+
+test('the same record of another owner can come back after this chat was answered',async()=>{
+ // The host restores the kept copy of Settings when a late read of Settings
+ // ends. That copy is the same record as before, with the same time.
+ const own=drafts.none.args,settings=hostRecord(SETTINGS),t=tab(newChat('none',settings));
+ try{
+  await t.mount();await t.wait();
+  assert.deepEqual(t.lists(),[own]);
+  await t.receive({setup:hostRecord(own,[connection],'working')});
+  await t.receive({setup:settings});await t.wait();
+  assert.deepEqual(t.lists(),[own,own],'The first read was answered, so the same record is a new reason to ask');
+  await t.receive({setup:hostRecord(own)});
+  await t.receive({setup:settings});await t.wait();
+  right(t.popup(),'kept');assert.equal(t.lists().length,2);
  }finally{await t.close()}
 });
 
@@ -145,6 +203,27 @@ test('two tabs with different new chats both get their list and the requests sto
   assert.ok(settled<=4,'Bounded requests, got '+settled);
   for(const t of tabs)await t.wait(600);
   assert.equal(total(),settled,'No request loop between the tabs');
+ }finally{for(const t of tabs)await t.close()}
+});
+
+test('two tabs whose lists are never complete stop asking',async()=>{
+ // No chat connection: the host publishes no model catalog, so no list is
+ // complete and nothing is kept. Each tab still asks at most three times.
+ const pending=[],tabs=[];let record=hostRecord(SETTINGS,[]);
+ const empty={phase:'ready',effective:{},providers:[]};
+ for(const kind of ['none','folder'])tabs.push(tab(newChat(kind,record,{draftDefaults:{[drafts.none.key]:empty,[drafts.folder.key]:empty}}),{onList:args=>pending.push(args)}));
+ const total=()=>tabs.reduce((count,t)=>count+t.lists().length,0);
+ try{
+  for(const t of tabs)await t.mount();
+  for(let round=0;round<12;round++){
+   for(const t of tabs)await t.wait();
+   if(!pending.length)break;
+   record=hostRecord(pending.splice(0).at(-1),[]);
+   for(const t of tabs)await t.receive({setup:record});
+  }
+  assert.deepEqual(pending,[],'The tabs stopped');
+  assert.ok(total()<=6,'At most three requests for each tab, got '+total());
+  for(const t of tabs)assert.equal(t.popup().placeholder,'No connections configured');
  }finally{for(const t of tabs)await t.close()}
 });
 
@@ -217,7 +296,7 @@ test('a saved change or a host restart ends the kept list',async()=>{
 test('a retry gives the list requests of a new chat a new start',async()=>{
  const calls=[],act=async(name,args)=>{calls.push({name,args});return {accepted:true}};
  let discovery,root,displaced='first';
- function Probe(){discovery=useDraftDiscovery({enabled:true,setup:drafts.none.draft,defaults:{phase:'ready'},configurationRevision:0,act,needsProviders:true,displaced});return null}
+ function Probe(){discovery=useDraftDiscovery({enabled:true,setup:drafts.none.draft,defaults:{phase:'ready'},configurationRevision:0,act,needsProviders:true,displaced,listKept:false});return null}
  const wait=()=>renderAct(async()=>{await new Promise(resolve=>setTimeout(resolve,300))});
  const record=async name=>{displaced=name;await renderAct(async()=>root.update(React.createElement(Probe)));await wait()};
  try{
