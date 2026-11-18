@@ -16,7 +16,10 @@ export function useDraftDiscovery({enabled,setup,defaults,configurationRevision,
  const list=()=>{
   const {act,displaced}=latest.current;
   listed.current={turn,displaced,count:(listed.current.turn===turn?listed.current.count:0)+1};
-  Promise.resolve().then(()=>act('providers.list',{workspace:setup.workspace,...(managed?{location:{kind:'managed'}}:{})})).catch(()=>{});
+  setStalled('');
+  // A request that the host did not accept brings no list: nothing is loading.
+  Promise.resolve().then(()=>act('providers.list',{workspace:setup.workspace,...(managed?{location:{kind:'managed'}}:{})}))
+   .then(receipt=>{if(!receipt||receipt.accepted===false)setStalled(turn)},()=>setStalled(turn));
  };
  useEffect(()=>{
   if(!enabled||defaults.phase==='ready'||typeof window==='undefined')return;
@@ -58,6 +61,6 @@ export function useDraftDiscovery({enabled,setup,defaults,configurationRevision,
   return()=>clearTimeout(timer);
  },[enabled,key,defaults.phase,attempt,listKept,displaced]);
  const current=status.key===key&&status.attempt===attempt&&defaults.phase!=='ready'?status:{};
- // Stalled: the requests ended without a list. Nothing is loading then.
- return {...current,listStalled:stalled===turn&&needsProviders,retry:()=>retry(value=>value+1)};
+ // Stalled: the requests of this new chat ended without a list. Nothing is loading then.
+ return {...current,listStalled:enabled&&needsProviders&&stalled===turn,retry:()=>retry(value=>value+1)};
 }

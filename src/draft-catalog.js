@@ -1,4 +1,5 @@
 import {useRef} from 'react';
+import {aiServices} from './ai-connections-data';
 
 // The host publishes one setup record for every owner and every browser tab.
 // A new chat reads only the record of its own owner and keeps the last complete
@@ -20,4 +21,12 @@ export function useDraftCatalog(state,setup){
  // this chat's own). Each list read by another owner changes it.
  const displaced=own?'':JSON.stringify([record?.providersRequestedWorkspace,record?.providersLocation?.kind,record?.providersLoadedAt]);
  return {catalog:own?record:kept.current?.record||null,own,kept:!!kept.current,displaced};
+}
+
+// The name of a connection for a new chat that has no list, from the chat's
+// saved defaults. The list names a connection by its label or, with no label,
+// by its service (the host's rule). The defaults hold no label, so the service
+// name comes first; the provider's own name can differ from it.
+export function savedConnectionName(row){
+ return aiServices.find(service=>service.module===row?.module)?.name||row?.info?.display_name||'';
 }

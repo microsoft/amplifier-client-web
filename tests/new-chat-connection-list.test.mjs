@@ -42,20 +42,23 @@ function newChat(kind,setup,extra={}){
 
 const renderedText=node=>typeof node==='string'?node:Array.isArray(node)?node.map(renderedText).join(''):renderedText(node?.children||[]);
 const field=(root,id)=>root.root.find(node=>typeof node.type==='string'&&node.props.id===id);
-const Popup=({state,act})=>React.createElement(ModelControl,{state,act,working:false});
+const Popup=({state,act,session})=>React.createElement(ModelControl,{state,act,session,working:false});
 // The focus read of the window belongs to the shell, not to the popup.
 function ShellWithFocusRead({state,act}){useConnectionSetup(state,null,act);return React.createElement(Popup,{state,act})}
-function tab(initial,{focusRead=false,onList}={}){
- let state=initial,root;const calls=[];
+// `answer(name,args)` is what the host answers to a request (default: accepted).
+function tab(initial,{focusRead=false,onList,answer=()=>({accepted:true})}={}){
+ let state=initial,root,session;const calls=[];
  const act=async(name,args)=>{
   calls.push({name,args});
   if(name==='view.update')state={...state,view:{...state.view,...args.patch}};
   if(name==='providers.list')onList?.(args);
-  return {accepted:true};
+  return answer(name,args);
  };
- const render=()=>React.createElement(focusRead?ShellWithFocusRead:Popup,{state,act});
+ const render=()=>React.createElement(focusRead?ShellWithFocusRead:Popup,{state,act,session});
  const update=()=>renderAct(async()=>root.update(render()));
  return {calls,update,
+  // The new chat gets its first message: the same popup now belongs to a chat.
+  becomeChat:async id=>{session={id};state={...state,view:{...state.view,composerModel:{open:true,sessionId:id}}};await update()},
   lists:()=>calls.filter(row=>row.name==='providers.list').map(row=>row.args),
   mount:()=>renderAct(async()=>{root=create(render())}),
   // What the event stream does: the tab gets the host's record.
@@ -67,7 +70,7 @@ function tab(initial,{focusRead=false,onList}={}){
    const select=field(root,'chat-provider'),options=select.findAllByType('option');
    return {text:renderedText(root.toJSON()),closed:renderedText(root.root.findByProps({'aria-label':'Model and reasoning settings'}).findByType('span').children),
     refreshDisabled:!!refresh.props.disabled,connection:select.props.value,connections:options.map(node=>node.props.value).filter(Boolean),
-    placeholder:renderedText(options[0].children),model:field(root,'chat-model')};
+    placeholder:renderedText(options[0].children),model:root.root.findAll(node=>typeof node.type==='string'&&node.props.id==='chat-model')[0]||null};
   },
   close:()=>renderAct(async()=>root?.unmount())};
 }
@@ -256,6 +259,9 @@ test('a list that does not hold the saved connection still says so',async()=>{
   assert.match(view.text,/Saved connection gone is not available in this configuration scope\./);
   assert.deepEqual(view.connections,['other']);assert.equal(view.connection,'');
   assert.equal(view.refreshDisabled,true);
+  // A list that is there decides the name. The saved defaults do not name a
+  // connection that the list does not hold.
+  assert.equal(view.closed,'gone · first');
   // The same holds for a kept list.
   await t.receive({setup:hostRecord(SETTINGS)});
   assert.match(t.popup().text,/Saved connection gone is not available in this configuration scope\./);
@@ -308,4 +314,75 @@ test('a retry gives the list requests of a new chat a new start',async()=>{
   await record('sixth');await record('seventh');await record('eighth');
   assert.equal(calls.length,6,'And is bounded in the same way');
  }finally{await renderAct(async()=>root?.unmount())}
+});
+
+test('with no list the name is the one that the list shows for the connection',async()=>{
+ // The list names a connection with no label by its service. The provider's
+ // own name in the saved defaults can differ ("OpenAI" for "OpenAI API").
+ for(const [row,name] of [
+  [{id:'one',module:'provider-openai',info:{display_name:'OpenAI'}},'OpenAI API'],
+  [{id:'one',module:'provider-chat-completions',info:{display_name:'Chat Completions'}},'OpenAI Compatible API'],
+  [{id:'one',module:'provider-unlisted',info:{display_name:'Own name'}},'Own name'],
+  [{id:'one',info:{display_name:'Own name'}},'Own name'],
+  [{id:'one',module:'provider-unlisted'},'one'],
+ ]){
+  const state=newChat('none',hostRecord(SETTINGS));
+  state.draftDefaults={[drafts.none.key]:{phase:'ready',effective:{instance:'one',model:'first'},providers:[row]}};
+  const t=tab(state);
+  try{await t.mount();assert.equal(t.popup().closed,name+' · first',JSON.stringify(row))}finally{await t.close()}
+ }
+});
+
+for(const [name,first] of [['rejected',()=>{throw Error('offline')}],['not answered',()=>undefined],['not accepted',()=>({accepted:false,error:'No'})]])
+ test('a list request that is '+name+' does not leave the popup loading',async()=>{
+  let answer=first;
+  const own=drafts.none.args,t=tab(newChat('none',hostRecord(SETTINGS)),{answer:(action,args)=>action==='providers.list'&&!args.refresh?answer():{accepted:true}});
+  try{
+   await t.mount();
+   assert.equal(t.popup().placeholder,'Loading connections…','Before the request ends');
+   await t.wait();
+   assert.deepEqual(t.lists(),[own]);
+   const view=t.popup();
+   assert.equal(view.placeholder,'Connections unavailable');
+   assert.match(view.text,/Selected: Test provider · first/);
+   assert.doesNotMatch(view.text,/Loading|is not available in this configuration scope|not in the discovered list/);
+   assert.equal(view.refreshDisabled,false);
+   if(name==='not accepted'){
+    // A later request that the host accepts is loading again.
+    answer=()=>({accepted:true});
+    await t.receive({setup:hostRecord(NO_OWNER)});await t.wait();
+    assert.deepEqual(t.lists(),[own,own]);
+    assert.equal(t.popup().placeholder,'Loading connections…');
+   }
+   await t.click('Refresh this connection');
+   await t.receive({setup:hostRecord(own)});right(t.popup(),'after the refresh');
+  }finally{await t.close()}
+ });
+
+const UNAVAILABLE=/Connections unavailable|Model capabilities unavailable/;
+test('"unavailable" is said only while a new chat has no list',async()=>{
+ const own=drafts.none.args,plain={id:'one',module:'provider-test',displayName:'Test provider',enabled:true,sharedCatalogKey:'account-one'};
+ const stalled=async()=>{
+  const t=tab(newChat('none',hostRecord(SETTINGS),{modelCatalogs:{}}),{answer:action=>action==='providers.list'?undefined:{accepted:true}});
+  await t.mount();await t.wait();
+  assert.equal(t.popup().placeholder,'Connections unavailable');
+  assert.match(t.popup().text,/Model capabilities unavailable\./);
+  return t;
+ };
+ let t=await stalled();
+ try{
+  // The chat's own list arrives; its model catalogs still load.
+  await t.receive({setup:hostRecord(own,[plain],'working')});
+  const view=t.popup();
+  assert.deepEqual(view.connections,['one']);
+  assert.match(view.text,/Loading model capabilities…/);assert.doesNotMatch(view.text,UNAVAILABLE);
+ }finally{await t.close()}
+ t=await stalled();
+ try{
+  // The new chat gets its first message. The chat's popup asks the host for
+  // the chat's own catalog; the new chat's state says nothing about it.
+  await t.becomeChat('chat');
+  assert.equal(t.popup().placeholder,'Loading connections…');
+  assert.doesNotMatch(t.popup().text,UNAVAILABLE);
+ }finally{await t.close()}
 });

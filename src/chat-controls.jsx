@@ -11,7 +11,7 @@ import {newChatSetup,draftDefaults} from './new-chat';
 import {useComposerPopover} from './composer-popover';
 import {providerOptions} from './provider-options';
 import {useDraftDiscovery} from './use-draft-discovery';
-import {useDraftCatalog} from './draft-catalog';
+import {useDraftCatalog,savedConnectionName} from './draft-catalog';
 import {AttachmentPreview} from './attachment-preview';
 import {imageAttachment} from './attachment-view.js';
 const EMPTY={};
@@ -103,7 +103,7 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
  const provider=effective.instance||effective.id||(!isDraft&&!pendingBundle?lastCall?.provider:'')||'';
  const effectiveProvider=providers.find(row=>row.id===provider),effectiveMetadata=state.modelCatalogs?.[effectiveProvider?.sharedCatalogKey]?.metadata,effectiveEffort=effective.effort||configuredEffort(effectiveProvider,model)||configuredEffort(effectiveMetadata,model);
  const options=providerOptions(providers);
- const providerLabel=options.find(row=>row.id===provider)?.label||(listMissing&&defaults.providers?.find(row=>row.id===provider)?.info?.display_name)||provider;
+ const providerLabel=options.find(row=>row.id===provider)?.label||(listMissing&&savedConnectionName(defaults.providers?.find(row=>row.id===provider)))||provider;
  const modelAndEffort=effectiveEffort?`${model} (${effectiveEffort})`:model;
  const usingChatGPTPlan=effectiveProvider?.info?.defaults?.auth_mode==='chatgpt_plan'||(isDraft&&effectiveProvider?.config?.auth_mode==='chatgpt_plan');
  const modelLabel=providerLabel?`${providerLabel} · ${modelAndEffort}`:modelAndEffort;
@@ -141,8 +141,7 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
  const effort=draft.effort||configuredEffort(selected,draft.model)||configuredEffort(metadata,draft.model);
  const touched=useRef(false),draftRevision=useRef({sessionId,revision:nextMessageRevision});
  if(draftRevision.current.sessionId!==sessionId){touched.current=false;draftRevision.current={sessionId,revision:nextMessageRevision}}
- const discovery=useDraftDiscovery({enabled:isDraft,setup,defaults,configurationRevision,hostInstanceId:state.hostInstanceId,act,needsProviders:!draftOwner.catalog,displaced:draftOwner.displaced,listKept:draftOwner.kept});
- const listStalled=listMissing&&discovery.listStalled;
+ const discovery=useDraftDiscovery({enabled:isDraft,setup,defaults,configurationRevision,hostInstanceId:state.hostInstanceId,act,needsProviders:!draftOwner.catalog,displaced:draftOwner.displaced,listKept:draftOwner.kept}),listStalled=discovery.listStalled;
  useEffect(()=>{
   if(open&&!touched.current){draftRevision.current={sessionId,revision:nextMessageRevision};const instance=effective.instance||effective.id||draft.instance||'',row=providers.find(p=>p.id===instance);edit({instance,model:effective.model||draft.model||row?.info?.defaults?.model||'',effort:effectiveEffort||draft.effort||''})}
  },[open,sessionId,nextMessageRevision,providers.map(row=>row.id).join('|'),effective.instance,effective.id,effective.model,effectiveEffort]);
