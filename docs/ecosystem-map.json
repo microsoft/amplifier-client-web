@@ -20,6 +20,13 @@
       "ref": "4308c1e1a770ca6d7dd0d430611e1db412c82bb4",
       "sha256": "87e4b33530af7652b0d290de675e5fb1dc452f71e90a45398dfdedab52e321c7",
       "url": "https://github.com/microsoft/amplifier-client-web/blob/4308c1e1a770ca6d7dd0d430611e1db412c82bb4/AGENTS.md"
+    },
+    {
+      "git_blob": "6a8bbcf76ef11fda970c0bc0480e3c3b2d1565d8",
+      "path": "README.md",
+      "ref": "5114e5ecee18dfdc6af70876846adb0291fe2f1b",
+      "sha256": "bba979b2d9c060f53ccd5c2154baf4575e2e57f45067a6cae5203261bb7c5696",
+      "url": "https://github.com/bkrabach/amplifier-shell-sdk/blob/5114e5ecee18dfdc6af70876846adb0291fe2f1b/README.md"
     }
   ],
   "consumer_cta": {
@@ -48,6 +55,11 @@
       "from": "self",
       "relation": "uses",
       "to": "inputs"
+    },
+    {
+      "from": "self",
+      "relation": "uses",
+      "to": "shell-sdk"
     }
   ],
   "nodes": [
@@ -76,13 +88,20 @@
     {
       "id": "inputs",
       "kind": "external",
-      "label": "Selected catalogs, SDK & branding"
+      "label": "Selected catalogs & branding"
+    },
+    {
+      "id": "shell-sdk",
+      "kind": "external",
+      "label": "Shell extension SDK",
+      "repository": "bkrabach/amplifier-shell-sdk"
     }
   ],
   "notes": [
     "Connects by the current Unified HTTP/SSE/WebSocket interface, not the separate AHP client interface.",
     "Unified selects an exact accepted public source revision through its repository-delivery workflow; source changes require explicit selection, paired qualification and Unified release.",
-    "Developer source is not a standalone consumer installer."
+    "Developer source is not a standalone consumer installer.",
+    "The Shell SDK is an independently authored browser extension helper, selected through the client input lock and Unified assembly. A map or source release does not update the bundled client or qualify a host pairing."
   ],
   "purpose": "Present Amplifier conversations, workspaces and interactive work surfaces in a browser.",
   "ref": "4308c1e1a770ca6d7dd0d430611e1db412c82bb4",
