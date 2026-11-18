@@ -37,8 +37,12 @@ try{
   if(body.action==='session.select'&&state.sessions.some(session=>session.id===body.args.id)){
    selections.push(body.args.id);
    state={...state,revision:state.revision+1,selectedSessionId:body.args.id,view:{...state.view,navExpanded:false}};
-  }else if(body.action==='view.update'&&Object.keys(body.args.patch||{}).join()==='navExpanded'){
-   state={...state,revision:state.revision+1,view:{...state.view,navExpanded:body.args.patch.navExpanded}};
+  }else if(body.action==='view.update'&&typeof body.args.patch?.navExpanded==='boolean'&&
+     Object.keys(body.args.patch).every(key=>['navExpanded','toolbarMenuOpen'].includes(key))&&
+     (!Object.hasOwn(body.args.patch,'toolbarMenuOpen')||body.args.patch.toolbarMenuOpen===false)){
+   // The mobile header opens navigation and closes its toolbar menu together.
+   // Rail-dismiss actions contain only navExpanded; neither starts session work.
+   state={...state,revision:state.revision+1,view:{...state.view,...body.args.patch}};
   }else if(!['shell.report','attention.read','bundles.list','configuration.defaults','providers.list','theme.list'].includes(body.action)&&
      !(body.action==='runtime.control'&&body.args.operation==='configuration.catalog')){
    unexpectedActions.push(body.action);
@@ -53,7 +57,10 @@ try{
  const messages=page.getByRole('log',{name:'Conversation messages'});
  async function selectChat(title,id){
   await page.getByRole('button',{name:'Open navigation',exact:true}).click();
-  await page.locator('#workspace-navigation').getByRole('button',{name:title,exact:true}).click();
+  const navigation=page.locator('#workspace-navigation');
+  await expect(navigation).toBeVisible();
+  await expect(page.getByRole('button',{name:'Close navigation',exact:true})).toHaveAttribute('aria-expanded','true');
+  await navigation.getByRole('button',{name:title,exact:true}).click();
   await expect(messages).toHaveAttribute('data-session-id',id);
  }
  async function frame(label,session){
