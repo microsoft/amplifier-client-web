@@ -3,7 +3,7 @@
   "kind": "unified-web-build-inputs",
   "source": {
     "repository": "https://github.com/microsoft/amplifier-unified",
-    "revision": "816c7a67dbafc20bfb28723dd317c71d3bd2bb28"
+    "revision": "c34ead149f03f45bf4d3d6c6cd5f4fc7cb31a2a7"
   },
   "inputs": {
     "amplifier_web/ai_services.json": {
@@ -11,8 +11,8 @@
       "bytes": 993
     },
     "amplifier_web/provider_sources.json": {
-      "sha256": "f3bc21d376fb3fb0f395f29626a862bb91b84751aec6cb0e7d3c2ae9b5a8e5cd",
-      "bytes": 1126
+      "sha256": "447ac374b0a1ec17a2444081b81951ec9d9b5f0f8e9a5aebaf3d4d738745fb56",
+      "bytes": 1162
     },
     "amplifier_web/voice_options.json": {
       "sha256": "2b52cd3eba54e75ffc2cb11ad110e1f8ab00996d9eeafb9812a1362466b290f6",
