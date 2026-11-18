@@ -64,7 +64,8 @@ function tab(initial,{focusRead=false,onList,answer=()=>({accepted:true})}={}){
   // What the event stream does: the tab gets the host's record.
   receive:async patch=>{state={...state,...patch};await update()},
   wait:(ms=300)=>renderAct(async()=>{await new Promise(resolve=>setTimeout(resolve,ms))}),
-  click:label=>renderAct(async()=>root.root.findAllByType('button').find(node=>node.children.includes(label)).props.onClick()),
+  // The click does not wait for the answer of the request that it starts.
+  click:label=>renderAct(async()=>{root.root.findAllByType('button').find(node=>node.children.includes(label)).props.onClick();await new Promise(resolve=>setTimeout(resolve,0))}),
   popup(){
    const refresh=root.root.findAllByType('button').find(node=>node.children.includes('Refresh this connection'));
    const select=field(root,'chat-provider'),options=select.findAllByType('option');
@@ -136,12 +137,12 @@ test('a new chat with no list asks again for each other record, at most three ti
   await t.receive({setup:hostRecord(own)});right(t.popup(),'its own record');
   await t.receive({setup:hostRecord(SETTINGS)});await t.wait();right(t.popup(),'kept');
   assert.equal(t.lists().length,4);
-  // A complete list ended the count. After a host restart the kept list ends,
-  // and this chat asks again and says that it loads.
+  // After a host restart the kept list ends, and this chat asks again and
+  // says that it loads.
   await t.receive({client:{hostInstanceId:'host-2'},setup:hostRecord(NO_OWNER)});
   assert.equal(t.popup().placeholder,'Loading connections…');
   await t.wait();
-  assert.equal(t.lists().length,5,'A complete list ended the count');
+  assert.equal(t.lists().length,5,'The restarted host is asked');
  }finally{await t.close()}
 });
 
@@ -386,3 +387,94 @@ test('"unavailable" is said only while a new chat has no list',async()=>{
   assert.doesNotMatch(t.popup().text,UNAVAILABLE);
  }finally{await t.close()}
 });
+
+// `replies` holds the answers of the host that the case gives later, in any order.
+const later=replies=>new Promise((resolve,reject)=>replies.push({resolve,reject}));
+const settle=run=>renderAct(async()=>{run();await new Promise(resolve=>setTimeout(resolve,0))});
+const displacedThreeTimes=async t=>{
+ await t.mount();await t.wait();
+ for(const other of [NO_OWNER,SETTINGS,NO_OWNER]){await t.receive({setup:hostRecord(other)});await t.wait()}
+ assert.equal(t.lists().length,3);
+ assert.equal(t.popup().placeholder,'Connections unavailable','Three requests and never a complete list');
+};
+for(const [name,end] of [['is rejected',reply=>reply.reject(Error('offline'))],['gets no answer',reply=>reply.resolve(undefined)],['is not accepted',reply=>reply.resolve({accepted:false})]])
+ test('an older list request that '+name+' says nothing about a newer one',async()=>{
+  const replies=[],t=tab(newChat('none',hostRecord(SETTINGS)),{answer:action=>action==='providers.list'?later(replies):{accepted:true}});
+  try{
+   await t.mount();await t.wait();
+   await t.receive({setup:hostRecord(NO_OWNER)});await t.wait();
+   assert.equal(replies.length,2,'The second request runs while the first has no answer');
+   await settle(()=>end(replies[0]));
+   assert.equal(t.popup().placeholder,'Loading connections…','The second request can still be answered');
+   assert.doesNotMatch(t.popup().text,UNAVAILABLE);
+   // The newest request ends without a list: nothing is loading.
+   await settle(()=>end(replies[1]));
+   assert.equal(t.popup().placeholder,'Connections unavailable');
+  }finally{await t.close()}
+ });
+
+test('"Refresh this connection" says that it loads, and its request can end without a list too',async()=>{
+ const replies=[],own=drafts.none.args;
+ const t=tab(newChat('none',hostRecord(SETTINGS)),{answer:(action,args)=>action!=='providers.list'?{accepted:true}:args.refresh?later(replies):undefined});
+ try{
+  await t.mount();await t.wait();
+  assert.equal(t.popup().placeholder,'Connections unavailable','The first request got no answer');
+  await t.click('Refresh this connection');
+  assert.deepEqual(t.calls.at(-1),{name:'providers.list',args:{...own,refresh:true}});
+  assert.equal(t.popup().placeholder,'Loading connections…','The refresh has no answer yet');
+  assert.doesNotMatch(t.popup().text,UNAVAILABLE);
+  await settle(()=>replies[0].resolve({accepted:false}));
+  assert.equal(t.popup().placeholder,'Connections unavailable','The host did not accept the refresh');
+  await t.click('Refresh this connection');
+  assert.equal(t.popup().placeholder,'Loading connections…');
+  await settle(()=>replies[1].resolve({accepted:true}));
+  await t.receive({setup:hostRecord(own)});right(t.popup(),'after the refresh');
+ }finally{await t.close()}
+});
+
+test('a click on "Refresh this connection" gives the list requests of a new chat a new start',async()=>{
+ const own=drafts.none.args,t=tab(newChat('none',hostRecord(SETTINGS)));
+ try{
+  await displacedThreeTimes(t);
+  await t.click('Refresh this connection');
+  assert.equal(t.lists().length,4);
+  // Another owner's read replaces the record again before the refresh is answered.
+  await t.receive({setup:hostRecord(SETTINGS)});
+  assert.equal(t.popup().placeholder,'Loading connections…','The refresh can still be answered');
+  await t.wait();
+  assert.deepEqual(t.lists().slice(4),[own],'This chat asks again by itself');
+  for(const other of [NO_OWNER,SETTINGS,NO_OWNER]){await t.receive({setup:hostRecord(other)});await t.wait()}
+  assert.equal(t.lists().length,6,'The limit holds again: the refresh and two more requests');
+  assert.equal(t.popup().placeholder,'Connections unavailable');
+ }finally{await t.close()}
+});
+
+test('a host restart gives the list requests of a new chat a new start',async()=>{
+ const own=drafts.none.args,t=tab(newChat('none',hostRecord(SETTINGS)));
+ try{
+  await displacedThreeTimes(t);
+  await t.receive({client:{hostInstanceId:'host-2'},setup:hostRecord(NO_OWNER)});
+  assert.equal(t.popup().placeholder,'Loading connections…','The restarted host can answer');
+  await t.wait();
+  assert.deepEqual(t.lists(),[own,own,own,own],'The restarted host is asked');
+ }finally{await t.close()}
+});
+
+// The same popup can come to belong to another new chat (a folder is chosen).
+const elsewhere={args:{workspace:'/elsewhere'},key:'["/elsewhere",""]',draft:{workspace:'/elsewhere',bundle:'',selection:{}}};
+const twin={args:{workspace:'/folder',location:{kind:'managed'}},key:'["/folder","","managed"]',draft:{workspace:'/folder',location:{kind:'managed'},bundle:'',selection:{}}};
+for(const [name,next] of [['in another folder',elsewhere],['with the same folder text and the other kind of location',twin]])
+ test('a kept list is not shown for a new chat '+name,async()=>{
+  const first=drafts.folder,other={...connection,id:'other',displayName:'Other provider',sharedCatalogKey:'account-other'};
+  const t=tab(newChat('folder',hostRecord(first.args),{draftDefaults:{[first.key]:defaults(),[next.key]:defaults('other')}}));
+  try{
+   await t.mount();right(t.popup(),'its own record');
+   await t.receive({setup:hostRecord(SETTINGS)});right(t.popup(),'kept');
+   await t.receive({view:{setupJourney:'done',newSessionDraft:next.draft,composerModel:{open:true,sessionId:null}}});
+   assert.deepEqual(t.popup().connections,[],'The list of the first chat is not the list of this one');
+   await t.wait();
+   assert.deepEqual(t.lists(),[next.args],'This chat asks for its own list');
+   await t.receive({setup:hostRecord(next.args,[other])});
+   assert.deepEqual(t.popup().connections,['other']);
+  }finally{await t.close()}
+ });

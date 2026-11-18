@@ -420,7 +420,7 @@ test('a configured model picker manages connections without changing this conver
 });
 
 for(const lost of ['evicted','restarted'])test('draft discovery recovers '+lost+' results without remount or a message send',async()=>{
- const calls=[];let root,state={hostInstanceId:'first',view:{newSessionDraft:{workspace:'/trial'}},setup:{providersRequestedWorkspace:'/trial'},draftDefaults:{}};
+ const calls=[];let root,state={client:{hostInstanceId:'first'},view:{newSessionDraft:{workspace:'/trial'}},setup:{providersRequestedWorkspace:'/trial'},draftDefaults:{}};
  const render=()=>React.createElement(ModelControl,{state,act:async(name,args)=>{calls.push({name,args});return {accepted:true}}});
  try{
   await renderAct(async()=>root=create(render()));
@@ -430,7 +430,7 @@ for(const lost of ['evicted','restarted'])test('draft discovery recovers '+lost+
    state={...state,draftDefaults:{'["/trial",""]':{phase:'ready',effective:{model:'chosen'},providers:[]}}};
    await renderAct(async()=>root.update(render()));
    state={...state,draftDefaults:{}};
-  }else state={...state,hostInstanceId:'restarted'};
+  }else state={...state,client:{hostInstanceId:'restarted'}};
   await renderAct(async()=>root.update(render()));
   await renderAct(async()=>{await new Promise(r=>setTimeout(r,300))});
   assert.equal(calls.filter(c=>c.name==='configuration.defaults').length,2);

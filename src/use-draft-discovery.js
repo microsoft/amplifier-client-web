@@ -4,22 +4,27 @@ import {draftDefaultsKey} from './new-chat';
 // One shared record cannot hold two owners. A new chat with no list asks once
 // for each record of another owner, at most this often until it holds a
 // complete list. Two tabs with different new chats then cannot ask without end.
+// A retry, a saved change, a host restart and a click on "Refresh this
+// connection" start the count again.
 const LIST_READS=3;
 
 // A read receipt is not a resolved catalog. Retry discarded/missing results
 // and host changes; never permanently latch a draft as already requested.
 export function useDraftDiscovery({enabled,setup,defaults,configurationRevision,hostInstanceId,act,needsProviders,displaced='',listKept=false}){
- const [attempt,retry]=useState(0),[status,setStatus]=useState({}),[stalled,setStalled]=useState(''),latest=useRef(),requested=useRef(),listed=useRef({});
+ const [attempt,retry]=useState(0),[status,setStatus]=useState({}),[stalled,setStalled]=useState(''),latest=useRef(),requested=useRef(),listed=useRef({}),sent=useRef(0);
  latest.current={act,needsProviders,displaced};
  const key=JSON.stringify([draftDefaultsKey(setup),configurationRevision,hostInstanceId]);
  const managed=setup.location?.kind==='managed',turn=key+'|'+attempt;
- const list=()=>{
-  const {act,displaced}=latest.current;
-  listed.current={turn,displaced,count:(listed.current.turn===turn?listed.current.count:0)+1};
+ // `refresh`: a person asked for the list. The host then reads the connections again.
+ const list=(refresh=false)=>{
+  const {act,displaced}=latest.current,request=++sent.current;
+  listed.current={turn,displaced,count:refresh||listed.current.turn!==turn?1:listed.current.count+1};
   setStalled('');
   // A request that the host did not accept brings no list: nothing is loading.
-  Promise.resolve().then(()=>act('providers.list',{workspace:setup.workspace,...(managed?{location:{kind:'managed'}}:{})}))
-   .then(receipt=>{if(!receipt||receipt.accepted===false)setStalled(turn)},()=>setStalled(turn));
+  // Only the newest request can say so. An older one says nothing about it.
+  const ended=()=>{if(sent.current===request)setStalled(turn)};
+  Promise.resolve().then(()=>act('providers.list',{workspace:setup.workspace,...(managed?{location:{kind:'managed'}}:{}),...(refresh?{refresh:true}:{})}))
+   .then(receipt=>{if(!receipt||receipt.accepted===false)ended()},ended);
  };
  useEffect(()=>{
   if(!enabled||defaults.phase==='ready'||typeof window==='undefined')return;
@@ -48,8 +53,9 @@ export function useDraftDiscovery({enabled,setup,defaults,configurationRevision,
  // a complete list. Each such record is a new reason to ask. The same record
  // is not, while this chat's read for it can still be answered.
  useEffect(()=>{
-  // A complete list of its own ends the count: a later need starts a new one.
-  if(listKept){listed.current={};setStalled('');return}
+  // This chat holds a complete list: nothing to ask. The list ends only with
+  // the key (a saved change, a host restart), and a new key starts a new count.
+  if(listKept)return;
   // The host shows this chat's own record: its read was answered. The same
   // other record can come back (the host restores Settings' copy).
   if(!displaced){listed.current.displaced=null;return}
@@ -57,10 +63,10 @@ export function useDraftDiscovery({enabled,setup,defaults,configurationRevision,
   const last=listed.current;
   if(last.turn===turn&&last.displaced===displaced)return;
   if(last.turn===turn&&last.count>=LIST_READS){setStalled(turn);return}
-  const timer=setTimeout(list,250);
+  const timer=setTimeout(()=>list(),250);
   return()=>clearTimeout(timer);
  },[enabled,key,defaults.phase,attempt,listKept,displaced]);
  const current=status.key===key&&status.attempt===attempt&&defaults.phase!=='ready'?status:{};
  // Stalled: the requests of this new chat ended without a list. Nothing is loading then.
- return {...current,listStalled:enabled&&needsProviders&&stalled===turn,retry:()=>retry(value=>value+1)};
+ return {...current,listStalled:enabled&&needsProviders&&stalled===turn,refreshList:()=>list(true),retry:()=>retry(value=>value+1)};
 }
