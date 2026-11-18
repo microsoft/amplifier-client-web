@@ -64,8 +64,13 @@ function tab(initial,{focusRead=false,onList,answer=()=>({accepted:true})}={}){
   // What the event stream does: the tab gets the host's record.
   receive:async patch=>{state={...state,...patch};await update()},
   wait:(ms=300)=>renderAct(async()=>{await new Promise(resolve=>setTimeout(resolve,ms))}),
-  // The click does not wait for the answer of the request that it starts.
-  click:label=>renderAct(async()=>{root.root.findAllByType('button').find(node=>node.children.includes(label)).props.onClick();await new Promise(resolve=>setTimeout(resolve,0))}),
+  // A person can click only an enabled button. The click does not wait for
+  // the answer of the request that it starts.
+  click:label=>renderAct(async()=>{
+   const button=root.root.findAllByType('button').find(node=>node.children.includes(label));
+   assert.ok(!button.props.disabled,'"'+label+'" can be clicked');
+   button.props.onClick();await new Promise(resolve=>setTimeout(resolve,0));
+  }),
   popup(){
    const refresh=root.root.findAllByType('button').find(node=>node.children.includes('Refresh this connection'));
    const select=field(root,'chat-provider'),options=select.findAllByType('option');
@@ -478,3 +483,25 @@ for(const [name,next] of [['in another folder',elsewhere],['with the same folder
    assert.deepEqual(t.popup().connections,['other']);
   }finally{await t.close()}
  });
+
+test('a popup that comes back to an earlier new chat asks for its list again',async()=>{
+ const first=drafts.folder,next=elsewhere,other={...connection,id:'other',displayName:'Other provider',sharedCatalogKey:'account-other'};
+ const shows=draft=>({setupJourney:'done',newSessionDraft:draft,composerModel:{open:true,sessionId:null}});
+ const t=tab(newChat('folder',hostRecord(SETTINGS),{draftDefaults:{[first.key]:defaults(),[next.key]:defaults('other')}}));
+ try{
+  // The first chat uses its three requests. Then its complete list arrives.
+  await displacedThreeTimes(t);
+  await t.receive({setup:hostRecord(first.args)});right(t.popup(),'its own record');
+  // The popup comes to belong to a second chat whose list the host shows: no request.
+  await t.receive({setup:hostRecord(next.args,[other]),view:shows(next.draft)});await t.wait();
+  assert.deepEqual(t.popup().connections,['other']);
+  assert.equal(t.lists().length,3,'The second chat needs no request');
+  // Back to the first chat. The host still shows the second chat's record.
+  await t.receive({view:shows(first.draft)});
+  assert.deepEqual(t.popup().connections,[],'The kept list of the first chat ended with the second chat');
+  assert.equal(t.popup().placeholder,'Loading connections…','The complete list ended the stalled state');
+  await t.wait();
+  assert.deepEqual(t.lists().slice(3),[first.args],'The complete list ended the count: this chat asks again');
+  await t.receive({setup:hostRecord(first.args)});right(t.popup(),'its own record again');
+ }finally{await t.close()}
+});

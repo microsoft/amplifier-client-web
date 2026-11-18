@@ -53,9 +53,10 @@ export function useDraftDiscovery({enabled,setup,defaults,configurationRevision,
  // a complete list. Each such record is a new reason to ask. The same record
  // is not, while this chat's read for it can still be answered.
  useEffect(()=>{
-  // This chat holds a complete list: nothing to ask. The list ends only with
-  // the key (a saved change, a host restart), and a new key starts a new count.
-  if(listKept)return;
+  // A complete list of its own ends the count and the stalled state. The same
+  // key can come back (the popup returns to an earlier new chat): that chat
+  // then has no list again and must be able to ask.
+  if(listKept){listed.current={};setStalled('');return}
   // The host shows this chat's own record: its read was answered. The same
   // other record can come back (the host restores Settings' copy).
   if(!displaced){listed.current.displaced=null;return}
