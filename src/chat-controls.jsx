@@ -11,6 +11,7 @@ import {newChatSetup,draftDefaults} from './new-chat';
 import {useComposerPopover} from './composer-popover';
 import {providerOptions} from './provider-options';
 import {useDraftDiscovery} from './use-draft-discovery';
+import {useDraftCatalog} from './draft-catalog';
 import {AttachmentPreview} from './attachment-preview';
 import {imageAttachment} from './attachment-view.js';
 const EMPTY={};
@@ -82,7 +83,9 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
  const edit=patch=>{const next={...draft,...patch,...(embedded?{open:true,sessionId}:{})};setDraft(next);act('view.update',{patch:{composerModel:next}})};
  const managed=setup.location?.kind==='managed';
  const location=managed?{location:{kind:'managed'}}:{};
- const draftCatalog=state.setup?.providersRequestedWorkspace===setup.workspace&&(state.setup?.providersLocation?.kind==='managed')===managed?state.setup:EMPTY;
+ // An absent list is not an empty list: a new chat without its own record
+ // names its connection from its saved defaults and claims nothing else.
+ const draftOwner=useDraftCatalog(state,setup),draftCatalog=draftOwner.catalog||EMPTY,listMissing=isDraft&&!draftOwner.catalog;
  const cachedProviders=(draftCatalog.providers||[]).filter(row=>row.enabled!==false);
  const controls=state.runtimeControl?.[sessionId]||{},catalog=controls['configuration.catalog'];
  const catalogIsCurrent=catalog?.configurationRevision===configurationRevision&&(catalog?.nextMessageRevision||0)===nextMessageRevision;
@@ -95,12 +98,12 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
   (pendingBundle?(!pendingBundle.resetModel&&session?.selection)||(catalogIsCurrent&&catalog?.effective)||{}:
    session?.selection||(catalogIsCurrent&&catalog?.effective)||session?.runtimeReport?.effective_selection||initial||{}));
  const lastCall=[...(session?.execution?.nodes||[])].reverse().find(n=>n.kind==='llm'&&(n.sessionId===sessionId||(!n.sessionId&&!n.parentId)));
- const noProviders=(isDraft?defaults.phase==='ready':rosterIsCurrent&&Array.isArray(catalog?.providers))&&!providers.length;
+ const noProviders=(isDraft?defaults.phase==='ready'&&!(listMissing&&defaults.providers?.length):rosterIsCurrent&&Array.isArray(catalog?.providers))&&!providers.length;
  const model=effective.model||(!isDraft&&!pendingBundle?lastCall?.model:'')||(noProviders?'Set up a model':pendingBundle?'Bundle default':defaults.phase==='error'?'Model unavailable':!isDraft?'Choose a model':'Loading model…');
  const provider=effective.instance||effective.id||(!isDraft&&!pendingBundle?lastCall?.provider:'')||'';
  const effectiveProvider=providers.find(row=>row.id===provider),effectiveMetadata=state.modelCatalogs?.[effectiveProvider?.sharedCatalogKey]?.metadata,effectiveEffort=effective.effort||configuredEffort(effectiveProvider,model)||configuredEffort(effectiveMetadata,model);
  const options=providerOptions(providers);
- const providerLabel=options.find(row=>row.id===provider)?.label||provider;
+ const providerLabel=options.find(row=>row.id===provider)?.label||(listMissing&&defaults.providers?.find(row=>row.id===provider)?.info?.display_name)||provider;
  const modelAndEffort=effectiveEffort?`${model} (${effectiveEffort})`:model;
  const usingChatGPTPlan=effectiveProvider?.info?.defaults?.auth_mode==='chatgpt_plan'||(isDraft&&effectiveProvider?.config?.auth_mode==='chatgpt_plan');
  const modelLabel=providerLabel?`${providerLabel} · ${modelAndEffort}`:modelAndEffort;
@@ -138,7 +141,7 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
  const effort=draft.effort||configuredEffort(selected,draft.model)||configuredEffort(metadata,draft.model);
  const touched=useRef(false),draftRevision=useRef({sessionId,revision:nextMessageRevision});
  if(draftRevision.current.sessionId!==sessionId){touched.current=false;draftRevision.current={sessionId,revision:nextMessageRevision}}
- const discovery=useDraftDiscovery({enabled:isDraft,setup,defaults,configurationRevision,hostInstanceId:state.hostInstanceId,act,needsProviders:draftCatalog===EMPTY});
+ const discovery=useDraftDiscovery({enabled:isDraft,setup,defaults,configurationRevision,hostInstanceId:state.hostInstanceId,act,needsProviders:!draftOwner.catalog,displaced:draftOwner.displaced});
  useEffect(()=>{
   if(open&&!touched.current){draftRevision.current={sessionId,revision:nextMessageRevision};const instance=effective.instance||effective.id||draft.instance||'',row=providers.find(p=>p.id===instance);edit({instance,model:effective.model||draft.model||row?.info?.defaults?.model||'',effort:effectiveEffort||draft.effort||''})}
  },[open,sessionId,nextMessageRevision,providers.map(row=>row.id).join('|'),effective.instance,effective.id,effective.model,effectiveEffort]);
@@ -186,15 +189,15 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
    <label htmlFor="chat-provider">Connection{!isDraft&&catalog?.connectionScope&&<small> · {catalog.connectionScope} settings</small>}</label><select id="chat-provider" value={selected?draft.instance:''} data-action={isDraft?'view.update':'conversation.configure'} disabled={blocked} onChange={e=>chooseProvider(e.target.value)}>
     <option value="" disabled>{providers.length?'Choose a connection':noProviders?'No connections configured':failure||delayed?'Connections unavailable':'Loading connections…'}</option>{options.map(row=><option key={row.id} value={row.id} disabled={providers.find(p=>p.id===row.id)?.config?.chat_enabled===false}>{row.label}</option>)}
    </select>
-   {draft.instance&&!selected&&<small>Saved connection {draft.instance} is not available in this configuration scope.</small>}
+   {draft.instance&&!selected&&!listMissing&&<small>Saved connection {draft.instance} is not available in this configuration scope.</small>}
    </div>
    <div data-composer-page="model">
-   <label htmlFor="chat-model">Model</label>{binding?.eligible===false?<><input id="chat-model" aria-label="Conversation model" value={draft.model||''} disabled readOnly/><p className="a-caption">The configured connection’s model list cannot be used for this chat until its saved connection settings match. This does not mean the model is unavailable. Choose a different connection above or review the saved configuration.</p></>:<ModelSelect key={draft.instance} id="chat-model" label="Conversation model" value={draft.model||''} entry={entry} state={state} act={act} disabled={blocked||!selected} onChange={model=>{touched.current=true;edit({model})}} onCommit={model=>apply({model,effort:draft.model===model?draft.effort:''})}/>}
+   <label htmlFor="chat-model">Model</label>{binding?.eligible===false?<><input id="chat-model" aria-label="Conversation model" value={draft.model||''} disabled readOnly/><p className="a-caption">The configured connection’s model list cannot be used for this chat until its saved connection settings match. This does not mean the model is unavailable. Choose a different connection above or review the saved configuration.</p></>:listMissing?<input id="chat-model" aria-label="Conversation model" value={draft.model||''} disabled readOnly/>:<ModelSelect key={draft.instance} id="chat-model" label="Conversation model" value={draft.model||''} entry={entry} state={state} act={act} disabled={blocked||!selected} onChange={model=>{touched.current=true;edit({model})}} onCommit={model=>apply({model,effort:draft.model===model?draft.effort:''})}/>}
    </div>
    <div data-composer-page="effort">
    {choices.length>0?<><label htmlFor="chat-effort">Reasoning effort <strong>{effort||'Choose effort'}</strong></label>{effort&&!choices.includes(effort)&&<small>Saved effort {effort} is not advertised for this model. Choose an available effort to replace it.</small>}<input id="chat-effort" type="range" min="0" max={choices.length-1} step="1" value={Math.max(0,choices.indexOf(effort))} aria-valuetext={choices.includes(effort)?effort:'Choose effort; saved value is not advertised'} disabled={blocked||!draft.model||binding?.eligible===false} data-action={isDraft?'view.update':'conversation.configure'} onChange={previewEffort} onPointerUp={commitEffort} onKeyUp={commitEffort} onBlur={commitEffort}/><div className="a-effort-labels"><span>{choices[0]}</span><span>{choices.at(-1)}</span></div></>:<small>{binding?.eligible===false?'Saved connection settings need review before changing reasoning effort.':entry?.metadata||selected?.configSchema||selected?.info?.config_fields?'Reasoning effort is not configurable for this model.':failure||delayed||entry?.phase==='error'?'Model capabilities unavailable.':'Loading model capabilities…'}{effort&&` Saved effort: ${effort}.`}</small>}
    </div>
-   <div className="a-dialog-actions"><button type="button" className="a-link" disabled={!selected} onClick={()=>isDraft?act('providers.models',{id:draft.instance,workspace:setup.workspace,...location,refresh:true}):act('runtime.control',{sessionId,operation:'configuration.catalog',args:{refresh:true,instance:draft.instance}})}>Refresh this connection</button><button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{composerModel:{...draft,open:false},panel:'settings',settingsSection:'setup',settingsExpanded:['ai-connections'],aiConnectionEditor:{...(state.view?.aiConnectionEditor||{}),step:'list'}}})}>Manage connections</button></div>
+   <div className="a-dialog-actions"><button type="button" className="a-link" disabled={!selected&&!listMissing} onClick={()=>isDraft?(draftOwner.own?act('providers.models',{id:draft.instance,workspace:setup.workspace,...location,refresh:true}):act('providers.list',{workspace:setup.workspace,...location,refresh:true})):act('runtime.control',{sessionId,operation:'configuration.catalog',args:{refresh:true,instance:draft.instance}})}>Refresh this connection</button><button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{composerModel:{...draft,open:false},panel:'settings',settingsSection:'setup',settingsExpanded:['ai-connections'],aiConnectionEditor:{...(state.view?.aiConnectionEditor||{}),step:'list'}}})}>Manage connections</button></div>
    <details><summary>Advanced</summary>{!isDraft&&<p className="a-muted" data-part="delegation-routing">{delegationRoutingLabel(catalog?.delegationRouting||session?.runtimeReport?.delegationRouting)}</p>}{children}</details>
    {usingChatGPTPlan&&<p className="a-caption">Using ChatGPT plan · <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener noreferrer">Manage usage</a></p>}
    {catalog?.selectionIssue&&<p role="status">{catalog.selectionIssue}</p>}
