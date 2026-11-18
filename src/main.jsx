@@ -50,7 +50,7 @@ import {checkpointSurfaces} from './surface-checkpoint';
 import {useConversationDetail} from './conversation-detail';
 import {readDetail} from './detail-read.js';
 import {trackAction,setFeedbackEventStream} from './feedback-diagnostics';
-import {ConversationError} from './conversation-controls';
+import {ContextDegradationNotice,ConversationError} from './conversation-controls';
 import {useShell,ShellContext,ShellSlot} from './shell/runtime';
 import {useThemeScheme,useAppearanceCache,useWindowChrome,useInstanceAccent} from './theme-presentation';
 import {ownershipState,actionErrorMessage} from './ownership.js';
@@ -709,7 +709,8 @@ function App(){
   return()=>{cancelAnimationFrame(first);if(second)cancelAnimationFrame(second)};
  },[state?.appearance?.namespace,state?.appearance?.generation,state?.appearance?.availability,state?.appearance?.composition?.id]);
  useEffect(()=>{const v=state?.view;if(!v)return;if(v.workerDraft!==undefined)setWorkerDraft(v.workerDraft);if(v.agentAction!==undefined)setAgentAction(v.agentAction);if(v.agentArgs!==undefined)setAgentArgs(v.agentArgs)},[state?.view?.workerDraft,state?.view?.agentAction,state?.view?.agentArgs]);
- const detail=useConversationDetail(state?.sessions?.find(s=>s.id===state.selectedSessionId),()=>{stickToBottom.current=false;const pane=messagesPane.current;if(!pane)return;const top=pane.getBoundingClientRect().top,anchor=[...pane.querySelectorAll('[data-message-id]')].find(node=>node.getBoundingClientRect().bottom>top);if(anchor)historyScrollAnchor.current={sessionId:state.selectedSessionId,messageId:anchor.dataset.messageId,top:anchor.getBoundingClientRect().top}},dispatch);
+ const selectedSession=state?.sessions?.find(s=>s.id===state.selectedSessionId);
+ const detail=useConversationDetail(selectedSession,()=>{stickToBottom.current=false;const pane=messagesPane.current;if(!pane)return;const top=pane.getBoundingClientRect().top,anchor=[...pane.querySelectorAll('[data-message-id]')].find(node=>node.getBoundingClientRect().bottom>top);if(anchor)historyScrollAnchor.current={sessionId:state.selectedSessionId,messageId:anchor.dataset.messageId,top:anchor.getBoundingClientRect().top}},dispatch);
  useEffect(()=>{if(detail.jumpRequest){const frame=requestAnimationFrame(()=>detail.jumpRequest.id==='latest'?chatScroll.current?.reveal():chatScroll.current?.jump(detail.jumpRequest.id));return()=>cancelAnimationFrame(frame)}},[detail.jumpRequest]);
  const session=detail.session,view=state?.view||{},mode=view.mode||'chat',activity=sessionStatus(session),working=activity.busy;
  const externalConversation=!!(session?.externalAgent||(!session&&draftExternalAgentIds(view.newSessionDraft).length));
@@ -1110,6 +1111,7 @@ function App(){
    {(!presentation.planPlacement||presentation.planPlacement==='composer'||presentation.planPlacement==='active'&&responseActive)&&!historyDisplayPending&&<ChatPlan session={session} state={state} act={act}/> }
    <QuestionNotice session={session} paneRef={messagesPane}/>
    {!browsing&&<ConversationError state={state} session={session} act={act}/>}
+   <ContextDegradationNotice session={browsing?null:selectedSession}/>
    {!session&&<ClosedDeliveryItems entries={outbox.entries} sessionId={null} scope={outboxSource} reopen={id=>outbox.update(id,{closed:false})}/>}
    <form className="a-composer a-compact-composer" data-part="composer" data-action="conversation.send" onSubmit={send}>
     {draftStorageError&&<p role="alert" className="a-upload-status">This browser could not keep a recovery copy of your draft. Keep this tab open until it is saved.</p>}

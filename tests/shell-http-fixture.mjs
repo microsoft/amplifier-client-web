@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import {shellFor} from './shell-host.mjs';
 import {shellScope,sameScope} from '../src/shell/resources.js';
+import {recentLimit} from '../src/chat-navigation.js';
 
 export function createShellHttpFixture(readState){
  const hostInstanceId='fixture-shell-host',bootstrapKey='fixture-shell-bootstrap';
@@ -22,7 +23,7 @@ export function createShellHttpFixture(readState){
   for(const instance of descriptor.composition.instances){
    const snapshot=descriptor.snapshots[instance.id];
    const context={view:snapshot.view,viewRevision:input.revision,selectedSessionId:input.selectedSessionId,
-    recentScope:{mode:'all',filter:'',clientId,instanceId:instance.id,generation:0,workspaceId:input.selectedWorkspaceId},
+    recentScope:{mode:'all',filter:'',clientId,instanceId:instance.id,generation:0,workspaceId:input.selectedWorkspaceId,age:input.view?.navAge||'all'},
     selectedWorkspaceId:input.selectedWorkspaceId,workspaces:input.workspaces||[],settings:input.settings||{},
     library:{bounded:true},sidebarNavigation:{recentView:{}},attention:input.attention||{},
     locationListing:input.locationListing,actionStatus:input.actionStatus};
@@ -32,6 +33,14 @@ export function createShellHttpFixture(readState){
     if(name==='workspaceShortcuts')value={workspaceShortcuts:[]};
     else if(name==='pinnedNavigation')value={pinnedNavigation:input.pinnedNavigation||{items:[],total:0}};
     else if(name==='workspaceExplorer')value={workspaceExplorer:input.workspaceExplorer||{rows:[],pages:1,page:1}};
+    else if(name==='recentNavigation'){
+     // Recent rows render only for an exact accepted shortcut query. The generic
+     // list page is not that protocol, even when it contains the same sessions.
+     const limit=recentLimit(input.view?.navRecentLimit);
+     value={recentNavigation:input.recentNavigation||{...page(input),remaining:0,limit,
+      scope:{...context.recentScope,section:'shortcuts',limit,showAgentCreated:input.view?.navShowAgentCreated===true,
+       selectedSessionId:input.selectedSessionId??null,viewRevision:input.revision}}};
+    }
     else if(name.startsWith('sidebar'))value={sidebarNavigation:{[name.slice(7).toLowerCase()]:page(input)}};
     else value={[name]:input[name]||page(input)};
     if(name==='recentNavigation')value={...value,recentShortcuts:value.recentNavigation.items};

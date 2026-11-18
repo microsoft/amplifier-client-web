@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createShellHttpFixture,installFixtureEvents} from './shell-http-fixture.mjs';
 import {shellScope} from '../src/shell/resources.js';
+import {recentPageMatches} from '../src/chat-navigation.js';
 
 function fixture(){
  const state={revision:1,sessions:[{id:'saved',title:'Saved chat'}],workspaces:[],view:{},selectedSessionId:null,selectedWorkspaceId:null};
@@ -33,6 +34,38 @@ test('mock receipts update accepted scope and omit pages until replacement deman
  f.register(f.demand(2));assert.equal(f.shell.state().shellResources.demandId,2);
  f.attach('two');assert.equal(f.shell.state().shellResources,undefined);
  assert.throws(()=>f.register(f.demand(3)),/one/);
+});
+
+test('mock recent shortcuts match the current query before and after chat selection',()=>{
+ const f=fixture();f.attach('one');f.state.selectedWorkspaceId='project';
+ f.state.view={navAge:'7d',navRecentLimit:40,navShowAgentCreated:true};
+ const check=()=>{
+  const resource=f.register().instances.chats.resources;
+  const context=resource.context.value,page=resource.recentNavigation.value.recentNavigation;
+  assert.deepEqual(context.recentScope,{mode:'all',filter:'',clientId:'one',instanceId:'chats',generation:0,workspaceId:'project',age:'7d'});
+  assert.ok(recentPageMatches(page,{...context.recentScope,limit:40,showAgentCreated:true,selectedSessionId:f.state.selectedSessionId}));
+  assert.deepEqual(page.items,f.state.sessions);
+  assert.deepEqual(resource.recentNavigation.value.recentShortcuts,page.items);
+  assert.equal(page.scope.viewRevision,f.state.revision);
+  assert.equal(page.remaining,0);
+  return page;
+ };
+ const previous=check();
+ f.state.selectedSessionId='saved';f.state.revision++;
+ assert.equal(f.shell.state().shellResources,undefined);
+ const selected=check();
+ assert.equal(recentPageMatches(previous,{...previous.scope,selectedSessionId:'saved'}),false,'An earlier selection must not match the new query');
+ assert.equal(selected.scope.selectedSessionId,'saved');
+});
+
+test('mock recent shortcuts preserve explicit pages without sanitizing their scope',()=>{
+ const f=fixture();f.attach('one');
+ const explicit={items:[{id:'old',title:'Explicit stale row'}],scope:{section:'deliberately-stale'}};
+ f.state.recentNavigation=explicit;
+ const resource=f.register().instances.chats.resources.recentNavigation.value;
+ assert.strictEqual(resource.recentNavigation,explicit);
+ assert.deepEqual(resource.recentShortcuts,explicit.items);
+ assert.equal(recentPageMatches(resource.recentNavigation,{limit:20,showAgentCreated:false,selectedSessionId:null}),false);
 });
 
 test('neutral appearance reads bypass controlled actions without claiming storage support',()=>{

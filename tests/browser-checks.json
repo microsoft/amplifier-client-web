@@ -55,6 +55,11 @@
       "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/conversation-error"}
     },
     {
+      "id": "context-degradation",
+      "command": ["node", "tests/context-degradation-browser.mjs"],
+      "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/context-degradation"}
+    },
+    {
       "id": "installation-repair",
       "command": ["node", "tests/installation-repair-browser.mjs"],
       "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/installation-repair"}
