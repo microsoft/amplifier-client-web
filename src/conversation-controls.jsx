@@ -130,8 +130,13 @@ export function ContextDegradationNotice({session}){
  const [dismissed,setDismissed]=useState(()=>new Map());
  const sessionId=session?.id,turnId=session?.contextDegradation?.turnId;
  if(!sessionId||typeof turnId!=='string'||!turnId||dismissed.get(sessionId)===turnId)return null;
+ const message='Some earlier context was left out to keep this turn moving.';
  return <div className="a-context-degradation" data-part="context-degradation">
-  <span role="status">Some earlier context was left out to keep this turn moving.</span>
+  <span role="status" title={message}>
+   <span className="a-sr-only">{message}</span>
+   <span className="a-context-degradation-full" aria-hidden="true">{message}</span>
+   <span className="a-context-degradation-short" aria-hidden="true">Some earlier context was left out.</span>
+  </span>
   <button type="button" className="a-icon" aria-label="Dismiss context notice" onClick={()=>setDismissed(current=>new Map(current).set(sessionId,turnId))}><X aria-hidden="true"/></button>
  </div>;
 }
