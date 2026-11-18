@@ -126,6 +126,16 @@ export function ConversationDetails({session,act,focused=false,open}){
 
 }
 
+export function ContextDegradationNotice({session}){
+ const [dismissed,setDismissed]=useState(()=>new Map());
+ const sessionId=session?.id,turnId=session?.contextDegradation?.turnId;
+ if(!sessionId||typeof turnId!=='string'||!turnId||dismissed.get(sessionId)===turnId)return null;
+ return <div className="a-context-degradation" data-part="context-degradation">
+  <span role="status">Some earlier context was left out to keep this turn moving.</span>
+  <button type="button" className="a-icon" aria-label="Dismiss context notice" onClick={()=>setDismissed(current=>new Map(current).set(sessionId,turnId))}><X aria-hidden="true"/></button>
+ </div>;
+}
+
 export function ConversationError({state,session,act}){
  const [recovering,setRecovering]=useState(false),[error,setError]=useState('');
  const inFlight=useRef(false);
