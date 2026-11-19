@@ -32,6 +32,10 @@ function sequenceOverview(updates={},options={}){
  const independentUpdate=runnerOnlyPending&&(appAvailable||rows.some(row=>row.status==='update'));
  const blockingPending=pending&&!independentUpdate;
  const waiting=!failed&&!active&&!updates.pendingRestart&&blockingPending&&!(runnerOnlyPending&&seq.nextStage)&&!(updates.pendingRelease&&updates.plan?.activation==='per-worker'&&!updates.pendingApp&&toolResultsIndependent);
+ // A queued stage is intent, not proof of live work. The host can retain it
+ // after interrupted preparation while explicitly asking for recovery.
+ // Keep actual work, pending effects and replacement guards independent.
+ const scheduledContinuation=!!seq.nextStage&&!updates.currentStatus?.actionRequired;
  const stage=seq.nextStage||seq.stage||'application';
  const batch=updates.diagnostics?.batch;
  const currentBatch=batch?.attemptId===updates.diagnostics?.attemptId?batch:null;
@@ -45,7 +49,7 @@ function sequenceOverview(updates={},options={}){
  const progress=updates.probeProgress;
  const currentProgress=currentBatch&&progress?.attemptId===currentBatch.attemptId&&updates.phase==='validating'&&
   Number.isInteger(progress.total)&&Number.isInteger(progress.completed)&&progress.total>=0&&progress.completed>=0&&progress.completed<=progress.total?progress:null;
- const result={stage,installable,blocked,runnerOnlyPending,toolResultsIndependent,active,pending,failed,busy:active||(!failed&&(blockingPending||!!seq.nextStage))||updates.pendingReplacement!=null,waiting,processing:!failed&&!waiting&&(active||blockingPending||!!seq.nextStage),continuing:!!seq.install,currentBatch,currentProgress,applicationResult,componentFailure:!!componentFailure,completedBatches:(updates.diagnostics?.completedBatches||[]).slice(-5),title:'Check for updates',detail:'We’ll check Amplifier and the components it uses.',tone:'neutral'};
+ const result={stage,installable,blocked,runnerOnlyPending,toolResultsIndependent,active,pending,failed,busy:active||(!failed&&(blockingPending||scheduledContinuation))||updates.pendingReplacement!=null,waiting,processing:!failed&&!waiting&&(active||blockingPending||scheduledContinuation),continuing:!!seq.install,currentBatch,currentProgress,applicationResult,componentFailure:!!componentFailure,completedBatches:(updates.diagnostics?.completedBatches||[]).slice(-5),title:'Check for updates',detail:'We’ll check Amplifier and the components it uses.',tone:'neutral'};
  if(componentFailure){
   const names=(currentBatch.components||[]).slice(0,5),count=currentBatch.componentCount||names.length;
   const affected=names.length?` Affected batch: ${names.join(', ')}${count>names.length?` and ${count-names.length} more`:''}.`:'';

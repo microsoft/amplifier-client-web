@@ -5,7 +5,7 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {create} from 'react-test-renderer';
 import {createServer} from 'vite';
 
-const server=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
+const server=await createServer({server:{host:'127.0.0.1',middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
 const {UpdateSettings}=await server.ssrLoadModule('/src/updates.jsx');
 const {diagnosticReceipt,reconciledFailure}=await server.ssrLoadModule('/src/update-diagnostics.jsx');
 test.after(()=>server.close());
@@ -721,7 +721,7 @@ test('retained-only Retry respects existing active, queued and replacement guard
    {pendingApp:{}},{pendingRelease:'candidate'},{pendingSmartTools:[{previous:'tool'}]},
    {pendingReplacement:{}},{pendingRestart:{requestStatus:'uncertain'}},
    {pendingRestart:{requestStatus:'rejected'},phase:'error',error:'Restart failed'},
-   {sequence:{stage:'other',nextStage:'other'}},
+   {sequence:{stage:'other',nextStage:'other'},currentStatus:{...retainedOnly.currentStatus,actionRequired:false}},
    {sequence:{stage:'included',included:{issues:1}},includedCanProceed:false},
    {application:{...application,status:'update',canInstall:false}},
   ]){
@@ -962,4 +962,63 @@ test('failed optional tool preserves retry and skip while app check and installa
  assert.equal(root.root.findByProps({'data-action':'updates.check'}).props.disabled,false);
  assert.equal(root.root.findAllByProps({'data-action':'updates.install'}).length,0);
  await renderAct(async()=>root.unmount());
+});
+
+
+const interruptedPreparation={phase:'checked',initialPreparation:true,
+ sequence:{stage:'included',nextStage:'other',install:true},
+ currentStatus:{status:'action-required',actionRequired:true,action:'install',
+  title:'Preparation needs attention',detail:'Preparation was interrupted. Try installation again.'}};
+test('interrupted preparation with stale next stage offers usable recovery after reload',async()=>{
+ for(const action of ['install','check','diagnostics','sources']){
+  const updates=JSON.parse(JSON.stringify({...interruptedPreparation,
+   currentStatus:{...interruptedPreparation.currentStatus,action}}));
+  const before=structuredClone(updates),calls=[];let root;
+  try{
+   await renderAct(async()=>{root=create(React.createElement(UpdateSettings,{state:state(updates),act:(...args)=>calls.push(args)}))});
+   assert.deepEqual(calls,[]);
+   assert.doesNotMatch(JSON.stringify(root.toJSON()),/Finishing update|Finishing your update/);
+   const checks=root.root.findAllByProps({'data-action':'updates.check'});
+   assert.ok(checks.length>0);
+   for(const button of checks)assert.ok(!button.props.disabled);
+   await renderAct(async()=>checks[0].props.onClick());
+   assert.equal(calls[0][0],'updates.check');
+   if(action==='install'){
+    const retry=root.root.findByProps({'data-action':'updates.install'});
+    assert.equal(retry.props.disabled,false);
+    assert.equal(retry.findByType('span').children.join(''),'Retry installation');
+    await renderAct(async()=>retry.props.onClick());
+    assert.equal(calls[1][0],'updates.install');
+   }else if(['diagnostics','sources'].includes(action)){
+    const recovery=root.root.findByProps({className:'a-update-current-action'}).findByType('button');
+    assert.ok(!recovery.props.disabled);
+    await renderAct(async()=>recovery.props.onClick());
+    assert.equal(calls[1][0],'view.update');
+    assert.equal(calls[1][1].patch.maintenanceDraft[action==='sources'?'updatesExpanded':'updateDiagnosticsExpanded'],true);
+   }
+   assert.deepEqual(updates,before);
+  }finally{await renderAct(async()=>root?.unmount())}
+ }
+});
+test('action-required recovery does not bypass genuine live work, queued effects or replacement',async()=>{
+ for(const patch of [
+  {phase:'checking'},{phase:'staging'},{phase:'validating'},{phase:'activating'},
+  {pendingRelease:'candidate'},{pendingSmartTools:[{previous:'tool'}]},
+  {pendingApp:{featureSelection:{requestId:'chosen'}}},
+  {pendingRestart:{requestStatus:'uncertain'}},{pendingReplacement:{}},
+ ]){
+  for(const action of ['check','install']){
+   const updates={...interruptedPreparation,...patch,
+    currentStatus:{...interruptedPreparation.currentStatus,action}};
+   let root;
+   try{
+    await renderAct(async()=>{root=create(React.createElement(UpdateSettings,{state:state(updates),act:()=>{}}))});
+    for(const button of root.root.findAllByProps({'data-action':'updates.check'})){
+     assert.equal(button.props.disabled,true,JSON.stringify({patch,action}));
+    }
+    const installs=root.root.findAllByProps({'data-action':'updates.install'});
+    assert.ok(installs.length===0||installs.every(button=>button.props.disabled));
+   }finally{await renderAct(async()=>root?.unmount())}
+  }
+ }
 });
