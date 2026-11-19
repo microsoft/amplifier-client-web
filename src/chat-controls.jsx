@@ -32,6 +32,10 @@ function configuredEffort(row,model){
  const field=providerFields(row,{model,default_model:model}).find(field=>field.id==='reasoning_effort');
  return row?.effort||row?.config?.reasoning_effort||row?.info?.defaults?.reasoning_effort||field?.default||'';
 }
+function requestEfforts(metadata,row,model){
+ const choices=metadata?.modelListInfo?.request_reasoning_efforts?.[model]??row?.modelListInfo?.request_reasoning_efforts?.[model];
+ return Array.isArray(choices)?choices:null;
+}
 export function nextMessageBlocked(session,working=false){
  // Saving future intent neither interrupts nor reconfigures active work.
  // Actual unresolved mutations and remote ownership still need resolution.
@@ -98,7 +102,14 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
  const noProviders=(isDraft?defaults.phase==='ready':rosterIsCurrent&&Array.isArray(catalog?.providers))&&!providers.length;
  const model=effective.model||(!isDraft&&!pendingBundle?lastCall?.model:'')||(noProviders?'Set up a model':pendingBundle?'Bundle default':defaults.phase==='error'?'Model unavailable':!isDraft?'Choose a model':'Loading model…');
  const provider=effective.instance||effective.id||(!isDraft&&!pendingBundle?lastCall?.provider:'')||'';
- const effectiveProvider=providers.find(row=>row.id===provider),effectiveMetadata=state.modelCatalogs?.[effectiveProvider?.sharedCatalogKey]?.metadata,effectiveEffort=effective.effort||configuredEffort(effectiveProvider,model)||configuredEffort(effectiveMetadata,model);
+ // The effective report includes connection defaults. Only saved conversation intent belongs in a model edit.
+ const explicitlySelected=isDraft?setup.selection:session?.pendingModelSelection||(!pendingBundle?.resetModel&&(session?.selection||
+  (catalogIsCurrent&&(catalog.selection||(catalog.pinned&&catalog.effective)))||(!pendingBundle&&session?.runtimeReport?.selection)));
+ const explicitEffort=explicitlySelected?.instance===provider&&explicitlySelected?.model===model?explicitlySelected.effort||'':'';
+ const effectiveProvider=providers.find(row=>row.id===provider),effectiveMetadata=state.modelCatalogs?.[effectiveProvider?.sharedCatalogKey]?.metadata;
+ const reportedEffort=effective.effort||configuredEffort(effectiveProvider,model)||configuredEffort(effectiveMetadata,model);
+ const effectiveChoices=requestEfforts(effectiveMetadata,effectiveProvider,model);
+ const effectiveEffort=explicitEffort||(!effectiveChoices||effectiveChoices.includes(reportedEffort)?reportedEffort:'');
  const options=providerOptions(providers);
  const providerLabel=options.find(row=>row.id===provider)?.label||provider;
  const modelAndEffort=effectiveEffort?`${model} (${effectiveEffort})`:model;
@@ -134,17 +145,23 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
  const binding=!isDraft&&catalog?.connectionBindings?.[draft.instance];
  const entry=binding?.eligible===false?null:state.modelCatalogs?.[isDraft?draftEntry?.sharedCatalogKey:selected?.sharedCatalogKey]||(isDraft?draftEntry:null);
  const metadata=entry?.metadata||selected||{};
- const choices=(providerFields(metadata,{model:draft.model,default_model:draft.model}).find(field=>field.id==='reasoning_effort')?.choices||[]).map(row=>typeof row==='object'?row.value:row);
- const effort=draft.effort||configuredEffort(selected,draft.model)||configuredEffort(metadata,draft.model);
+ const exactChoices=requestEfforts(metadata,selected,draft.model);
+ const choices=exactChoices??(providerFields(metadata,{model:draft.model,default_model:draft.model}).find(field=>field.id==='reasoning_effort')?.choices||[]).map(row=>typeof row==='object'?row.value:row);
+ const inheritedEffort=configuredEffort(selected,draft.model)||configuredEffort(metadata,draft.model)||(draft.instance===provider&&draft.model===model?reportedEffort:'');
+ const effort=draft.effort||(!exactChoices||exactChoices.includes(inheritedEffort)?inheritedEffort:'');
+ // Exact request choices describe explicit overrides. The separate default position leaves the request unpinned.
+ const defaultPosition=!!exactChoices;
+ const effortLabel=defaultPosition&&!draft.effort?(effort?`Provider default (${effort})`:'Provider default'):effort||'Provider default';
+ const sliderPosition=defaultPosition?choices.indexOf(draft.effort):Math.max(0,choices.indexOf(effort));
  const touched=useRef(false),draftRevision=useRef({sessionId,revision:nextMessageRevision});
  if(draftRevision.current.sessionId!==sessionId){touched.current=false;draftRevision.current={sessionId,revision:nextMessageRevision}}
  const discovery=useDraftDiscovery({enabled:isDraft,setup,defaults,configurationRevision,hostInstanceId:state.hostInstanceId,act,needsProviders:draftCatalog===EMPTY});
  useEffect(()=>{
-  if(open&&!touched.current){draftRevision.current={sessionId,revision:nextMessageRevision};const instance=effective.instance||effective.id||draft.instance||'',row=providers.find(p=>p.id===instance);edit({instance,model:effective.model||draft.model||row?.info?.defaults?.model||'',effort:effectiveEffort||draft.effort||''})}
- },[open,sessionId,nextMessageRevision,providers.map(row=>row.id).join('|'),effective.instance,effective.id,effective.model,effectiveEffort]);
+  if(open&&!touched.current){draftRevision.current={sessionId,revision:nextMessageRevision};const instance=effective.instance||effective.id||draft.instance||'',row=providers.find(p=>p.id===instance);edit({instance,model:effective.model||draft.model||row?.info?.defaults?.model||'',effort:explicitEffort})}
+ },[open,sessionId,nextMessageRevision,providers.map(row=>row.id).join('|'),effective.instance,effective.id,effective.model,explicitEffort]);
  function show(){touched.current=false;draftRevision.current={sessionId,revision:nextMessageRevision};effortPending.current=null;setError('');if(open){close();return}
   focusRequested.current=compact;
-  edit({open:true,sessionId,instance:provider,model:effective.model||'',effort:effectiveEffort||''});
+  edit({open:true,sessionId,instance:provider,model:effective.model||'',effort:explicitEffort});
  }
  async function apply(patch,capturedRevision=draftRevision.current.revision){
   if(blocked)return;
@@ -162,8 +179,8 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
   if(isDraft&&!draftCatalog.providerCatalogs?.[value])act('providers.models',{id:value,workspace:setup.workspace,...location});
   else if(!isDraft&&!state.modelCatalogs?.[row.sharedCatalogKey])act('runtime.control',{sessionId,operation:'configuration.catalog',args:{}});
  }
- function previewEffort(event){if(blocked)return;const value=choices[Number(event.currentTarget.value)];touched.current=true;effortPending.current={sessionId,instance:draft.instance,model:draft.model,effort:value,revision:draftRevision.current.revision};setDraft({...draft,effort:value});}
- function commitEffort(){const pending=effortPending.current;effortPending.current=null;if(pending&&pending.sessionId===sessionId&&pending.instance===draft.instance&&pending.model===draft.model&&choices.includes(pending.effort))apply({effort:pending.effort},pending.revision);}
+ function previewEffort(event){if(blocked)return;const index=Number(event.currentTarget.value),value=defaultPosition&&index===-1?'':choices[index];touched.current=true;effortPending.current={sessionId,instance:draft.instance,model:draft.model,effort:value,revision:draftRevision.current.revision};setDraft({...draft,effort:value});}
+ function commitEffort(){const pending=effortPending.current;effortPending.current=null;if(pending&&pending.sessionId===sessionId&&pending.instance===draft.instance&&pending.model===draft.model&&(choices.includes(pending.effort)||(defaultPosition&&pending.effort==='')))apply({effort:pending.effort},pending.revision);}
  const catalogRequest=useRef('');
  const missingCatalogs=providers.filter(row=>row.sharedCatalogKey&&!state.modelCatalogs?.[row.sharedCatalogKey]).map(row=>row.sharedCatalogKey).join('|');
  useEffect(()=>{
@@ -189,10 +206,10 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
    {draft.instance&&!selected&&<small>Saved connection {draft.instance} is not available in this configuration scope.</small>}
    </div>
    <div data-composer-page="model">
-   <label htmlFor="chat-model">Model</label>{binding?.eligible===false?<><input id="chat-model" aria-label="Conversation model" value={draft.model||''} disabled readOnly/><p className="a-caption">The configured connection’s model list cannot be used for this chat until its saved connection settings match. This does not mean the model is unavailable. Choose a different connection above or review the saved configuration.</p></>:<ModelSelect key={draft.instance} id="chat-model" label="Conversation model" value={draft.model||''} entry={entry} state={state} act={act} disabled={blocked||!selected} onChange={model=>{touched.current=true;edit({model})}} onCommit={model=>apply({model,effort:draft.model===model?draft.effort:''})}/>}
+   <label htmlFor="chat-model">Model</label>{binding?.eligible===false?<><input id="chat-model" aria-label="Conversation model" value={draft.model||''} disabled readOnly/><p className="a-caption">The configured connection’s model list cannot be used for this chat until its saved connection settings match. This does not mean the model is unavailable. Choose a different connection above or review the saved configuration.</p></>:<ModelSelect key={draft.instance} id="chat-model" label="Conversation model" value={draft.model||''} entry={entry} state={state} act={act} disabled={blocked||!selected} onChange={model=>{touched.current=true;edit({model,...(model!==draft.model?{effort:''}:{})})}} onCommit={model=>apply({model,effort:draft.model===model?draft.effort:''})}/>}
    </div>
    <div data-composer-page="effort">
-   {choices.length>0?<><label htmlFor="chat-effort">Reasoning effort <strong>{effort||'Choose effort'}</strong></label>{effort&&!choices.includes(effort)&&<small>Saved effort {effort} is not advertised for this model. Choose an available effort to replace it.</small>}<input id="chat-effort" type="range" min="0" max={choices.length-1} step="1" value={Math.max(0,choices.indexOf(effort))} aria-valuetext={choices.includes(effort)?effort:'Choose effort; saved value is not advertised'} disabled={blocked||!draft.model||binding?.eligible===false} data-action={isDraft?'view.update':'conversation.configure'} onChange={previewEffort} onPointerUp={commitEffort} onKeyUp={commitEffort} onBlur={commitEffort}/><div className="a-effort-labels"><span>{choices[0]}</span><span>{choices.at(-1)}</span></div></>:<small>{binding?.eligible===false?'Saved connection settings need review before changing reasoning effort.':entry?.metadata||selected?.configSchema||selected?.info?.config_fields?'Reasoning effort is not configurable for this model.':failure||delayed||entry?.phase==='error'?'Model capabilities unavailable.':'Loading model capabilities…'}{effort&&` Saved effort: ${effort}.`}</small>}
+   {choices.length>0?<><label htmlFor="chat-effort">Reasoning effort <strong>{effortLabel}</strong></label>{draft.effort&&!choices.includes(draft.effort)&&<small>Saved effort {effort} is not advertised for this model. Choose an available effort to replace it.</small>}<input id="chat-effort" type="range" min={defaultPosition?-1:0} max={choices.length-1} step="1" value={sliderPosition} aria-valuetext={draft.effort&&!choices.includes(draft.effort)?'Choose effort; saved value is not advertised':effortLabel} disabled={blocked||!draft.model||binding?.eligible===false} data-action={isDraft?'view.update':'conversation.configure'} onChange={previewEffort} onPointerUp={commitEffort} onKeyUp={commitEffort} onBlur={commitEffort}/><div className="a-effort-labels"><span>{defaultPosition?'Provider default':choices[0]}</span><span>{choices.at(-1)}</span></div></>:<small>{binding?.eligible===false?'Saved connection settings need review before changing reasoning effort.':entry?.metadata||selected?.configSchema||selected?.info?.config_fields?'Reasoning effort is not configurable for this model.':failure||delayed||entry?.phase==='error'?'Model capabilities unavailable.':'Loading model capabilities…'}{effort&&` Saved effort: ${effort}.`}</small>}
    </div>
    <div className="a-dialog-actions"><button type="button" className="a-link" disabled={!selected} onClick={()=>isDraft?act('providers.models',{id:draft.instance,workspace:setup.workspace,...location,refresh:true}):act('runtime.control',{sessionId,operation:'configuration.catalog',args:{refresh:true,instance:draft.instance}})}>Refresh this connection</button><button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{composerModel:{...draft,open:false},panel:'settings',settingsSection:'setup',settingsExpanded:['ai-connections'],aiConnectionEditor:{...(state.view?.aiConnectionEditor||{}),step:'list'}}})}>Manage connections</button></div>
    <details><summary>Advanced</summary>{!isDraft&&<p className="a-muted" data-part="delegation-routing">{delegationRoutingLabel(catalog?.delegationRouting||session?.runtimeReport?.delegationRouting)}</p>}{children}</details>

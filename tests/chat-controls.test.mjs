@@ -676,3 +676,75 @@ test('an edited model form does not attach a peer revision to its stale model du
   assert.match(JSON.stringify(root.toJSON()),/Review the current choices/);
  }finally{await renderAct(async()=>root?.unmount())}
 });
+
+for(const [description,pinnedEffort,connectionEffort,expected] of [
+ ['inherited none',undefined,'none',undefined],['inherited high',undefined,'high',undefined],
+ ['explicit none','none','high','none'],['explicit high','high','none','high'],
+])test('committing the same exact model preserves '+description,async()=>{
+ const calls=[],model='example',selection={instance:'one',model},row={id:'one',config:{reasoning_effort:connectionEffort},sharedCatalogKey:'account'};
+ const session={id:'chat',...(pinnedEffort?{selection:{...selection,effort:pinnedEffort}}:{})};
+ const state={view:{composerModel:{open:true,sessionId:'chat'}},runtimeControl:{chat:{'configuration.catalog':{configurationRevision:0,
+  effective:{...selection,effort:pinnedEffort||connectionEffort},pinned:!!pinnedEffort,providers:[row]}}},
+  modelCatalogs:{account:{phase:'ready',models:[],metadata:{configSchema:{fields:[{id:'reasoning_effort',choices:['none','low','high']}]}}}}};
+ let root;
+ try{
+  await renderAct(async()=>root=create(React.createElement(ModelControl,{state,session,act:record(calls)})));
+  await renderAct(async()=>field(root,'chat-model').props.onKeyDown({key:'Enter',preventDefault(){},currentTarget:{value:model}}));
+  assert.deepEqual(calls.filter(c=>c.name==='conversation.configure').map(c=>c.args.selection),[{...selection,...(expected?{effort:expected}:{})}]);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+for(const catalog of ['loaded','cold'])test('the effort picker uses the exact request choices from the '+catalog+' connection',async()=>{
+ const calls=[],model='exact',selection={instance:'one',model,effort:'retired'};
+ const fields=[{id:'reasoning_effort',choices:['none','low','high','max']}];
+ const info={request_reasoning_efforts:{exact:['low','high'],other:['none','max']}};
+ const row={id:'one',sharedCatalogKey:'account',configSchema:{fields},modelListInfo:catalog==='cold'?info:{}};
+ const state={view:{composerModel:{open:true,sessionId:'chat',...selection}},runtimeControl:{chat:{'configuration.catalog':{configurationRevision:0,providers:[row],effective:selection,pinned:true}}},
+  modelCatalogs:catalog==='loaded'?{account:{phase:'ready',models:[],metadata:{configSchema:{fields},modelListInfo:info}}}:{}};
+ let root;
+ try{
+  await renderAct(async()=>root=create(React.createElement(ModelControl,{state,session:{id:'chat',selection},act:record(calls)})));
+  assert.equal(field(root,'chat-effort').props.max,1);
+  assert.match(renderedText(root.toJSON()),/Saved effort retired is not advertised/);
+  assert.equal(calls.some(call=>call.name==='conversation.configure'),false);
+  await renderAct(async()=>field(root,'chat-effort').props.onChange({currentTarget:{value:'1'}}));
+  await renderAct(async()=>field(root,'chat-effort').props.onKeyUp());
+  assert.deepEqual(calls.filter(c=>c.name==='conversation.configure').map(c=>c.args.selection),[{...selection,effort:'high'}]);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+
+test('exact request choices can set the lowest literal and return to provider default',async()=>{
+ const calls=[],model='exact',selection={instance:'one',model};
+ const state={view:{composerModel:{open:true,sessionId:'chat',...selection}},runtimeControl:{chat:{'configuration.catalog':{configurationRevision:0,
+  effective:{...selection,effort:'none'},providers:[{id:'one',config:{reasoning_effort:'none'},modelListInfo:{request_reasoning_efforts:{exact:['low','high']}}}]}}}};
+ let root;
+ try{
+  await renderAct(async()=>root=create(React.createElement(ModelControl,{state,session:{id:'chat'},act:record(calls)})));
+  const slider=()=>field(root,'chat-effort');
+  assert.equal(slider().props.value,-1);
+  assert.equal(slider().props['aria-valuetext'],'Provider default');
+  for(const position of ['0','-1']){
+   await renderAct(async()=>slider().props.onChange({currentTarget:{value:position}}));
+   await renderAct(async()=>slider().props.onKeyUp());
+  }
+  assert.deepEqual(calls.filter(c=>c.name==='conversation.configure').map(c=>c.args.selection),[{...selection,effort:'low'},selection]);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+
+test('a draft inherits connection defaults and keeps generic choices for a model outside the map',async()=>{
+ const calls=[],selection={instance:'one',model:'legacy'},row={id:'one',sharedCatalogKey:'account',config:{reasoning_effort:'none'},
+  modelListInfo:{request_reasoning_efforts:{exact:['low','high']}},configSchema:{fields:[{id:'reasoning_effort',choices:['none','low','high']}]}};
+ const state={view:{composerModel:{open:true,sessionId:null},newSessionDraft:{workspace:'/trial',selection:{}}},
+  setup:{providersRequestedWorkspace:'/trial',providers:[row],providerCatalogs:{one:{sharedCatalogKey:'account'}}},
+  draftDefaults:{'["/trial",""]':{phase:'ready',effective:{...selection,effort:'none'}}}};
+ let root;
+ try{
+  await renderAct(async()=>root=create(React.createElement(ModelControl,{state,act:record(calls)})));
+  const slider=()=>field(root,'chat-effort');
+  assert.equal(slider().props.max,2);
+  await renderAct(async()=>field(root,'chat-model').props.onKeyDown({key:'Enter',preventDefault(){},currentTarget:{value:'legacy'}}));
+  await renderAct(async()=>slider().props.onChange({currentTarget:{value:'0'}}));
+  await renderAct(async()=>slider().props.onPointerUp());
+  const saves=calls.flatMap(c=>c.args.patch?.newSessionDraft?[c.args.patch.newSessionDraft.selection]:[]);
+  assert.deepEqual(saves,[selection,{...selection,effort:'none'}]);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
