@@ -41,3 +41,34 @@ test('a prepared choice is scoped to the exact chat, source, failure and configu
  assert.equal(allowanceScope({...session,pendingBundleSelection:{}},'host-A'),null);
  assert.equal(allowanceScope({...session,failure:{code:'native_no_reduction'}},'host-A'),null);
 });
+
+test('overlapping controls keep a settled read and cannot supply another chat or command result',async()=>{
+ const reads=[];let root;
+ const actRead=async(action,args,meta)=>{reads.push(meta.id);return {accepted:true}};
+ const target={sessionId:session.id,operation:'context.recovery.status'};
+ const other={commandId:'other',phase:'ready',target:{sessionId:'another-chat',operation:'native.status'}};
+ const render=(receipt,status)=>React.createElement(RecoveryAllowance,{session,act:actRead,state:{
+  actionStatus:{'runtime.control':receipt},runtimeControl:{original:{'context.recovery.status':status}}}});
+ const approval=()=>root.root.findAllByType('button').find(b=>b.children.includes('Use allowance on next Send'));
+ const check=()=>root.root.findAllByType('button').find(b=>b.children.includes('Check preparation again'));
+ await act(async()=>{root=create(render())});
+ const id=reads[0],own={allowanceOffer:offer,readCommandId:id};
+ await act(async()=>root.update(render({commandId:id,phase:'ready',target},own)));
+ assert.ok(approval());
+ await act(async()=>root.update(render(other,{readCommandId:'other-read',allowanceOffer:{...offer,offerId:'unrelated'}})));
+ assert.ok(approval(),'approved original snapshot remains available when another control settles');
+ await act(async()=>check().props.onClick());
+ assert.equal(approval(),undefined);
+ const next=reads[1];
+ await act(async()=>root.update(render({commandId:next,phase:'working',target},own)));
+ await act(async()=>root.update(render(other,own)));
+ assert.equal(approval(),undefined,'an older status cannot satisfy a later completed read');
+ assert.match(JSON.stringify(root.toJSON()),/not confirmed/);
+ await act(async()=>root.update(render(other,{allowanceOffer:offer,readCommandId:next})));
+ assert.equal(approval(),undefined,'a displaced completion not previously observed must be rechecked');
+ await act(async()=>root.update(render({commandId:next,phase:'ready',target},own)));
+ assert.equal(approval(),undefined,'an out-of-order stamped result cannot satisfy a different command receipt');
+ await act(async()=>root.update(render({commandId:next,phase:'ready',target},{allowanceOffer:offer,readCommandId:next})));
+ assert.ok(approval());
+ await act(async()=>root.unmount());
+});

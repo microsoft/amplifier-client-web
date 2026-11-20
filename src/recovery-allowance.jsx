@@ -1,4 +1,4 @@
-import React,{useEffect,useState} from 'react';
+import React,{useEffect,useRef,useState} from 'react';
 
 const operation='context.recovery.status';
 
@@ -19,19 +19,26 @@ function unavailable(status){
 
 export function RecoveryAllowance({state,session,act,onApprove}){
  const [id,setId]=useState(null),[error,setError]=useState(''),[amount,setAmount]=useState('1');
- const status=state.runtimeControl?.[session.id]?.[operation],receipt=state.actionStatus?.['runtime.control'];
+ const [settled,setSettled]=useState(null),currentId=useRef(null);
+ const raw=state.runtimeControl?.[session.id]?.[operation],receipt=state.actionStatus?.['runtime.control'];
  const latest=!!id&&receipt?.commandId===id&&receipt.target?.sessionId===session.id&&receipt.target?.operation===operation;
- const done=latest&&receipt.phase==='ready', checking=latest&&['queued','working'].includes(receipt.phase);
- const offer=done?status?.allowanceOffer:null;
+ const terminal=latest?receipt:null;
+ const correlated=raw?.readCommandId?raw.readCommandId===id:latest;
+ const result=terminal?.phase==='ready'&&correlated?raw:null;
+ useEffect(()=>{
+  if(result)setSettled({id,status:result});
+ },[id,result]);
+ const status=result||(settled?.id===id?settled?.status:null),offer=status?.allowanceOffer;
+ const checking=latest&&['queued','working'].includes(receipt.phase);
  const settingsChanged=!!(session.pendingModelSelection||session.pendingBundleSelection);
  const valid=typeof offer?.offerId==='string'&&offer.offerId.length>0&&Number.isSafeInteger(offer.maxAdditionalCalls)&&offer.maxAdditionalCalls>0&&
   Number.isSafeInteger(offer.expectedInterruptionRevision)&&offer.expectedInterruptionRevision===(session.interruptionRevision??0);
  const calls=Number(amount),active=['working','running','starting','stopping','busy'].includes(session.status)||session.workers?.some(row=>['queued','starting','working','running','stopping'].includes(row.status));
  async function check(){
-  const commandId=crypto.randomUUID();setId(commandId);setAmount('1');setError('');
+  const commandId=crypto.randomUUID();currentId.current=commandId;setId(commandId);setSettled(null);setAmount('1');setError('');
   try{const response=await act('runtime.control',{sessionId:session.id,operation,args:{}},{id:commandId});
    if(response?.accepted!==true)throw Error(response?.error||'Could not check preparation.');
-  }catch(e){setError(e.message)}
+  }catch(e){if(currentId.current===commandId)setError(e.message)}
  }
  useEffect(()=>{if(!active&&!settingsChanged)void check()},[active,settingsChanged]);
  return <section className="a-settings-section" aria-label="Preparation allowance">
@@ -43,7 +50,7 @@ export function RecoveryAllowance({state,session,act,onApprove}){
    </label>
    <button type="button" className="a-soft" disabled={!Number.isSafeInteger(calls)||calls<1||calls>offer.maxAdditionalCalls}
     onClick={()=>onApprove?.({offerId:offer.offerId,expectedInterruptionRevision:offer.expectedInterruptionRevision,additionalCalls:calls})}>Use allowance on next Send</button>
-  </>:<p role="status">{error||(latest&&receipt.phase==='error'?(receipt.error||'Could not check preparation.'):done?(offer?'The chat changed since the allowance was offered. Check preparation again.':unavailable(status)):checking?'Checking saved progress…':'Waiting for current preparation status…')}</p>}
+  </>:<p role="status">{error||(terminal?.phase==='error'?(terminal.error||'Could not check preparation.'):status?(offer?'The chat changed since the allowance was offered. Check preparation again.':unavailable(status)):checking?'Checking saved progress…':'The current preparation status is not confirmed. Check preparation again.')}</p>}
   <button type="button" className="a-link" disabled={active||checking} onClick={check}>Check preparation again</button>
  </section>;
 }

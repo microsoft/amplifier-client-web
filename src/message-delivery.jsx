@@ -34,6 +34,7 @@ function DeliveryWarning({message,session,delivery,localDelivery,dispatch,retry,
  };
  const blocked=session.configurationBusy||session.ownership?.status==='blocked'||session.workspaceAvailable===false||!!session.historyReadOnlyReason;
  const saved=session.messages?.some(m=>m.role==='user'&&m.inputId===inputId);
+ const oneTimeAllowance=!!(message.recoveryAllowance||localDelivery?.recoveryAllowance);
  const originalSubmission=!!localDelivery&&!saved;
  const working=['working','starting','running','stopping'].includes(session.status);
  const authoritativeActive=working&&session.execution?.currentTurnId===inputId||
@@ -71,7 +72,7 @@ function DeliveryWarning({message,session,delivery,localDelivery,dispatch,retry,
   return()=>globalThis.window?.removeEventListener('amplifier-reconnected',reconnect);
  },[recovery?.scope,recovery?.connection,inputId,session.id,delivery?.status,authoritativeActive,!!message.steering,localDelivery?.closed]);
  const resend=async()=>{
-  if(pending)return;setPending(true);setError('');
+  if(pending||oneTimeAllowance)return;setPending(true);setError('');
   try{
    const saved=session.messages?.some(m=>m.role==='user'&&m.inputId===inputId);
    if(saved){const result=await dispatch('conversation.retry',{sessionId:session.id,inputId,confirmUncertain:true},{feedback:false});setReport({...result,sourceSteering});}
@@ -103,15 +104,16 @@ function DeliveryWarning({message,session,delivery,localDelivery,dispatch,retry,
  const preparing=session.status==='starting'||session.activity?.phase==='runtime-setup';
  const content=<div className="a-dialog-actions a-delivery-content">
   {steeringContent||<span className="a-message-delivery" role="status">{sending?<><LoaderCircle className="a-progress-spinner"/>{preparing?'Preparing chat…':'Sending…'}</>:<><AlertCircle/>{delivery.status==='failed'?'Not sent':'Delivery not confirmed'}
-   {delivery.status==='failed'?<button type="button" className="a-link" data-action="conversation.send" disabled={pending||blocked} onClick={()=>session.messages?.some(row=>row.inputId===inputId)?resend():retry(message)}><RotateCcw/>Retry</button>:<button type="button" className="a-link" data-action="conversation.delivery" disabled={pending||!inputId} onClick={check}><RotateCcw/>{pending?'Checking…':'Check delivery'}</button>}
+   {delivery.status==='failed'&&!oneTimeAllowance?<button type="button" className="a-link" data-action="conversation.send" disabled={pending||blocked} onClick={()=>session.messages?.some(row=>row.inputId===inputId)?resend():retry(message)}><RotateCcw/>Retry</button>:<button type="button" className="a-link" data-action="conversation.delivery" disabled={pending||!inputId} onClick={check}><RotateCcw/>{pending?'Checking…':'Check delivery'}</button>}
   </>}</span>}
   {!sending&&(!steering||steeringWarning)&&delivery?.error&&<p role="alert" className="a-delivery-detail">{delivery.error}</p>}
+  {oneTimeAllowance&&unresolved&&<p className="a-delivery-detail">To try again, review preparation and send a fresh message.</p>}
   {closeable&&<button type="button" className="a-link" disabled={submitting} title="Keep the original submission in Chat info without resending or confirming delivery." onClick={()=>{if(!submitting)discard?.(message)}}>Close delivery item</button>}
   {report?.message&&<p role="status" className="a-delivery-detail">{report.message}</p>}
   {error&&<p role="alert" className="a-delivery-detail">{error}</p>}
-  {!steering&&!sending&&report&&!['accepted','sending','held','queued_for_update'].includes(report.delivery)&&!confirm&&
+  {!oneTimeAllowance&&!steering&&!sending&&report&&!['accepted','sending','held','queued_for_update'].includes(report.delivery)&&!confirm&&
    (originalSubmission||saved&&report.delivery!=='not_saved')&&<button type="button" className="a-link" data-action="conversation.retry" disabled={pending||blocked||working} onClick={()=>setConfirm(true)}>{originalSubmission?'Retry original submission':'Send again'}</button>}
-  {!steering&&confirm&&<div className="a-delivery-confirm" role="alert"><p>The earlier attempt may have run even though delivery was not confirmed. Sending again could repeat that work. Your saved message and history will be kept.</p><div className="a-dialog-actions"><button type="button" className="a-soft" disabled={pending} onClick={()=>setConfirm(false)}>Cancel</button><button type="button" className="a-primary" data-action="conversation.retry" disabled={pending||blocked||working} onClick={resend}>{pending?'Sending…':'Send this message again'}</button></div></div>}
+  {!oneTimeAllowance&&!steering&&confirm&&<div className="a-delivery-confirm" role="alert"><p>The earlier attempt may have run even though delivery was not confirmed. Sending again could repeat that work. Your saved message and history will be kept.</p><div className="a-dialog-actions"><button type="button" className="a-soft" disabled={pending} onClick={()=>setConfirm(false)}>Cancel</button><button type="button" className="a-primary" data-action="conversation.retry" disabled={pending||blocked||working} onClick={resend}>{pending?'Sending…':'Send this message again'}</button></div></div>}
   {dismissible&&<button type="button" className="a-link" disabled={pending} onClick={()=>{if(!pending)setWarningDismissed(!dismissed)}}>{dismissed?'Show warning':'Dismiss warning'}</button>}
  </div>;
  return dismissible?<details className="a-delivery-warning" open={pending||!dismissed||expanded} onToggle={event=>{if(dismissed&&!pending)setExpanded(event.currentTarget.open)}}>

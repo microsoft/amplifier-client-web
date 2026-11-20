@@ -356,3 +356,20 @@ test('a generic accepted check cannot hide an exact active steering input',async
  assert.notEqual(root.toJSON(),null);assert.equal(button(root,'Dismiss warning'),undefined);
  await act(async()=>root.unmount());
 });
+
+for(const saved of [true,false])for(const status of ['failed','unknown'])test(
+ `one-time allowance ${saved?'saved':'local'} ${status} allows a passive read and a fresh Send only`,async()=>{
+ const grant={offerId:'used-once',additionalCalls:1};
+ const message={inputId:'once',role:'user',text:'Fresh request',...(saved?{recoveryAllowance:grant}:{})};
+ const session={id:'chat',status:'idle',messages:saved?[message]:[]};
+ const calls=[];
+ const dispatch=async(action,args)=>{calls.push(action);return {accepted:true,result:{sessionId:args.sessionId,inputId:args.inputId,delivery:'unknown'}}};
+ let root;
+ await act(async()=>{root=create(React.createElement(MessageDelivery,{message,session,delivery:{status},localDelivery:saved?null:{commandId:'once',recoveryAllowance:grant},dispatch,retry:()=>assert.fail('Grant cannot be retried')}))});
+ assert.ok(button(root,'Check delivery'));assert.equal(button(root,'Retry'),undefined);
+ await act(async()=>button(root,'Check delivery').props.onClick());
+ assert.deepEqual(calls,['conversation.delivery']);
+ assert.match(JSON.stringify(root.toJSON()),/send a fresh message/);
+ assert.equal(button(root,'Retry original submission'),undefined);assert.equal(button(root,'Send again'),undefined);
+ await act(async()=>root.unmount());
+});

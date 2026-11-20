@@ -58,7 +58,7 @@ for(const kind of ['document','reply','allowance'])test(`composer captures desti
  assert.equal(entry.commandId,'stable-input');assert.equal(entry.sessionId,'captured-chat');assert.equal(entry.scope,scope(null,session));assert.equal(entry.expectedConfigurationRevision,7);
  assert.deepEqual(entry.expectedSource,nativeDeliverySource(session),'Source witness and Stop epoch are both frozen at submit');
  assert.equal(entry.expectedInterruptionRevision,3,'Stop epoch is captured before any draft/checkpoint/network await, not rebound on delivery');
- assert.equal(entry.text,'  Exact text\n');assert.deepEqual(entry.attachmentIds,['file']);assert.deepEqual(entry.attachments,attachments);assert.equal(entry.via,'text');
+ assert.equal(entry.text,'  Exact text\n');assert.deepEqual(entry.attachmentIds,['file']);assert.deepEqual(entry.attachments,attachments);assert.equal(entry.via,grant?'chat':'text');
  if(quoted){assert.deepEqual(entry.document,document);assert.deepEqual(entry.replyTo,{version:2,segments:document.segments})}
  else assert.deepEqual(entry.replyTo,{id:'reply-message'});
  assert.equal(entry.status,'sending');
