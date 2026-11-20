@@ -115,6 +115,8 @@ export function ConversationDetails({session,act,focused=false,open}){
   {recoverable&&<p>If this history can no longer be used, create an independent copy with readable text. Old tool calls and image payloads stay in the original; reattach images if needed. Safety stops remain in effect. Nothing runs until you send a new message.</p>}
   <div className="a-dialog-actions">
    <button type="button" className="a-soft" disabled={!!busy} onClick={copyDiagnostics}>{busy==='inspect'?'Preparing diagnostics…':'Copy diagnostics'}</button>
+   {focused&&session.failure?.code==='transition_intent_required'&&<button type="button" className="a-soft" onClick={()=>open('chat-models')}>Choose connection and model</button>}
+   {focused&&session.failure?.code==='summary_work_paused'&&<button type="button" className="a-soft" onClick={()=>open('chat-context')}>Review preparation</button>}
    {focused&&<button type="button" className="a-soft" onClick={()=>open('chat-help')}>Help &amp; diagnostics</button>}
    {recoverable&&<button type="button" className="a-soft" data-action="session.recover" disabled={!!busy||working} onClick={recover}>{busy==='recover'?'Creating recovery copy…':'Create recovery copy'}</button>}
   </div>
@@ -168,8 +170,9 @@ export function ConversationError({state,session,act}){
  return <div className="a-alert" role="alert" data-part="conversation-trouble"><div className="a-conversation-trouble-content"><span><strong>{failure?.summary||'Something needs attention.'}</strong> {exceptional?failure.guidance:requestBound?'You can send a new instruction when you’re ready.':'Your saved messages are kept. Review the details below.'}</span>
   <div className="a-conversation-trouble-actions">
   {recoverable&&<button type="button" className="a-link" data-action="session.recover" disabled={recovering||working} onClick={recover}>{recovering?'Creating recovery copy…':'Create recovery copy'}</button>}
+  {failure?.code==='summary_work_paused'&&<button type="button" className="a-link" onClick={()=>act('view.update',{patch:{panel:'chat-context'}})}>Review preparation</button>}
   {failure?.category==='authentication'&&<button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:settingsPatch('ai-connections')})}>AI connections</button>}
-  {failure?.category==='provider_selection'&&<button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{panel:'chat-models'}})}>Model &amp; tools</button>}
+  {failure?.category==='provider_selection'&&<button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{panel:'chat-models'}})}>{failure.code==='transition_intent_required'?'Choose connection and model':'Model & tools'}</button>}
   <details><summary>Details &amp; reporting</summary>
    {recoverable&&<p>A recovery copy keeps readable text, not old tool calls or image payloads. Safety stops remain; nothing is replayed.</p>}
    <div className="a-conversation-trouble-details-actions"><button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{panel:'chat-error'}})}>Technical details</button>
