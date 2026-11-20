@@ -14,6 +14,8 @@ import {Questions} from './questions';
 import {FeedbackDiagnostics,FeedbackPanel} from './feedback';
 import {settingsPatch} from './settings-navigation';
 import {RuntimeSettings} from './runtime-settings';
+import {ModelControl} from './chat-controls';
+import {RecoveryAllowance} from './recovery-allowance';
 import {ScheduleVisibilityContext} from './schedules';
 import {DesktopReadiness} from './desktop-readiness';
 import {BundleControl} from './bundle-controls';
@@ -74,7 +76,7 @@ function ErrorFeedback({state,act}){
 }
 // Keep already opened forms mounted while navigating within Chat. This preserves
 // unsaved local edits without opening or loading controls the user has not visited.
-export function ChatPages({page,state,session,act,dispatch=act,open,working,computerControls,questionReviewState}){
+export function ChatPages({page,state,session,act,dispatch=act,open,working,computerControls,questionReviewState,onRecoveryAllowance}){
  const visited=useRef(new Set());visited.current.add(page);
  const legacyTab=state.view?.runtimeDraft?.tab||'overview';
  const group=groups.find(row=>row[0]===page)||(page==='runtime'?groups.find(row=>row[3]===legacyTab)||groups[1]:null);
@@ -94,6 +96,8 @@ export function ChatPages({page,state,session,act,dispatch=act,open,working,comp
   <button type="button" className="a-link" onClick={()=>open('chat-write-files')}>Access &amp; approvals</button>
  </div>;
  return <div className="a-chat-pages">
+  {page==='chat-models'&&session.failure?.code==='transition_intent_required'&&<ModelControl state={state} session={session} act={dispatch} working={working} embedded/>}
+  {page==='chat-context'&&session.failure?.code==='summary_work_paused'&&<RecoveryAllowance key={JSON.stringify([session.id,session.failure.recordedAt,session.failure.inputId,session.interruptionRevision,session.nextMessageRevision])} state={state} session={session} act={dispatch} onApprove={onRecoveryAllowance}/>}
   {show('chat-error')&&<div hidden={page!=='chat-error'}><ConversationDetails key={session.id} session={session} act={dispatch} focused open={open}/>{page==='chat-error'&&<ErrorFeedback state={state} act={dispatch}/>}</div>}
   {show('session-details')&&<div hidden={page!=='session-details'}><Info key={session.id} session={session} state={state} act={dispatch} open={open} questionReviewState={questionReviewState}/></div>}
   {show('chat-rename')&&<div hidden={page!=='chat-rename'}><ConversationName session={session} act={dispatch} details={false}/></div>}

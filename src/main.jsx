@@ -43,6 +43,7 @@ import {homePatch} from './adaptive-work.js';
 import {SettingsExperience} from './settings-experience';
 import {instanceTitle,updateInstanceHead} from './instance-branding.js';
 import {useGuardedSettingsPanel,useGuardedSettingsSession} from './settings-drafts';
+import {allowanceScope} from './recovery-allowance';
 import {useMessageOutbox,outboxMessages,outboxMatches,ClosedDeliveryItems} from './message-outbox';
 import {checkedDelivery,deliveryRecovery,deliveryScope,deliverySourceScope,deliveryTargetMatches,nativeDeliverySource,retainedDeliveryTarget,freshRetrySource} from './pending-delivery-checks';
 import {clientId,clientUrl,attachClient,draftJournal} from './api';
@@ -712,10 +713,14 @@ function App(){
  const selectedSession=state?.sessions?.find(s=>s.id===state.selectedSessionId);
  const detail=useConversationDetail(selectedSession,()=>{stickToBottom.current=false;const pane=messagesPane.current;if(!pane)return;const top=pane.getBoundingClientRect().top,anchor=[...pane.querySelectorAll('[data-message-id]')].find(node=>node.getBoundingClientRect().bottom>top);if(anchor)historyScrollAnchor.current={sessionId:state.selectedSessionId,messageId:anchor.dataset.messageId,top:anchor.getBoundingClientRect().top}},dispatch);
  useEffect(()=>{if(detail.jumpRequest){const frame=requestAnimationFrame(()=>detail.jumpRequest.id==='latest'?chatScroll.current?.reveal():chatScroll.current?.jump(detail.jumpRequest.id));return()=>cancelAnimationFrame(frame)}},[detail.jumpRequest]);
+ const [preparation,setPreparation]=useState(null);
  const session=detail.session,view=state?.view||{},mode=view.mode||'chat',activity=sessionStatus(session),working=activity.busy;
  const externalConversation=!!(session?.externalAgent||(!session&&draftExternalAgentIds(view.newSessionDraft).length));
  const sharedConversation=isSharedExternalConversation(session)||!session&&draftExternalAgentIds(view.newSessionDraft).length>1;
  const outboxSource=deliveryScope(state,session);
+ const preparationScope=allowanceScope(session,outboxSource);
+ const granted=preparation?.scope===preparationScope?preparation:null;
+ useEffect(()=>{setPreparation(previous=>previous?.scope===preparationScope?previous:null)},[preparationScope]);
  const recipientKey=JSON.stringify([outboxSource,session?.id]);
  const recipientAgentId=recipientChoices[recipientKey]??session?.messages?.findLast(row=>row.recipientAgentId)?.recipientAgentId??externalParticipants(session)[0]?.id??'';
  const messages=useMemo(()=>outboxMessages(session?.messages||[],outbox.entries,session?.id,outboxSource),[session?.messages,outbox.entries,session?.id,outboxSource]);
@@ -929,7 +934,7 @@ function App(){
   try{
    if(!entry.sessionId){const current=await ensureSession(entry.creation);if(!outboxMatches(entry,deliveryScope(latest.current,null)))throw Object.assign(Error('The delivery target changed. The original submission remains saved.'),{accepted:false,beforePost:true});entry=outbox.update(entry.id,{sessionId:current.id,scope:deliveryScope(latest.current,current),...(entry.expectedSource===null?{expectedSource:nativeDeliverySource(current)}:{}),...(entry.expectedConfigurationRevision===null?{expectedConfigurationRevision:current.nextMessageRevision??0}:{})});}
    if(!deliveryTargetMatches(latest.current,{scope:entry.scope},entry.sessionId))throw Object.assign(Error('The original message belongs to a different source. Nothing was sent again.'),{accepted:false,beforePost:true});
-   const result=await dispatch('conversation.send',{sessionId:entry.sessionId,text:entry.text,...(entry.recipientAgentId?{recipientAgentId:entry.recipientAgentId}:{}),...(entry.expectedSource?{expectedSource:entry.expectedSource}:{}),...(entry.document?{document:entry.document}:{}),...(Number.isInteger(entry.expectedConfigurationRevision)?{expectedConfigurationRevision:entry.expectedConfigurationRevision}:{}),...(Number.isInteger(entry.expectedInterruptionRevision)?{expectedInterruptionRevision:entry.expectedInterruptionRevision}:{}),...(entry.replyTo?.id?{replyId:entry.replyTo.id}:{}),attachmentIds:entry.attachmentIds,via:entry.via,preserveDraft:true},{id:entry.commandId,feedback:false,outboxScope:entry.scope,preservePayload:true});
+   const result=await dispatch('conversation.send',{sessionId:entry.sessionId,text:entry.text,...(entry.recipientAgentId?{recipientAgentId:entry.recipientAgentId}:{}),...(entry.expectedSource?{expectedSource:entry.expectedSource}:{}),...(entry.document?{document:entry.document}:{}),...(Number.isInteger(entry.expectedConfigurationRevision)?{expectedConfigurationRevision:entry.expectedConfigurationRevision}:{}),...(Number.isInteger(entry.expectedInterruptionRevision)?{expectedInterruptionRevision:entry.expectedInterruptionRevision}:{}),...(entry.recoveryAllowance?{recoveryAllowance:entry.recoveryAllowance}:{}),...(entry.replyTo?.id?{replyId:entry.replyTo.id}:{}),attachmentIds:entry.attachmentIds,via:entry.via,preserveDraft:true},{id:entry.commandId,feedback:false,outboxScope:entry.scope,preservePayload:true});
    if(!deliveryTargetMatches(latest.current,{scope:entry.scope},entry.sessionId)){outbox.update(entry.id,{status:'unknown',error:'The source changed before acknowledgement. The original submission remains saved.'});return;}
    outbox.update(entry.id,['sending','unknown'].includes(result.delivery)?{status:'unknown',error:'Delivery has not been confirmed. Checking again will not run it twice.'}:null);
   }catch(error){
@@ -948,6 +953,7 @@ function App(){
  }
  async function retryMessage(message,text){
   const previous=outbox.current.current.find(row=>row.id===(message.localDelivery?.id||message.id));if(!previous||previous.closed||previous.status==='sending'||!deliveryTargetMatches(latest.current,{scope:previous.scope},previous.sessionId))return;
+  if(previous.recoveryAllowance){setError('Check delivery for this message. To try again, review preparation and send a fresh message.');return;}
   if(previous.document&&text!==undefined){setError('Retry this quoted message unchanged, or discard it and compose a correction.');return;}
   if(previous.status==='unknown'&&text!==undefined)return;
   if(previous.status==='unknown'&&(previous.expectedGenerationId!==undefined||previous.allowNextTurn!==undefined)){setError('This earlier submission is still uncertain and cannot be sent again here. Use Check delivery for its original receipt. The saved message was kept.');return;}
@@ -970,11 +976,13 @@ function App(){
   const recipient=externalConversation&&!sharedConversation?(session?recipientAgentId:draftExternalAgentIds(setup)[0]):null;
   if(session?.externalAgent&&!sharedConversation&&!externalParticipants(session).some(agent=>agent.id===recipient)){setError('Choose an agent in this conversation before sending.');return;}
   if(!submittedText.trim()&&!attachments.length)return;
+  if(granted&&(!submittedText.trim()||responseActive||callActive)){setError('Send a new text message after current work finishes to use the preparation allowance.');return;}
   if(detail.focused)detail.latest(false);
   chatScroll.current?.submitted(id);setError('');setQuoteNotice(notice=>quoteNoticeAfterSend(notice,session?.id));editDraft('');clearTimeout(draftTimer.current);
   const blankToken=stagedDraft.current;
-  let entry=outbox.update(id,{commandId:id,sessionId:session?.id??null,scope:deliveryScope(latest.current,session),...(!externalConversation?{expectedSource:nativeDeliverySource(session)}:{}),expectedInterruptionRevision:session?.interruptionRevision??0,expectedConfigurationRevision:session?session.nextMessageRevision??0:null,...(!session?{creation:{id:crypto.randomUUID(),setup}}:{}),...(recipient?{recipientAgentId:recipient,recipientAgentLabel:externalAgentLabel(session,recipient)}:{}),text:submittedText,...(submittedDocument?{document:submittedDocument,replyTo:{version:2,segments:submittedDocument.segments}}:state.view?.messageReply?{replyTo:state.view.messageReply}:{}),via:mode==='text'?'text':'chat',attachmentIds:attachments.map(file=>file.id),attachments,status:'sending',createdAt:Date.now()/1000});
+  let entry=outbox.update(id,{commandId:id,sessionId:session?.id??null,scope:deliveryScope(latest.current,session),...(!externalConversation?{expectedSource:nativeDeliverySource(session)}:{}),...(granted?{recoveryAllowance:{offerId:granted.offerId,additionalCalls:granted.additionalCalls}}:{}),expectedInterruptionRevision:granted?.expectedInterruptionRevision??session?.interruptionRevision??0,expectedConfigurationRevision:session?session.nextMessageRevision??0:null,...(!session?{creation:{id:crypto.randomUUID(),setup}}:{}),...(recipient?{recipientAgentId:recipient,recipientAgentLabel:externalAgentLabel(session,recipient)}:{}),text:submittedText,...(submittedDocument?{document:submittedDocument,replyTo:{version:2,segments:submittedDocument.segments}}:state.view?.messageReply?{replyTo:state.view.messageReply}:{}),via:!granted&&mode==='text'?'text':'chat',attachmentIds:attachments.map(file=>file.id),attachments,status:'sending',createdAt:Date.now()/1000});
   try{
+   if(granted)setPreparation(null);
    const clearingDraft=saveDraft(stagedDraftPayload.current,blankToken);
    // The outbox already owns this exact submitted text. A slow/ lost draft
    // receipt must not prevent delivery to an existing chat. Draft saves keep
@@ -1112,6 +1120,7 @@ function App(){
    <QuestionNotice session={session} paneRef={messagesPane}/>
    {!browsing&&<ConversationError state={state} session={session} act={act}/>}
    <ContextDegradationNotice session={browsing?null:selectedSession}/>
+   {granted&&<p role="status">Your next message can use up to {granted.additionalCalls} additional preparation {granted.additionalCalls===1?'call':'calls'}. <button type="button" className="a-link" onClick={()=>setPreparation(null)}>Cancel allowance</button></p>}
    {!session&&<ClosedDeliveryItems entries={outbox.entries} sessionId={null} scope={outboxSource} reopen={id=>outbox.update(id,{closed:false})}/>}
    <form className="a-composer a-compact-composer" data-part="composer" data-action="conversation.send" onSubmit={send}>
     {draftStorageError&&<p role="alert" className="a-upload-status">This browser could not keep a recovery copy of your draft. Keep this tab open until it is saved.</p>}
@@ -1147,7 +1156,7 @@ function App(){
     <ComposerReturnHelp id={composerReturnHelpId}/>
     <div className="a-compose-configuration">
      {session&&responseActive&&!callActive&&primaryAction.action!=='conversation.stop'&&<button type="button" className="a-compose-stop" aria-label="Stop response" data-action="conversation.stop" disabled={session.status==='stopping'||executionUnavailable} onClick={()=>act('conversation.stop',{sessionId:session.id})}>{session.status==='stopping'?'Stopping…':'Stop'}</button>}
-     <ShellSlot name="composer.actions"><ComposerOptions state={state} session={session} act={act} working={working} detail={presentation.interfaceDetail||presentation.executionDetail} recipientAgentId={recipientAgentId} onRecipientChange={id=>setRecipientChoices(current=>({...current,[recipientKey]:id}))}/></ShellSlot>
+     <ShellSlot name="composer.actions">{!(panel==='chat-models'&&session?.failure?.code==='transition_intent_required')&&<ComposerOptions state={state} session={session} act={act} working={working} detail={presentation.interfaceDetail||presentation.executionDetail} recipientAgentId={recipientAgentId} onRecipientChange={id=>setRecipientChoices(current=>({...current,[recipientKey]:id}))}/>}</ShellSlot>
     </div>
     </ComposerOwnership>
    </form>
@@ -1161,7 +1170,15 @@ function App(){
   {panel&&<div className={`a-overlay ${panel==='session-details'?'a-chat-info-overlay':''} ${(panel==='settings'||panel==='appearance')?'a-settings-overlay a-settings-redesign-overlay':''}`} data-part="overlay" onPointerDown={e=>{outsidePointer.current=e.target===e.currentTarget}} onClick={e=>{if(outsidePointer.current&&e.target===e.currentTarget)close()}}><section role="dialog" aria-modal="true" aria-labelledby="panel-title" className={`a-dialog ${panel==='appearance'||panel==='agent'||panel==='runtime'||panel==='coordination'||panel==='automation'||Object.hasOwn(chatPageTitles,panel)||panel==='settings'?'wide':''}`} data-part="dialog"><div className="a-dialog-head"><h2 id="panel-title">{{appearance:'Settings',agent:'What the agent sees',settings:'Settings',activity:'Ready for you',automation:'Automation',feedback:'Send feedback',worker:'Give it a worker lane','delete-session':'Delete chat?',runtime:'Advanced',...chatPageTitles,'subagent-history':'Subagent history',coordination:'Chat coordination review'}[panel]||panel}</h2>{(panel==='settings'||panel==='appearance')&&<div className="a-settings-header-assistance" data-settings-help/>}<button className="a-icon" data-action="view.update" aria-label="Close panel" onClick={close}><X/></button></div>
    <ArchiveNotice value={archiveValue}/>
    {error&&<div className="a-alert" role="alert"><span>{error}</span><button type="button" aria-label="Dismiss error" onClick={()=>setError('')}><X/></button></div>}
-   {(Object.hasOwn(chatPageTitles,panel)||panel==='runtime')&&<ChatPages key={session?.id||'draft'} page={panel} state={state} session={session} act={act} dispatch={dispatch} open={open} working={working} questionReviewState={questionReviewState} computerControls={<VoiceVisualControls sessionId={session?.id} visual={computerVisual} client={computerClient} dispatch={dispatch} onError={reportError}/>}/>}
+   {(Object.hasOwn(chatPageTitles,panel)||panel==='runtime')&&<ChatPages key={session?.id||'draft'} page={panel} state={state} session={session} act={act} dispatch={dispatch} open={open} working={working} onRecoveryAllowance={choice=>{
+    const current=latest.current,owner=current?.sessions?.find(row=>row.id===session.id);
+    if(!preparationScope||current?.selectedSessionId!==session.id||
+       allowanceScope(owner,deliveryScope(current,owner))!==preparationScope||
+       choice.expectedInterruptionRevision!==(owner?.interruptionRevision??0)){
+     setError('This chat changed. Check preparation again before choosing an allowance.');return;
+    }
+    setPreparation({...choice,scope:preparationScope});close();
+   }} questionReviewState={questionReviewState} computerControls={<VoiceVisualControls sessionId={session?.id} visual={computerVisual} client={computerClient} dispatch={dispatch} onError={reportError}/>}/>}
    {panel==='session-details'&&<ClosedDeliveryItems entries={outbox.entries} sessionId={session?.id} scope={outboxSource} reopen={id=>outbox.update(id,{closed:false})}/>}
     {panel==='coordination'&&<CoordinationPanel key={session?.id} dispatch={dispatch} sessionId={session?.id} session={session} onOpenChat={id=>selectWorkspaceChat(dispatch,id,target=>latest.current?.selectedSessionId===target&&latest.current?.view?.panel==='coordination')}/>}
    {panel==='subagent-history'&&<SubagentHistory state={state} session={session} act={act}/>}

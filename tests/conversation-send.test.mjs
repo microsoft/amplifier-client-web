@@ -7,7 +7,7 @@ import {nativeDeliverySource,freshRetrySource,deliveryScope,deliveryTargetMatche
 import {draftExternalAgentIds,externalParticipants,externalAgentLabel} from '../src/external-participants.js';
 const source=readFileSync(new URL('../src/main.jsx',import.meta.url),'utf8');
 function callback(name,end,bindings){
- bindings={nativeDeliverySource,freshRetrySource,draftExternalAgentIds,externalParticipants,externalAgentLabel,sharedConversation:false,deliveryTargetMatches:(state,target,id)=>deliveryTargetMatches({...state,client:{hostInstanceId:'host'}},target,id),...bindings};
+ bindings={granted:null,nativeDeliverySource,freshRetrySource,draftExternalAgentIds,externalParticipants,externalAgentLabel,sharedConversation:false,deliveryTargetMatches:(state,target,id)=>deliveryTargetMatches({...state,client:{hostInstanceId:'host'}},target,id),...bindings};
  const start=source.indexOf(` async function ${name}(`),stop=source.indexOf(end,start);
  assert.ok(start>=0&&stop>start,`Find the maintained ${name} callback`);
  return new Function(...Object.keys(bindings),`${source.slice(start,stop)};return ${name};`)(...Object.values(bindings));
@@ -39,21 +39,26 @@ const matches=(entry,value)=>entry.scope===value;
 const session={id:'captured-chat',nextMessageRevision:7,interruptionRevision:3,collaborationGeneration:{id:'stale-projection',terminal:false}};
 const document={version:2,segments:[{type:'text',text:'Commentary'},{type:'quote',text:'Captured excerpt',source:{sessionId:'source-chat',messageId:'source-message'}}]};
 
-for(const quoted of [false,true])test(`composer captures destination/config/text/${quoted?'document':'reply'}/attachments without routing flags`,async()=>{
+for(const kind of ['document','reply','allowance'])test(`composer captures destination/config/text/${kind}/attachments without routing flags`,async()=>{
+ const quoted=kind==='document',cleared=[];
+ const grant=kind==='allowance'?{offerId:'one-time-offer',additionalCalls:2,expectedInterruptionRevision:3}:null;
  const box=outbox(),delivered=[],attachments=[{id:'file',name:'reference.txt'}],state={view:{messageReply:{id:'reply-message'}},sessions:[session],selectedSessionId:session.id};
  const latest={current:state};
  const send=callback('send','\n async function submitWorker(',{
   dictationControl:{current:null},referenceDraftLock:{current:false},draft:'  Exact text\n',availableAttachments:attachments,uploadCount:{current:0},busy:false,newChatPending:false,historyPending:false,executionUnavailable:false,
+  granted:grant,responseActive:false,callActive:false,setPreparation:value=>cleared.push(value),
   preserveOtherDraft(){},session,quoteApi:{current:{document:()=>quoted?document:null}},crypto:{randomUUID:()=> 'stable-input'},externalConversation:false,detail:{focused:false},chatScroll:{current:null},setError(){},setQuoteNotice(){},notice:undefined,quoteNoticeAfterSend(){},editDraft(){},clearTimeout(){},draftTimer:{current:null},stagedDraft:{current:'draft-token'},outbox:box,deliveryScope:scope,latest,state,mode:'text',Date,stagedDraftPayload:{current:{}},
   saveDraft:async()=>{latest.current={...state,selectedSessionId:'other-chat',sessions:[{...session,nextMessageRevision:99,interruptionRevision:4,collaborationGeneration:{id:'newer-projection',terminal:false}},{id:'other-chat'}]};},
   reportError(error){throw error},outboxMatches:matches,ensureSession(){throw Error('Existing target must not be recreated')},deliver:async entry=>delivered.push(entry),
  });
  await send({preventDefault(){}});
  assert.equal(delivered.length,1);const entry=delivered[0];ordinary(entry);
+ assert.deepEqual(cleared,grant?[null]:[]);
+ assert.deepEqual(entry.recoveryAllowance,grant?{offerId:grant.offerId,additionalCalls:2}:undefined);
  assert.equal(entry.commandId,'stable-input');assert.equal(entry.sessionId,'captured-chat');assert.equal(entry.scope,scope(null,session));assert.equal(entry.expectedConfigurationRevision,7);
  assert.deepEqual(entry.expectedSource,nativeDeliverySource(session),'Source witness and Stop epoch are both frozen at submit');
  assert.equal(entry.expectedInterruptionRevision,3,'Stop epoch is captured before any draft/checkpoint/network await, not rebound on delivery');
- assert.equal(entry.text,'  Exact text\n');assert.deepEqual(entry.attachmentIds,['file']);assert.deepEqual(entry.attachments,attachments);assert.equal(entry.via,'text');
+ assert.equal(entry.text,'  Exact text\n');assert.deepEqual(entry.attachmentIds,['file']);assert.deepEqual(entry.attachments,attachments);assert.equal(entry.via,grant?'chat':'text');
  if(quoted){assert.deepEqual(entry.document,document);assert.deepEqual(entry.replyTo,{version:2,segments:document.segments})}
  else assert.deepEqual(entry.replyTo,{id:'reply-message'});
  assert.equal(entry.status,'sending');
@@ -163,4 +168,13 @@ test('failed shared draft retry preserves the original roster and remains extern
  const retry=callback('retryMessage','\n async function send(',{outbox:box,latest:{current:{sessions:[]}},crypto:{randomUUID:()=> 'fresh-id'},creationSetup:()=>({workspace:'/other',externalAgentId:'replacement'}),setError(error){throw Error(error)},deliver:async value=>sent.push(value)});
  await retry({localDelivery:{id:'local'}});
  assert.equal(sent.length,1);assert.deepEqual(sent[0].creation.setup,creation.setup);assert.equal(Object.hasOwn(sent[0],'expectedSource'),false);assert.equal(Object.hasOwn(sent[0],'recipientAgentId'),false);ordinary(sent[0]);
+});
+
+for(const status of ['failed','unknown'])test(`a ${status} preparation-allowance submission cannot use retry`,async()=>{
+ const entry={id:'local',commandId:'first',sessionId:session.id,scope:scope(null,session),text:'original',attachmentIds:[],status,recoveryAllowance:{offerId:'one-time-offer',additionalCalls:1}};
+ const box=outbox(entry),before=structuredClone(box.current.current),errors=[];
+ const retry=callback('retryMessage','\n async function send(',{outbox:box,latest:{current:{sessions:[session]}},setError:message=>errors.push(message),deliver(){throw Error('Unexpected retry')}});
+ await retry({localDelivery:{id:'local'}});
+ assert.deepEqual(box.current.current,before);
+ assert.match(errors[0],/review preparation and send a fresh message/i);
 });
