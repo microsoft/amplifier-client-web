@@ -1118,7 +1118,7 @@ function App(){
    <ApprovalPanel key={session?.id} session={session} act={act} dispatch={dispatch} canvasDraft={state.view?.canvasDraft} freshnessKey={`${connected}:${session?.interruptionRevision}:${session?.executionRevision}`}/>
    {(!presentation.planPlacement||presentation.planPlacement==='composer'||presentation.planPlacement==='active'&&responseActive)&&!historyDisplayPending&&<ChatPlan session={session} state={state} act={act}/> }
    <QuestionNotice session={session} paneRef={messagesPane}/>
-   {!browsing&&<ConversationError state={state} session={session} act={act}/>}
+   {!browsing&&<ConversationError state={state} session={session} act={act} onWriteMessage={()=>composerRef.current?.focus()}/>}
    <ContextDegradationNotice session={browsing?null:selectedSession}/>
    {granted&&<p role="status">Your next message can use up to {granted.additionalCalls} additional preparation {granted.additionalCalls===1?'call':'calls'}. <button type="button" className="a-link" onClick={()=>setPreparation(null)}>Cancel allowance</button></p>}
    {!session&&<ClosedDeliveryItems entries={outbox.entries} sessionId={null} scope={outboxSource} reopen={id=>outbox.update(id,{closed:false})}/>}

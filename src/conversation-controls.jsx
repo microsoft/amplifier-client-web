@@ -143,7 +143,7 @@ export function ContextDegradationNotice({session}){
  </div>;
 }
 
-export function ConversationError({state,session,act}){
+export function ConversationError({state,session,act,onWriteMessage}){
  const [recovering,setRecovering]=useState(false),[error,setError]=useState('');
  const inFlight=useRef(false);
  useEffect(()=>setError(''),[session?.id,session?.failure?.recordedAt]);
@@ -158,7 +158,8 @@ export function ConversationError({state,session,act}){
   try{const response=await act('session.recover',{id:session.id});if(response?.accepted!==true)throw Error('Could not create the recovery copy.')}
   catch(error){setError(error.message)}finally{inFlight.current=false;setRecovering(false)}
  }
- const exceptional=['context_limit','context_compaction','invalid_image','computer_capture_stop','authentication','provider_selection','bundle_configuration','runtime_dependency','persistence'].includes(failure?.category);
+ const exceptional=['context_limit','context_compaction','context_measurement','invalid_image','computer_capture_stop','authentication','provider_selection','bundle_configuration','runtime_dependency','persistence'].includes(failure?.category);
+ const canWriteMessage=failure?.category==='context_measurement'&&failure.retryable===true&&typeof onWriteMessage==='function';
  const requestBound=!!(failure?.generationId||failure?.inputId||failure?.inputIds?.length);
  const inputId=failure?.inputId||failure?.inputIds?.[0];
  const failureContext=inputId&&failure?.generationId?{sessionId:session.id,inputId,generationId:failure.generationId}:null;
@@ -167,10 +168,11 @@ export function ConversationError({state,session,act}){
   inFlight.current=true;setError('');
   try{await openProblemReport(state,act,failureContext)}catch(error){setError(error.message)}finally{inFlight.current=false}
  }
- return <div className="a-alert" role="alert" data-part="conversation-trouble"><div className="a-conversation-trouble-content"><span><strong>{failure?.summary||'Something needs attention.'}</strong> {exceptional?failure.guidance:requestBound?'You can send a new instruction when you’re ready.':'Your saved messages are kept. Review the details below.'}</span>
+ return <div className="a-alert" role="alert" data-part="conversation-trouble"><div className="a-conversation-trouble-content"><span><strong>{failure?.summary||'Something needs attention.'}</strong> {exceptional&&failure.guidance?failure.guidance:requestBound?'You can send a new instruction when you’re ready.':'Your saved messages are kept. Review the details below.'}</span>
   <div className="a-conversation-trouble-actions">
   {recoverable&&<button type="button" className="a-link" data-action="session.recover" disabled={recovering||working} onClick={recover}>{recovering?'Creating recovery copy…':'Create recovery copy'}</button>}
   {failure?.code==='summary_work_paused'&&<button type="button" className="a-link" onClick={()=>act('view.update',{patch:{panel:'chat-context'}})}>Review preparation</button>}
+  {canWriteMessage&&<button type="button" className="a-link" disabled={working} onClick={onWriteMessage}>Write a new message</button>}
   {failure?.category==='authentication'&&<button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:settingsPatch('ai-connections')})}>AI connections</button>}
   {failure?.category==='provider_selection'&&<button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{panel:'chat-models'}})}>{failure.code==='transition_intent_required'?'Choose connection and model':'Model & tools'}</button>}
   <details><summary>Details &amp; reporting</summary>
