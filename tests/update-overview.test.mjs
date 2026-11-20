@@ -230,7 +230,7 @@ test('the host install projection does not bypass existing busy, pending or bloc
   {phase:'checking'},{phase:'staging'},{phase:'validating'},{phase:'activating'},
   {pendingApp:{}},{pendingRelease:'candidate'},{pendingSmartTools:[{previous:'tool'}]},
   {pendingReplacement:{}},{pendingRestart:{requestStatus:'uncertain'}},
-  {sequence:{stage:'other',nextStage:'other'}},
+  {sequence:{stage:'other',nextStage:'other'},currentStatus:{...retainedOnly.currentStatus,actionRequired:false}},
  ]){
   const result=updateOverview({...retainedOnly,...patch});
   assert.equal(result.installable,true);assert.equal(result.busy,true,JSON.stringify(patch));
@@ -386,4 +386,20 @@ test('failed optional tool stays actionable without holding independent app or c
  assert.equal(hot.title,'Finishing your update');assert.equal(hot.waiting,false);
  const mixed=updateOverview({phase:'staged',pendingSmartTools:[...pendingSmartTools,{previous:'healthy'}]});
  assert.equal(mixed.toolResultsIndependent,false);assert.equal(mixed.waiting,true);
+});
+
+test('action-required interrupted preparation ignores stale continuation intent without mutating host state',()=>{
+ for(const phase of ['checked','interrupted']){
+  for(const action of ['check','install','diagnostics']){
+   const updates={phase,initialPreparation:true,sequence:{stage:'included',nextStage:'other',install:true},
+    currentStatus:{status:'action-required',actionRequired:true,action,
+     title:'Preparation needs attention',detail:'Preparation was interrupted. Review the issue before trying again.'}};
+   const before=structuredClone(updates),result=updateOverview(updates);
+   assert.equal(result.busy,false);assert.equal(result.processing,false);
+   assert.equal(result.failed,true);assert.equal(result.title,updates.currentStatus.title);
+   assert.equal(result.detail,updates.currentStatus.detail);
+   assert.equal(result.installable,action==='install');
+   assert.deepEqual(updates,before);
+  }
+ }
 });
