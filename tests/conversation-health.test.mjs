@@ -200,6 +200,27 @@ test('a late diagnostic response cannot replace the report for a newer failure',
 });
 
 
+test('retryable count failure shows its guidance and focuses the composer without sending',async()=>{
+ const actions=[];
+ let focused=0,root;
+ const failure={category:'context_measurement',generationId:'count-turn',retryable:true,
+  summary:'Could not check conversation size.',guidance:'The counting service is temporarily unavailable.'};
+ const render=(changes={})=>React.createElement(ConversationError,{state:{},session:{id:'chat',status:'error',failure:{...failure,...changes}},
+  act:(...args)=>actions.push(args),onWriteMessage:()=>{focused++}});
+ try{
+  await renderAct(async()=>{root=create(render())});
+  assert.match(JSON.stringify(root.toJSON()),/The counting service is temporarily unavailable/);
+  assert.doesNotMatch(JSON.stringify(root.toJSON()),/You can send a new instruction/);
+  const button=root.root.findAllByType('button').find(node=>node.children.includes('Write a new message'));
+  assert.ok(button);
+  await renderAct(async()=>button.props.onClick());
+  assert.equal(focused,1);
+  assert.deepEqual(actions,[]);
+  await renderAct(async()=>root.update(render({retryable:false})));
+  assert.doesNotMatch(JSON.stringify(root.toJSON()),/Write a new message/);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+
 for(const category of ['unknown','worker_startup','worker_exit','worker_communication','context_measurement']){
  test(`${category} banner only opens details or dismisses; fresh follow-up stays in the composer`,async()=>{
   const calls=[],item={id:'session:chat',fingerprint:'recorded-failure',read:false};
