@@ -19,3 +19,9 @@ export function parsePlan(text){
  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Configuration must be a JSON object.');
  return value;
 }
+
+export function enabledToolModulesChanged(current,draft){
+ const names=plan=>(Array.isArray(plan?.tools)?plan.tools:[]).filter(tool=>tool?.enabled!==false&&typeof tool?.module==='string').map(tool=>tool.module);
+ const before=new Set(names(current)),after=new Set(names(draft));
+ return before.size!==after.size||[...before].some(name=>!after.has(name));
+}

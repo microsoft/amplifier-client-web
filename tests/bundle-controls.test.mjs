@@ -380,3 +380,23 @@ test('a detailed bundle draft retains its revision when another client changes s
   assert.equal(calls.filter(c=>c.name==='conversation.configure').length,1);
  }finally{await renderAct(async()=>root?.unmount())}
 });
+
+test('only a known change to the tools in a large request marks a bundle choice',async()=>{
+ const impact={inputTokens:62000,source:{instance:'one',model:'a'},toolChangesInvalidatePrefix:true};
+ const preview={bundle:'other',previewId:'receipt',modelCompatible:true,changes:{tools:{added:['tool-lookup'],removed:[]}}};
+ let session={id:'chat',bundle:'work',nextMessageImpact:impact,bundlePreview:preview};
+ const state={view:{composerBundle:{open:true,sessionId:'chat',bundle:'other'}},registeredBundles:[{value:'other'},{value:'work'}]};
+ let root;const calls=[];
+ const render=()=>React.createElement(BundleControl,{state,session,act:record(calls),working:false});
+ const notices=()=>root.root.findAllByProps({'data-next-message-impact':'tools'});
+ try{
+  await renderAct(async()=>root=create(render()));
+  assert.equal(notices().length,1);
+  for(const patch of [{bundlePreview:{...preview,bundle:'different'}},{bundlePreview:{...preview,changes:{tools:{}}}},{bundleChange:{phase:'stale'}},{nextMessageImpact:undefined}]){
+   session={id:'chat',bundle:'work',nextMessageImpact:impact,bundlePreview:preview,...patch};
+   await renderAct(async()=>root.update(render()));
+   assert.equal(notices().length,0);
+  }
+  assert.deepEqual(calls.filter(({name})=>name!=='view.update').map(call=>call.name),['bundles.list']);
+ }finally{await renderAct(async()=>root?.unmount())}
+});

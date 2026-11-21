@@ -7,6 +7,7 @@ import React,{useEffect,useState,useRef,useId} from 'react';
 import {ChevronDown,X,Paperclip,Download} from 'lucide-react';
 import {providerFields} from './setup-data';
 import {ModelSelect} from './model-select';
+import {NextMessageImpact,bundleToolsMayChange,selectionImpact} from './next-message-impact';
 import {newChatSetup,draftDefaults} from './new-chat';
 import {useComposerPopover} from './composer-popover';
 import {providerOptions} from './provider-options';
@@ -191,9 +192,15 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
  },[open,sessionId,configurationRevision,nextMessageRevision,unavailable,missingCatalogs]);
  const failure=error||session?.nextMessageError||(isDraft?(discovery.error||defaults.error):(rosterIsCurrent&&catalog?.error));
  const delayed=isDraft&&checkingDefaults&&discovery.delayed;
+ const impact=session?.nextMessageImpact;
+ const selectedImpact=selectionImpact(impact,draft.instance,draft.model);
+ const savedChoice=session?.pendingModelSelection;
+ const savedModelImpact=selectionImpact(impact,savedChoice?.instance,savedChoice?.model);
+ const savedImpact=savedModelImpact||(bundleToolsMayChange(session,pendingBundle?.bundle)?'tools':null);
  const renderPanel=embedded?content=>content:renderPopover;
  return <div className="a-model-control" ref={popover}>
   {!embedded&&<button type="button" className="a-model-trigger" aria-label="Model and reasoning settings" aria-haspopup={compact?'dialog':undefined} disabled={unavailable} aria-expanded={!!open} aria-busy={checkingDefaults||undefined} title={checkingDefaults?`${modelLabel} · Checking bundle settings…`:modelLabel} data-action="view.update" onClick={show}><span>{!effective.model&&(delayed||failure)?'Model settings unavailable':compact?modelAndEffort:modelLabel}</span>{(session?.pendingModelSelection||pendingBundle)&&<small>Next message</small>}<ChevronDown/></button>}
+  {!open&&<NextMessageImpact impact={impact} kind={savedImpact}/>}
   {open&&renderPanel(<section ref={panelRef} className={embedded?"a-embedded-model":`a-model-popover a-compact-popover${compact?' a-composer-options-panel':''}`} style={embedded?undefined:position} role="dialog" aria-label="Model for this chat" aria-describedby={`${descriptionId}-heading`}>
    <div className="a-settings-row a-composer-options-heading"><strong id={`${descriptionId}-heading`}>Model for this chat</strong>{!embedded&&<button type="button" className="a-icon" aria-label={compact?'Close chat options':'Close model settings'} data-action="view.update" onClick={close}><X/></button>}</div>
    <p className="a-caption">{session?.pendingModelSelection||pendingBundle?'Next message: ':'Selected: '}{modelLabel}</p>
@@ -201,13 +208,14 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
    {binding?.eligible===false&&<p role="status">{binding.reason} The existing selection is preserved.</p>}
    <div data-composer-page="provider">
    <label htmlFor="chat-provider">Connection{!isDraft&&catalog?.connectionScope&&<small> · {catalog.connectionScope} settings</small>}</label><select id="chat-provider" value={selected?draft.instance:''} data-action={isDraft?'view.update':'conversation.configure'} disabled={blocked} onChange={e=>chooseProvider(e.target.value)}>
-    <option value="" disabled>{providers.length?'Choose a connection':noProviders?'No connections configured':failure||delayed?'Connections unavailable':'Loading connections…'}</option>{options.map(row=><option key={row.id} value={row.id} disabled={providers.find(p=>p.id===row.id)?.config?.chat_enabled===false}>{row.label}</option>)}
+    <option value="" disabled>{providers.length?'Choose a connection':noProviders?'No connections configured':failure||delayed?'Connections unavailable':'Loading connections…'}</option>{options.map(row=><option key={row.id} value={row.id} disabled={providers.find(p=>p.id===row.id)?.config?.chat_enabled===false}>{row.label}{selectionImpact(impact,row.id)&&' · May cost more'}</option>)}
    </select>
    {draft.instance&&!selected&&<small>Saved connection {draft.instance} is not available in this configuration scope.</small>}
    </div>
    <div data-composer-page="model">
-   <label htmlFor="chat-model">Model</label>{binding?.eligible===false?<><input id="chat-model" aria-label="Conversation model" value={draft.model||''} disabled readOnly/><p className="a-caption">The configured connection’s model list cannot be used for this chat until its saved connection settings match. This does not mean the model is unavailable. Choose a different connection above or review the saved configuration.</p></>:<ModelSelect key={draft.instance} id="chat-model" label="Conversation model" value={draft.model||''} entry={entry} state={state} act={act} disabled={blocked||!selected} onChange={model=>{touched.current=true;edit({model,...(model!==draft.model?{effort:''}:{})})}} onCommit={model=>apply({model,effort:draft.model===model?draft.effort:''})}/>}
+   <label htmlFor="chat-model">Model</label>{binding?.eligible===false?<><input id="chat-model" aria-label="Conversation model" value={draft.model||''} disabled readOnly/><p className="a-caption">The configured connection’s model list cannot be used for this chat until its saved connection settings match. This does not mean the model is unavailable. Choose a different connection above or review the saved configuration.</p></>:<ModelSelect key={draft.instance} id="chat-model" label="Conversation model" mayCostMore={id=>selectionImpact(impact,draft.instance,id)} value={draft.model||''} entry={entry} state={state} act={act} disabled={blocked||!selected} onChange={model=>{touched.current=true;edit({model,...(model!==draft.model?{effort:''}:{})})}} onCommit={model=>apply({model,effort:draft.model===model?draft.effort:''})}/>}
    </div>
+   {selectedImpact&&<NextMessageImpact impact={impact} kind={selectedImpact}/>}
    <div data-composer-page="effort">
    {choices.length>0?<><label htmlFor="chat-effort">Reasoning effort <strong>{effortLabel}</strong></label>{draft.effort&&!choices.includes(draft.effort)&&<small>Saved effort {effort} is not advertised for this model. Choose an available effort to replace it.</small>}<input id="chat-effort" type="range" min={defaultPosition?-1:0} max={choices.length-1} step="1" value={sliderPosition} aria-valuetext={draft.effort&&!choices.includes(draft.effort)?'Choose effort; saved value is not advertised':effortLabel} disabled={blocked||!draft.model||binding?.eligible===false} data-action={isDraft?'view.update':'conversation.configure'} onChange={previewEffort} onPointerUp={commitEffort} onKeyUp={commitEffort} onBlur={commitEffort}/><div className="a-effort-labels"><span>{defaultPosition?'Provider default':choices[0]}</span><span>{choices.at(-1)}</span></div></>:<small>{binding?.eligible===false?'Saved connection settings need review before changing reasoning effort.':entry?.metadata||selected?.configSchema||selected?.info?.config_fields?'Reasoning effort is not configurable for this model.':failure||delayed||entry?.phase==='error'?'Model capabilities unavailable.':'Loading model capabilities…'}{effort&&` Saved effort: ${effort}.`}</small>}
    </div>
