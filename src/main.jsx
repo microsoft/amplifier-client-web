@@ -1098,7 +1098,7 @@ function App(){
  const settingsState={...state,view:{...state?.view,settingsCanvas:canvasSettingsVisible}};
  const settingsAct=(name,args={},meta={})=>act(name,name==='view.update'&&canvasSettingsVisible&&args.patch?.panel==='settings'?{...args,patch:{...args.patch,panel:null,settingsCanvas:true}}:args,meta);
  const suggestionOwner=suggestionScope(state);
- const suggestionsSupported=useMemo(()=>!!suggestionOwner&&suggestionOwner===hostCatalog?.scope&&supportsTranscriptSuggestions(hostCatalog.rows),[hostCatalog,suggestionOwner]);
+ const suggestionsSupported=useMemo(()=>suggestionOwner&&suggestionOwner===hostCatalog?.scope?supportsTranscriptSuggestions(hostCatalog.rows):null,[hostCatalog,suggestionOwner]);
  const settingsSurface=<SettingsExperience suggestionsSupported={suggestionsSupported} state={settingsState} session={settingsSession} act={settingsAct} dispatch={dispatch} open={open} close={()=>canvasSettingsVisible?act('canvas.tabClose',{id:state.canvas.id}):dismissPanel()} navigationRef={settingsNavigation} instanceAccent={instanceAccent.rendered} appearance={<AppearanceSettings state={state} appearance={appearance} act={dispatch} editor={appearanceEditor} previewOwner={appearancePreviewOwner} preferenceStatus={appearancePreferenceStatus} onPreferenceChange={updateAppearancePreference} onPreferenceSelect={selectAppearanceProfile}/>}/>;
  const browsing=workSurface(state)!=='chat';
  // Navigation/work-surface departure is handled by the suggestion owner so it

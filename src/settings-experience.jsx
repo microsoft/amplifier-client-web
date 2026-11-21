@@ -10,12 +10,13 @@ import {TestingSettings} from './testing-settings';
 import {createPortal} from 'react-dom';
 import {SetupJourney,AssistedSettingsButton} from './setup-journey';
 import {ShellSlot,useShellContext} from './shell/runtime';
-import React,{useEffect,useLayoutEffect,useRef,useState} from 'react';
+import React,{useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {SlidersHorizontal,Palette,AudioLines,Bell,Network,Layers,Plug,Download,Activity,Archive,Settings,ArrowLeft,X} from 'lucide-react';
 import {settingsSections,settingsLocation,settingsUnread,settingsTitle,settingsParent} from './settings-navigation';
 import {AIConnections} from './ai-connections';
 import {PrivacySettings,AdvancedSettings} from './settings-everyday';
 import {SuggestionSettings,SuggestionAdvancedSettings} from './suggestion-model-settings.jsx';
+import {suggestionScope} from './transcript-suggestion.js';
 import {ComposerReturnSettings} from './composer-return-preference.jsx';
 import {SettingsPageContext} from './settings-ui';
 import {AttentionBadge,AttentionReview} from './attention';
@@ -40,7 +41,19 @@ export function SettingsExperience({state,suggestionsSupported,session,act,dispa
  useEffect(()=>{const legacy=state.view?.settingsExpanded?.find(page=>['conversation','runtime','outputs','publishing','loaded-modules','share-bundle','recall'].includes(page));if(legacy)act('view.update',{patch:{panel:'settings',settingsExpanded:[legacy]}})},[]);
  const shell=useShellContext();
  const extensions=(shell?.data?.resolvedInstances||[]).filter(item=>item.slot==='settings.section');
- const availableSections=suggestionsSupported?settingsSections:settingsSections.map(section=>section.id==='chat-input'?{...section,pages:section.pages.filter(([id])=>id!=='suggestion-advanced')}:section);
+ const owner=suggestionScope(state),lastSupported=useRef(null),confirmed=useRef(null);
+ const keepSuggestionEditors=suggestionsSupported===true||!!owner&&suggestionsSupported===null&&lastSupported.current===owner;
+ useLayoutEffect(()=>{
+  if(suggestionsSupported!==null||lastSupported.current!==owner)lastSupported.current=suggestionsSupported?owner:null;
+  confirmed.current=suggestionsSupported?owner:null;
+  return()=>{confirmed.current=null};
+ },[owner,suggestionsSupported]);
+ const run=dispatch||act;
+ const suggestionAct=useCallback((name,args,meta={})=>{
+  const isCurrent=()=>!!owner&&confirmed.current===owner&&(!meta.suggestionIsCurrent||meta.suggestionIsCurrent());
+  return isCurrent()?run(name,args,{...meta,suggestionIsCurrent:isCurrent}):Promise.resolve({accepted:false});
+ },[owner,run]);
+ const availableSections=keepSuggestionEditors?settingsSections:settingsSections.map(section=>section.id==='chat-input'?{...section,pages:section.pages.filter(([id])=>id!=='suggestion-advanced')}:section);
  const sections=availableSections.map(section=>section.id==='advanced'?{...section,pages:[...section.pages,...extensions.map(item=>['shell:'+item.id,shell.data.packages[item.package]?.manifest?.label||item.id])]}:section);
  const {page,section}=settingsLocation(state.view,sections),heading=useRef(null),body=useRef(null),root=useRef(null),[footer,setFooter]=useState(null),[headerTarget,setHeaderTarget]=useState(null);
  useLayoutEffect(()=>{setHeaderTarget(root.current?.closest('.a-dialog')?.querySelector('[data-settings-help]')||null)},[]);
@@ -69,6 +82,13 @@ export function SettingsExperience({state,suggestionsSupported,session,act,dispa
  // recovery owners for the same operation when switching settings pages.
  const optimizePage=useRef(null),optimizeVisible=!index&&['storage','repair'].includes(page);
  if(optimizeVisible)optimizePage.current=page;
+ function suggestionEditor(Editor){
+  if(!keepSuggestionEditors)return null;
+  return <fieldset key={owner} className="a-suggestion-settings-fieldset" disabled={!suggestionsSupported}>
+   {!suggestionsSupported&&<p role="status">Reconnecting to suggestion settings…</p>}
+   <Editor state={state} act={suggestionAct} navigate={navigate} verified={suggestionsSupported===true}/>
+  </fieldset>;
+ }
  function renderPage(page){
  let content;
  if(['overview','ai-connections','providers','routing','registries'].includes(page))content=<ConfigurationBoundary state={state} act={dispatch||act}>{config=>['overview','ai-connections'].includes(page)?<AIConnections {...config} navigate={navigate} onReturnToChat={navigation.dismiss}/>:page==='providers'?<ProviderSettings {...config} navigate={navigate}/>:page==='routing'?<RoutingSettings {...config}/>:<RegistrySettings {...config}/>}</ConfigurationBoundary>;
@@ -76,8 +96,8 @@ export function SettingsExperience({state,suggestionsSupported,session,act,dispa
  else if(page==='testing')content=<TestingSettings act={dispatch||act} navigate={navigate}/>;
  else if(page==='access-approvals')content=<AccessMode globalOnly act={dispatch||act}/>;
  else if(page==='privacy')content=<PrivacySettings suggestionsSupported={suggestionsSupported} state={state} navigate={navigate}/>;
- else if(page==='chat-input')content=<>{suggestionsSupported&&<SuggestionSettings state={state} act={dispatch||act} navigate={navigate}/>}<ComposerReturnSettings/></>;
- else if(page==='suggestion-advanced')content=<SuggestionAdvancedSettings state={state} act={dispatch||act} navigate={navigate}/>;
+ else if(page==='chat-input')content=<>{suggestionEditor(SuggestionSettings)}<ComposerReturnSettings/></>;
+ else if(page==='suggestion-advanced')content=suggestionEditor(SuggestionAdvancedSettings);
  else if(page==='model-capacity')content=<ModelCapacitySettings act={dispatch||act} navigate={navigate}/>;
  else if(page==='external-agents')content=<ExternalAgentSettings act={dispatch||act} navigate={navigate}/>;
  else if(page==='advanced')content=<AdvancedSettings suggestionsSupported={suggestionsSupported} {...props} sections={sections} navigate={navigate}/>;

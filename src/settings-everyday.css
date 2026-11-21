@@ -265,6 +265,7 @@
 /* Suggested-message and writing settings share the everyday form rhythm:
    readable measure, distinct groups and label/control proximity, not tiny type. */
 #amp-one :is(.a-suggestion-preferences,.a-suggestion-advanced,.a-writing-settings){max-width:46rem;min-width:0}
+#amp-one .a-suggestion-settings-fieldset{border:0;padding:0;margin:0;min-width:0}
 #amp-one :is(.a-suggestion-preferences,.a-suggestion-form,.a-writing-settings) h4{margin:0 0 8px}
 #amp-one :is(.a-suggestion-preferences,.a-suggestion-form,.a-writing-settings) p{margin:6px 0 12px;line-height:1.5;overflow-wrap:anywhere}
 #amp-one .a-suggestion-preferences>.a-settings-row{margin:0 0 8px;gap:24px}
