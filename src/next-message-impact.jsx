@@ -1,11 +1,18 @@
 import React from 'react';
 
-// The host includes this receipt only for a known large foreground request.
+// The host supplies previously measured foreground or native-checkpoint input.
 // The picker can compare drafts against it without counting or preparing history.
-export function selectionMayCostMore(impact, instance, model) {
-  if (!Number.isSafeInteger(impact?.inputTokens) || impact.inputTokens <= 0 || !impact.source?.instance || !instance) return false;
-  if (instance !== impact.source.instance) return Array.isArray(impact.coldConnections) && impact.coldConnections.includes(instance);
-  return impact.coldModels === true && !!model && !!impact.source.model && model !== impact.source.model;
+const measured = tokens => Number.isSafeInteger(tokens) && tokens > 0;
+
+export function selectionImpact(impact, instance, model) {
+  if (!impact?.source?.instance || !instance) return null;
+  if (instance !== impact.source.instance) {
+    if (!Array.isArray(impact.coldConnections) || !impact.coldConnections.includes(instance)) return null;
+    if (measured(impact.portableHistoryTokens)) return 'handoff';
+    return measured(impact.inputTokens) ? 'selection' : null;
+  }
+  return measured(impact.inputTokens) && impact.coldModels === true && model && impact.source.model && model !== impact.source.model
+    ? 'selection' : null;
 }
 
 export function bundleToolsMayChange(session, bundle) {
@@ -17,7 +24,13 @@ export function bundleToolsMayChange(session, bundle) {
 }
 
 export function NextMessageImpact({impact, kind}) {
-  if (!kind || !Number.isSafeInteger(impact?.inputTokens) || impact.inputTokens <= 0) return null;
+  if (!kind || !impact) return null;
+  if (kind === 'handoff' && measured(impact.portableHistoryTokens)) {
+    return <p className="a-caption" data-next-message-impact="handoff">
+      Earlier history was measured at {impact.portableHistoryTokens.toLocaleString()} tokens. Switching providers may need to read or summarize it again on your next message, which can cost more.
+    </p>;
+  }
+  if (!measured(impact.inputTokens)) return null;
   const explanation = {
     selection: 'This choice may need to read the chat history again, increasing time and cost.',
     tools: 'Changing these tools may require reading the chat history again, increasing time and cost.',

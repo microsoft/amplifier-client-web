@@ -801,3 +801,25 @@ test('lowering the context limit shows a passive notice before it is applied',as
   assert.ok(calls.every(({name})=>name==='view.update'));
  }finally{await renderAct(async()=>root?.unmount())}
 });
+
+test('known large native history is disclosed for a different provider even after a small foreground request',async()=>{
+ const calls=[],source={instance:'one',model:'model'};
+ const impact={source,inputTokens:350,portableHistoryTokens:60000,coldConnections:['two']};
+ let session={id:'chat',status:'idle',selection:source,nextMessageImpact:impact};
+ const state={view:{composerModel:{open:true,sessionId:'chat',...source}},modelCatalogs:{a:{phase:'ready',models:['model','other']},b:{phase:'ready',models:['foreign']}},
+  runtimeControl:{chat:{'configuration.catalog':{configurationRevision:0,providers:[{id:'one',sharedCatalogKey:'a'},{id:'two',sharedCatalogKey:'b'}],effective:source}}}};
+ const render=()=>React.createElement(ModelControl,{state,session,act:record(calls)});
+ let root;
+ try{
+  await renderAct(async()=>root=create(render()));
+  assert.doesNotMatch(renderedText(field(root,'chat-model').findAllByType('option').find(n=>n.props.value==='other').children),/May cost more/);
+  assert.match(renderedText(field(root,'chat-provider').findAllByType('option').find(n=>n.props.value==='two').children),/May cost more/);
+  await renderAct(async()=>field(root,'chat-provider').props.onChange({target:{value:'two'}}));
+  const hint=root.root.findByProps({'data-next-message-impact':'handoff'});
+  assert.match(renderedText(hint.children),/60,000 tokens.*summarize/i);
+  assert.equal(root.root.findAllByProps({'data-next-message-impact':'selection'}).length,0);
+  await renderAct(async()=>field(root,'chat-provider').props.onChange({target:{value:'one'}}));
+  assert.equal(root.root.findAllByProps({'data-next-message-impact':'handoff'}).length,0);
+  assert.ok(calls.every(call=>call.name==='view.update'));
+ }finally{await renderAct(async()=>root?.unmount())}
+});
