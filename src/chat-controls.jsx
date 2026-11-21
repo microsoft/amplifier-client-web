@@ -203,9 +203,9 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
  // Use it only for explanatory text. Restoring still needs the host's proof.
  const hasHistory = !!lastCall || session?.messages?.some(message=>message.role==='assistant');
  const priorChoice = previous?.selection || (hasHistory && (session.runtimeReport?.effective_selection ||
-  session.selection || (lastCall?.model && {model:lastCall.model})));
+  (!savedChoice && session.selection) || (lastCall?.model && {model:lastCall.model})));
  const pendingChoice = !!(savedChoice || pendingBundle);
- const restoreOffered = pendingChoice && !!previous?.inputId && !!previous.generationId;
+ const restoreOffered = pendingChoice && !!previous?.inputId && !!previous.generationId && !previous.restorePending;
  async function restorePrevious() {
   if (!restoreOffered || blocked) return;
   setError('');

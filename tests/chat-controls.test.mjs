@@ -843,6 +843,9 @@ test('pending unmeasured model change can restore only the previous admitted set
   await renderAct(async()=>restore()[0].props.onClick());
   assert.deepEqual(calls.filter(row=>row.name==='conversation.configure'),[{name:'conversation.configure',args:{
    sessionId:'chat',expectedRevision:3,restorePreviousInputId:'admitted-input',restorePreviousGenerationId:'prior-generation'}}]);
+  session={...session,previousTurnSettings:{...prior,restorePending:true}};
+  await renderAct(async()=>root.update(render()));
+  assert.equal(restore().length,0,'A corrective pending restore is already staged');
   session={...session,previousTurnSettings:{...prior,generationId:undefined}};
   await renderAct(async()=>root.update(render()));
   assert.equal(restore().length,0);
@@ -866,7 +869,10 @@ test('older chats use known prior settings for a cost-neutral hint, including be
   await renderAct(async()=>field(root,'chat-provider').props.onChange({target:{value:'two'}}));
   assert.equal(hint().length,1);
   assert.ok(calls.every(c=>c.name==='view.update'||c.name==='runtime.control'));
-  session={...session,messages:[],pendingModelSelection:{instance:'two',model:'next'}};
+  session={...session,selection:{instance:'one',model:'planned'},pendingModelSelection:{instance:'two',model:'next'},runtimeReport:undefined};
+  await renderAct(async()=>root.update(render()));
+  assert.equal(hint().length,0,'While a change is pending, the saved selection alone cannot identify the applied model');
+  session={...session,messages:[],runtimeReport:{effective_selection:prior}};
   await renderAct(async()=>root.update(render()));
   assert.equal(hint().length,0,'A new chat has no earlier context to prepare');
   assert.equal(root.root.findAllByType('button').filter(n=>n.children.includes('Use previous settings')).length,0);
