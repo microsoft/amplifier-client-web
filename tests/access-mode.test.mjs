@@ -49,6 +49,22 @@ test('global settings works with no chat and saves app scope explicitly',async()
  await renderAct(async()=>root.unmount());
 });
 
+test('native and app access disclose OS-permitted file scope without changing access preferences',async()=>{
+ for(const globalOnly of [false,true]){
+  let root;const calls=[];
+  const act=async(action,args)=>{calls.push([action,args]);return {accepted:true,result:report('native')}};
+  try{
+   await renderAct(async()=>{root=create(React.createElement(AccessMode,{...(globalOnly?{globalOnly:true}:{session:{id:'native'}}),act}))});
+   const text=JSON.stringify(root.toJSON());
+   assert.match(text,/Supported file tools can use files outside the workspace wherever your operating system account permits/);
+   assert.match(text,/overriding configured allowed and blocked folder restrictions/);
+   assert.match(text,/Ask when needed restores those restrictions/);
+   assert.match(text,/Operating system permissions, account sign-ins and task ownership still apply/);
+   assert.deepEqual(calls,[['access.get',globalOnly?{scope:'app'}:{sessionId:'native'}]],'Disclosure is presentation only, never consent to change access');
+  }finally{await renderAct(async()=>root?.unmount())}
+ }
+});
+
 test('external access explains current-request approval separately from remembered agent policy',async()=>{
  let root;const calls=[];
  const act=async(action,args)=>{calls.push([action,args]);return {accepted:true,result:report('external')}};
@@ -59,6 +75,7 @@ test('external access explains current-request approval separately from remember
   assert.match(text,/Full access uses Allow once when offered/);
   assert.match(text,/does not save Always choices/);
   assert.doesNotMatch(text,/Permission prompts are not shown/);
+  assert.doesNotMatch(text,/Supported file tools can use files outside the workspace|overriding configured allowed and blocked folder restrictions/,'External agents retain their own tools and execution boundary');
   assert.deepEqual(calls,[['access.get',{sessionId:'external'}]],'Rendering does not enable Full access or remembered policy');
  }finally{await renderAct(async()=>root.unmount())}
 });

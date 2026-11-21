@@ -1,0 +1,14 @@
+/* The preview is a private sibling, never part of the editable document. */
+#amp-one .a-suggestion-editor{display:grid;min-width:0}
+#amp-one .a-suggestion-editor>.a-markdown-composer-host,
+#amp-one .a-suggestion-editor>.a-composer-suggestion{grid-area:1/1;min-width:0}
+#amp-one .a-suggestion-editor[data-suggestion-visible=true] .a-markdown-composer[data-empty=true]::before{content:none}
+#amp-one .a-composer-suggestion{pointer-events:none;padding:10px 2px 0;align-self:start}
+#amp-one .a-composer-suggestion-text{display:block;color:var(--a-muted);font-size:var(--a-text-lg,16px);font-style:italic;line-height:24px;overflow-wrap:anywhere;white-space:pre-wrap}
+#amp-one .a-composer-suggestion-label{display:block;color:var(--a-muted);font-size:var(--a-text-sm,13px);line-height:20px}
+#amp-one .a-composer-suggestion>button{pointer-events:auto;position:relative;min-height:44px;padding:4px 0;font-size:var(--a-text-sm,13px);color:var(--a-muted)}
+#amp-one .a-composer-suggestion kbd{font:inherit;border:1px solid var(--a-line);border-radius:4px;padding:1px 4px;margin-left:4px}
+#amp-one .a-composer-suggestion>button:focus-visible{outline:2px solid var(--a-accent);outline-offset:2px}
+@media(forced-colors:active){
+ #amp-one .a-composer-suggestion-text,#amp-one .a-composer-suggestion>button{color:CanvasText}
+}

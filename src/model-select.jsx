@@ -12,7 +12,7 @@ export function ModelOriginNotice({entry}){
 
 // Only the host's exact connection entry supplies options. Saved/default IDs
 // are displayed separately and never promoted into discovery results.
-export function ModelSelect({id,label='Model',value='',onChange,onCommit,entry,models:provided,mayCostMore,state,act,disabled=false,placeholder='Enter an exact model or deployment ID',editable=false,renderOptions}){
+export function ModelSelect({id,label='Model',value='',onChange,onCommit,entry,models:provided,mayCostMore,state,act,disabled=false,placeholder='Enter an exact model or deployment ID',editable=false,renderOptions,presentation='full'}){
  const loading=entry?.phase==='working'||entry?.phase==='queued',region=useRef(null),edited=useRef(false),identity=useRef(entry?.sharedCatalogKey);
  const [exactScope,setExactScope]=useState(null),scope=id+':'+(entry?.sharedCatalogKey??'');
  if(identity.current!==entry?.sharedCatalogKey){edited.current=false;identity.current=entry?.sharedCatalogKey}
@@ -23,26 +23,32 @@ export function ModelSelect({id,label='Model',value='',onChange,onCommit,entry,m
  const listName=originNotice?'catalog':'discovered list';
  useRegionActivity(region,loading);
  const [shown,filter,query]=useListFilter(state,act,'model-picker-'+id,models,row=>[row.id,row.name],'Search '+label.toLowerCase(),{simple:true});
+ const compact=presentation==='compact';
+ // Compact settings hide search for small catalogs, so a retained query must
+ // not silently hide their choices. Chat's Advanced wrapper keeps its own rule.
+ const visibleModels=compact&&models.length<=12?models:shown;
+ const showFilter=compact?models.length>12:!renderOptions||models.length>8||query;
  const input = <><label htmlFor={id}>Exact model ID</label><input id={id} aria-label={label} value={value} disabled={disabled} placeholder={placeholder} data-action="view.update" onChange={e=>{edited.current=true;onChange(e.target.value)}} onBlur={e=>{if(edited.current&&e.target.value.trim()){edited.current=false;onCommit?.(e.target.value.trim())}}} onKeyDown={e=>{if(e.key==='Enter'&&e.currentTarget.value.trim()){e.preventDefault();edited.current=false;onCommit?.(e.currentTarget.value.trim())}}}/><small>Manual ID — not verified by discovery. The connection checks it when you send.</small></>;
  // Failed discovery can retain stale options. Keep the editable recovery path visible.
- const manualFallback=manual&&(!models.length||entry?.phase==='error');
+ const manualFallback=manual&&(compact||!models.length||entry?.phase==='error');
  const options=<>
   {!manual&&<button type="button" disabled={disabled} onClick={()=>setExactScope(scope)}>Enter an exact model ID</button>}
   {manual&&!manualFallback&&input}
   <div data-part="model-pricing-announcement" aria-live="polite" aria-atomic="true">{value&&<ModelPricing model={models.find(row=>row.id===value)}/>}</div>
   {entry?.loadedAt!=null&&<small>Last successful refresh: {new Date(entry.loadedAt*1000).toLocaleString()}</small>}
  </>;
- return <div className="a-model-select" ref={region} data-activity-region="models">
-  <ModelOriginNotice entry={entry}/>
+ return <div className="a-model-select" ref={region} data-activity-region="models" data-model-presentation={presentation}>
+  {!compact&&<ModelOriginNotice entry={entry}/>}
   {value&&!listed&&<small role="status">Saved selection: {value} (not in the {listName})</small>}
-  {models.length>0&&<>{(!renderOptions||models.length>8||query)&&filter}<select id={manual?id+'-catalog':id} aria-label={manual?'Choose '+label.toLowerCase()+' from catalog':label} value={shown.some(row=>row.id===value)?value:''} disabled={disabled} data-action="view.update" onChange={e=>{if(e.target.value){onChange(e.target.value);onCommit?.(e.target.value)}}}>
-   <option value="">{originNotice?'Choose a model…':'Choose a discovered model…'}</option>{shown.map(row=><option key={row.id} value={row.id}>{row.name}{mayCostMore?.(row.id)&&' · May cost more'}</option>)}
+  {models.length>0&&<>{showFilter&&filter}<select id={manual?id+'-catalog':id} aria-label={manual?'Choose '+label.toLowerCase()+' from catalog':label} value={visibleModels.some(row=>row.id===value)?value:''} disabled={disabled} data-action="view.update" onChange={e=>{if(e.target.value){onChange(e.target.value);onCommit?.(e.target.value)}}}>
+   <option value="">{compact||originNotice?'Choose a model…':'Choose a discovered model…'}</option>{visibleModels.map(row=><option key={row.id} value={row.id}>{row.name}{mayCostMore?.(row.id)&&' · May cost more'}</option>)}
   </select></>}
   {manualFallback?input:!models.length&&<small role="status">Loading provider models…</small>}
+  {compact&&<details className="a-model-details"><summary>Model details</summary><ModelOriginNotice entry={entry}/>{value&&<ModelPricing model={models.find(row=>row.id===value)}/>}<p><button type="button" className="a-link" disabled={disabled||manual} onClick={()=>setExactScope(scope)}>Enter an exact model ID</button></p>{entry?.loadedAt!=null&&<small>Last refreshed: {new Date(entry.loadedAt*1000).toLocaleString()}</small>}</details>}
   {entry?.error&&<small className="a-danger" role="status">{entry.error}</small>}
   {entry?.phase==='error'&&!entry.error&&<small className="a-danger" role="status">Model list unavailable. Enter a model ID or refresh this connection.</small>}
   {entry?.stale&&<small role="status">Model list is stale. Refresh to check this connection.</small>}
   {entry?.phase==='ready'&&!models.length&&<small>{entry.supported===false?'This connection does not supply verified model discovery.':'This connection returned no models.'}</small>}
-  {renderOptions ? renderOptions(options) : options}
+  {!compact&&(renderOptions ? renderOptions(options) : options)}
  </div>;
 }

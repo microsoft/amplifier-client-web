@@ -131,6 +131,7 @@ try{
     if(path!=='/api/actions')return route.fulfill({json:{ok:true}});
     const body=route.request().postDataJSON();calls.push(body);
     if(body.action==='view.update')state.view={...state.view,...body.args.patch};
+    if(body.action==='canvas.visibility')state.canvas={...state.canvas,open:body.args.open};
     if(body.action==='conversation.send')state.sessions[0].messages.push({id:'sent-'+body.id,inputId:body.id,role:'user',text:body.args.text,delivery:{status:'accepted'}});
     state.revision++;
     return route.fulfill({json:{accepted:true,delivery:'accepted',state:shell.state()}});
@@ -233,16 +234,24 @@ try{
     await composer.evaluate(node=>node.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'Enter',repeat:true})));
     await expect(composer).toHaveDraft('New draft');assert.equal(sends().length,1);
    }
+   if(scenario.name==='desktop'){
+    state.sessions[0].status='working';state.revision++;await page.evaluate(next=>window.emitFixtureState(next),shell.state());
+    await composer.fill('Next message during an active reply');await composer.press('Enter');await expect.poll(()=>sends().length).toBe(2);
+    assert.equal(sends().at(-1).args.text,'Next message during an active reply');
+    assert.equal(sends().at(-1).args.expectedGenerationId,undefined);assert.equal(sends().at(-1).args.allowNextTurn,undefined);
+    await expect(composer).toHaveDraft('');state.sessions[0].status='idle';state.revision++;await page.evaluate(next=>window.emitFixtureState(next),shell.state());
+   }
    const beforePreference=sends().length;
    await composer.fill('Preference retains this draft');
    await expect.poll(()=>state.view.draft).toBe('Preference retains this draft');
-   await page.evaluate(()=>window.amplifier.dispatch('view.update',{patch:{panel:'settings',settingsExpanded:['appearance']}}));
-   const choice=page.getByLabel('Return key',{exact:true});
+   await page.evaluate(()=>window.amplifier.dispatch('view.update',{patch:{panel:'settings',settingsExpanded:['chat-input']}}));
+   const choice=page.getByLabel('Enter / Return key',{exact:true});
+   await expect(choice.locator('option[value="automatic"]')).toHaveText(scenario.safe?'Automatic — start a new line':'Automatic — send message');
    await expect(choice).toHaveValue('automatic');await choice.selectOption('newline');
    await expect(choice).toHaveValue('newline');
-   const writingHelp=page.locator('[data-composer-return-preference] .a-appearance-option-description>p').first();
-   await expect(writingHelp).toBeVisible();await expect(writingHelp).toContainText('Return adds a new line. Use Send to send.');
-   await expect(choice).toHaveAccessibleDescription(/This browser only.*Return adds a new line/);
+   const writingHelp=page.locator('[data-composer-return-preference] p').first();
+   await expect(writingHelp).toBeVisible();await expect(writingHelp).toContainText('Use Send to send your message.');
+   await expect(choice).toHaveAccessibleDescription('Use Send to send your message.');
    assert.equal(await page.evaluate(()=>localStorage.getItem('amplifier.composer.returnKey.v1')),'newline');
    assert.equal(sends().length,beforePreference);
    await expect(composer).toHaveDraft('Preference retains this draft');
@@ -270,6 +279,16 @@ try{
    await expect.poll(()=>sends().length).toBe(beforePreference+1);
    assert.equal(sends().at(-1).args.text,'Preference retains this draft\n\nStill writing');
    await expect(composer).toHaveDraft('');
+   if(scenario.name==='hybrid'){
+    await page.evaluate(()=>window.amplifier.dispatch('view.update',{patch:{panel:'settings',settingsExpanded:['chat-input']}}));
+    await choice.selectOption('send');await expect(choice).toHaveValue('send');
+    await page.getByRole('button',{name:/^Close (settings|panel)$/}).last().click();
+    state.sessions[0].status='working';state.revision++;await page.evaluate(next=>window.emitFixtureState(next),shell.state());
+    const beforeExplicit=sends().length;await composer.fill('Explicit send on touch laptop during reply');
+    await composer.evaluate(node=>node.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'Enter',isComposing:true})));assert.equal(sends().length,beforeExplicit);
+    await composer.press('Enter');await expect.poll(()=>sends().length).toBe(beforeExplicit+1);assert.equal(sends().at(-1).args.text,'Explicit send on touch laptop during reply');
+    assert.equal(sends().at(-1).args.allowNextTurn,undefined);assert.equal(sends().at(-1).args.expectedGenerationId,undefined);
+   }
    assert.deepEqual(errors,[]);
    results.push({scenario:scenario.name,passed:true,nativeEvents:events,submissions:sends().length});
   }catch(error){

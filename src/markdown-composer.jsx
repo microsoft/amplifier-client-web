@@ -10,13 +10,43 @@ import {quoteNodeView,refreshQuoteControls} from './composer-quote-view.js';
 import {clipboardPaste} from './clipboard-paste';
 import {resizeComposer,observeComposerLayout} from './composer';
 import './composer-formatting.css';
+import {insertComposerSuggestion} from './markdown-composer.js';
+import {suggestionText,suggestionEditorEmpty,plainSuggestionTab} from './transcript-suggestion.js';
+import './transcript-suggestion.css';
 
 const quoteCount=doc=>{let count=0;doc.forEach(node=>{if(node.type.name==='reference')count++;});return count;};
 
-export function MarkdownComposer({value,document:documentValue,onChange,onSend,onFiles,onReveal,onQuoteRemoved,quoteApi,disabled=false,readOnly=false,pasteDisabled=false,editorRef,returnHelpId:providedReturnHelpId}){
+export function MarkdownComposer({value,document:documentValue,onChange,onSend,onFiles,onReveal,onQuoteRemoved,quoteApi,disabled=false,readOnly=false,pasteDisabled=false,editorRef,returnHelpId:providedReturnHelpId,suggestion=null,onSuggestionSupersede,onComposing}){
  const host=useRef(null),editor=useRef(null),latest=useRef(null),published=useRef(value),publishedDocument=useRef(documentValue);
  const toolbar=useRef(null),refresh=useRef(()=>{}),dismissed=useRef(null);
  const insertionMode=useRef('caret');
+ const composing=useRef(false),epoch=useRef(0),[editorEpoch,setEditorEpoch]=useState(0),previewId=useId(),suggestionPreview=useRef(null),acceptance=useRef(null),[validatingSuggestion,setValidatingSuggestion]=useState(false);
+ const suggestionVisible=()=>{
+  const node=suggestionPreview.current;if(document.hidden||!node?.getClientRects().length)return false;
+  for(let parent=node;parent;parent=parent.parentElement){const style=getComputedStyle(parent);if(style.visibility==='hidden'||style.visibility==='collapse'||style.opacity==='0')return false}
+  return true;
+ };
+ const invalidateSuggestion=reason=>{epoch.current++;setEditorEpoch(epoch.current);latest.current.onSuggestionSupersede?.(reason)};
+ const acceptSuggestion=(candidate,expectedEpoch)=>{
+  const view=editor.current;
+  if(acceptance.current)return true;
+  const editableCurrent=()=>editor.current===view&&view&&candidate&&candidate===latest.current.suggestion&&epoch.current===expectedEpoch&&!composing.current&&!view.composing&&!latest.current.disabled&&!latest.current.readOnly&&suggestionVisible()&&suggestionEditorEmpty(view.state.doc)&&!!suggestionText(candidate.text);
+  if(!editableCurrent()||!candidate.available())return false;
+  const token={view,focus:document.activeElement};acceptance.current=token;setValidatingSuggestion(true);
+  void (async()=>{
+   try{
+    const claim=await candidate.validate();
+    if(acceptance.current!==token||!editableCurrent()||document.activeElement!==token.focus||!claim)return;
+    // Recheck every local/editor fence after the host read. No await is allowed
+    // between this one-use claim and the literal, undoable insertion.
+    if(claim())insertComposerSuggestion(view,candidate.text);
+   }finally{
+    if(acceptance.current===token){acceptance.current=null;setValidatingSuggestion(false)}
+    if(editor.current===view){candidate.suspend?.();setEditorEpoch(epoch.current)}
+   }
+  })();
+  return true;
+ };
  const {mode:returnMode}=useComposerReturn(),ownReturnHelpId=useId(),returnHelpId=providedReturnHelpId??ownReturnHelpId;
  const [selection,setSelection]=useState(null),[linkOpen,setLinkOpen]=useState(false),[link,setLink]=useState(''),[linkError,setLinkError]=useState('');
  const openLink=()=>{
@@ -24,7 +54,7 @@ export function MarkdownComposer({value,document:documentValue,onChange,onSend,o
   let href='';view.state.doc.nodesBetween(view.state.selection.from,view.state.selection.to,node=>{const mark=node.marks.find(mark=>mark.type.name==='link');if(mark)href=mark.attrs.href;});
   setLink(href);setLinkError('');setLinkOpen(true);
  };
- latest.current={value,onChange,onSend,onFiles,onReveal,onQuoteRemoved,disabled,readOnly,pasteDisabled,returnMode};
+ latest.current={value,onChange,onSend,onFiles,onReveal,onQuoteRemoved,disabled,readOnly,pasteDisabled,returnMode,suggestion,onSuggestionSupersede,onComposing};
  useLayoutEffect(()=>{
   const editable=()=>!latest.current.disabled&&!latest.current.readOnly;
   const returnEvents=composerReturnEvents({editable,mode:()=>latest.current.returnMode,onSend:()=>latest.current.onSend()});
@@ -34,7 +64,7 @@ export function MarkdownComposer({value,document:documentValue,onChange,onSend,o
    attributes:{role:'textbox','aria-label':'Message Amplifier','aria-multiline':'true','aria-describedby':returnHelpId,enterkeyhint:'enter','data-action':'view.update','data-private':'true','data-view-label':'Message Amplifier',class:'a-markdown-composer',spellcheck:'true'},
    dispatchTransaction(transaction){
     const before=view.state.doc;view.updateState(view.state.apply(transaction));
-    if(transaction.docChanged){published.current=composerMarkdown(view.state.doc);publishedDocument.current=composerDocument(view.state.doc,!!publishedDocument.current);latest.current.onChange(published.current,publishedDocument.current);
+    if(transaction.docChanged){invalidateSuggestion('editor-change');published.current=composerMarkdown(view.state.doc);publishedDocument.current=composerDocument(view.state.doc,!!publishedDocument.current);latest.current.onChange(published.current,publishedDocument.current);
      // The Remove quote control, keyboard deletion and undo all land here; report how many remain.
      const left=quoteCount(view.state.doc);if(left<quoteCount(before))latest.current.onQuoteRemoved?.(left);}
     refreshQuoteControls(view);
@@ -44,6 +74,13 @@ export function MarkdownComposer({value,document:documentValue,onChange,onSend,o
    },
    handleKeyDown(view,event){
     if(!editable()||composingReturn(view,event))return false;
+    if(acceptance.current&&(plainSuggestionTab(event)||event.key==='Enter')){event.preventDefault();return true}
+    const candidate=latest.current.suggestion;
+    if(candidate&&suggestionEditorEmpty(view.state.doc)&&candidate.available()){
+     if(plainSuggestionTab(event)&&view.hasFocus()&&view.dom.getClientRects().length&&acceptSuggestion(candidate,epoch.current)){event.preventDefault();return true}
+     if(event.key==='Enter'&&!event.shiftKey&&!event.ctrlKey&&!event.metaKey&&!event.altKey&&suggestionVisible()){event.preventDefault();return true}
+     if(event.key==='Escape'){event.preventDefault();candidate.dismiss();invalidateSuggestion();return true}
+    }
     if(moveComposerBoundary(view,event)){event.preventDefault();return true;}
     if(event.key==='Escape'&&!view.state.selection.empty){dismissed.current=view.state.selection.from+':'+view.state.selection.to;setSelection(null);setLinkOpen(false);return true;}
     if(event.altKey&&event.key==='F10'&&!view.state.selection.empty){
@@ -60,16 +97,20 @@ export function MarkdownComposer({value,document:documentValue,onChange,onSend,o
     // keymaps (whose Enter binding would otherwise split a paragraph).
     // DOM handlers do not prevent the native default merely by returning true.
     keydown(view,event){
+     if(acceptance.current&&!composingReturn(view,event)&&(plainSuggestionTab(event)||event.key==='Enter')){event.preventDefault();return true}
      return returnEvents.observeKeyDown(view,event);
     },
     beforeinput(view,event){
+     if(acceptance.current&&!composingReturn(view,event)&&event.cancelable&&['insertParagraph','insertLineBreak'].includes(event.inputType)){event.preventDefault();return true}
+     invalidateSuggestion('editor-input');
      // Bare editing events are never consent to send, even on desktop.
      return returnEvents.beforeInput(view,event);
     },
-    keyup:returnEvents.release,
-    input:returnEvents.release,
+    keyup(view,event){returnEvents.release(view,event);latest.current.onSuggestionSupersede?.('editor-input-end');return false},
+    input(view,event){returnEvents.release(view,event);latest.current.onSuggestionSupersede?.('editor-input-end');return false},
     blur:returnEvents.release,
-    compositionstart:returnEvents.release,
+    compositionstart(){returnEvents.release();composing.current=true;latest.current.onComposing?.(true);invalidateSuggestion('editor-change');return false},
+    compositionend(){composing.current=false;invalidateSuggestion('editor-change');latest.current.onComposing?.(false);return false},
     contextmenu(){
      // Keep native copy/paste/spelling. Our same selection toolbar remains
      // available after the native menu closes; Alt+F10 focuses it directly.
@@ -78,17 +119,21 @@ export function MarkdownComposer({value,document:documentValue,onChange,onSend,o
     paste(view,event){
      if(!editable()||latest.current.pasteDisabled){event.preventDefault();return true;}
      const paste=clipboardPaste(event.clipboardData);
+     invalidateSuggestion(paste.files.length?'attachments':'editor-input');
      event.preventDefault();
      if(paste.text)pasteMarkdown(view,paste.text);
      if(paste.files.length)latest.current.onFiles(paste.files);
+     latest.current.onSuggestionSupersede?.('editor-input-end');
      return true;
     },
     drop(view,event){
      if(!editable()||latest.current.pasteDisabled){event.preventDefault();return true;}
+     invalidateSuggestion(event.dataTransfer?.files.length?'attachments':'editor-input');
      if(event.dataTransfer?.files.length){event.preventDefault();event.stopPropagation();latest.current.onFiles([...event.dataTransfer.files]);return true;}
      // External text drops follow the same plain-text/Markdown policy as paste.
-     if(!view.dragging&&event.dataTransfer?.getData('text/plain')){event.preventDefault();pasteMarkdown(view,event.dataTransfer.getData('text/plain'));return true;}
-     if(!view.dragging&&event.dataTransfer?.getData('text/html')){event.preventDefault();pasteMarkdown(view,event.dataTransfer.getData('text/html'));return true;}
+     if(!view.dragging&&event.dataTransfer?.getData('text/plain')){event.preventDefault();pasteMarkdown(view,event.dataTransfer.getData('text/plain'));latest.current.onSuggestionSupersede?.('editor-input-end');return true;}
+     if(!view.dragging&&event.dataTransfer?.getData('text/html')){event.preventDefault();pasteMarkdown(view,event.dataTransfer.getData('text/html'));latest.current.onSuggestionSupersede?.('editor-input-end');return true;}
+     latest.current.onSuggestionSupersede?.('editor-input-end');
      return false;
     },
    },
@@ -98,6 +143,7 @@ export function MarkdownComposer({value,document:documentValue,onChange,onSend,o
   const remember=()=>{usedCaret=true;};
   view.dom.addEventListener('focus',remember);
   if(quoteApi)quoteApi.current={
+   suggestionValidating:()=>!!acceptance.current,
    capture:()=>({doc:view.state.doc,mode:insertionMode.current,pos:usedCaret&&insertionMode.current==='caret'?view.state.selection.to:view.state.doc.content.size}),
    insert:(quote,target)=>{if(!alive||!editable())throw Error('The composer changed. Add the quote again.');insertQuote(view,quote,target);usedCaret=true;},
    document:()=>composerSendDocument(view.state.doc,!!publishedDocument.current),
@@ -121,10 +167,11 @@ export function MarkdownComposer({value,document:documentValue,onChange,onSend,o
   view.dom.dataset.empty=String(!latest.current.value);
   resizeComposer(view.dom);
   const stopLayout=observeComposerLayout(view.dom);
-  return()=>{alive=false;stopLayout();view.dom.removeEventListener('focus',remember);if(quoteApi)quoteApi.current=null;resizeObserver.disconnect();cancelAnimationFrame(frame);refresh.current=()=>{};document.removeEventListener('selectionchange',schedule);document.removeEventListener('focusin',schedule);window.removeEventListener('resize',schedule);window.removeEventListener('scroll',schedule,true);view.destroy();editor.current=null;if(editorRef.current===view.dom)editorRef.current=null;};
+  return()=>{alive=false;acceptance.current=null;latest.current.onComposing?.(false);stopLayout();view.dom.removeEventListener('focus',remember);if(quoteApi)quoteApi.current=null;resizeObserver.disconnect();cancelAnimationFrame(frame);refresh.current=()=>{};document.removeEventListener('selectionchange',schedule);document.removeEventListener('focusin',schedule);window.removeEventListener('resize',schedule);window.removeEventListener('scroll',schedule,true);view.destroy();editor.current=null;if(editorRef.current===view.dom)editorRef.current=null;};
  },[]);
  useLayoutEffect(()=>{
   const view=editor.current;if(!view)return;
+  if(disabled||readOnly)invalidateSuggestion('editor-uneditable');
   view.setProps({editable:()=>!disabled&&!readOnly,attributes:{...view.props.attributes,'aria-describedby':returnHelpId}});
   view.dom.setAttribute('aria-disabled',String(disabled));view.dom.setAttribute('aria-readonly',String(readOnly));view.dom.setAttribute('aria-busy',String(readOnly));
   // Do not rebuild selection or undo history for our own autosave echoes.
@@ -136,7 +183,8 @@ export function MarkdownComposer({value,document:documentValue,onChange,onSend,o
  },[value,documentValue,disabled,readOnly,returnHelpId]);
  const dismiss=()=>{const view=editor.current;dismissed.current=view.state.selection.from+':'+view.state.selection.to;setSelection(null);setLinkOpen(false);view.focus();};
  const mark=name=>toggleComposerMark(editor.current,name);
- return <><div className="a-markdown-composer-host" ref={host}/>{providedReturnHelpId==null&&<ComposerReturnHelp id={returnHelpId}/>}{documentValue?.segments?.some(part=>part.type==='quote')&&<label className="a-caption">Add quotes <select aria-label="Quote insertion" defaultValue="caret" onChange={event=>{insertionMode.current=event.target.value;}}><option value="caret">At remembered caret</option><option value="append">At end</option></select></label>}{selection&&!disabled&&!readOnly&&createPortal(
+ const ghost=suggestion&&suggestion.available()&&!disabled&&!readOnly&&!composing.current&&editor.current&&suggestionEditorEmpty(editor.current.state.doc)&&suggestionText(suggestion.text)?suggestion:null;
+ return <><div className="a-suggestion-editor" data-suggestion-visible={!!ghost} data-suggestion-validating={validatingSuggestion}><div className="a-markdown-composer-host" ref={host}/>{ghost&&<div className="a-composer-suggestion" data-private="true" ref={suggestionPreview}><span className="a-composer-suggestion-label">Suggested message · not sent</span><span className="a-composer-suggestion-text" id={previewId}>{ghost.text}</span><button type="button" className="a-link" aria-label="Use suggested message" aria-describedby={previewId} aria-busy={validatingSuggestion} aria-disabled={validatingSuggestion} onMouseDown={event=>event.preventDefault()} onClick={()=>acceptSuggestion(ghost,editorEpoch)}>{validatingSuggestion?'Checking suggestion…':<>Use suggestion <kbd>Tab</kbd></>}</button></div>}</div>{providedReturnHelpId==null&&<ComposerReturnHelp id={returnHelpId}/>}{documentValue?.segments?.some(part=>part.type==='quote')&&<label className="a-caption">Add quotes <select aria-label="Quote insertion" defaultValue="caret" onChange={event=>{insertionMode.current=event.target.value;}}><option value="caret">At remembered caret</option><option value="append">At end</option></select></label>}{selection&&!disabled&&!readOnly&&createPortal(
   <div className="a-composer-format" ref={toolbar} style={{left:selection.left,top:selection.top}} onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();dismiss();}}}>
    <div role="toolbar" aria-label="Format selected text" className="a-composer-format-row">
     <button type="button" aria-label="Link" disabled={selection.literal} title="Link (Ctrl/⌘ K)" aria-pressed={selection.link} onMouseDown={e=>e.preventDefault()} onClick={openLink}><Link size={18}/></button>
