@@ -154,7 +154,7 @@ test('selection pending retains sidebar reading geometry without granting covera
  assert.equal(reading.sidebarNavigation.search,undefined);
  assert.equal(reading.navigationResourcePending.recentNavigation.status,'pending');
 });
-test('retained sidebar survives pending baseline but clears for new host, module, query or released interest',()=>{
+test('retained sidebar survives pending baseline and release but clears for new host, module or query',()=>{
  const {wanted,previous,value}=readingFixture(),changed={...wanted,id:2};
  const waiting=pendingSnapshots(bootstrap,previous,changed);
  const next=structuredClone(value);next.demandId=2;next.instances.chat.resources={context:next.instances.chat.resources.context};
@@ -170,8 +170,43 @@ test('retained sidebar survives pending baseline but clears for new host, module
  assert.deepEqual(resourceSnapshots(bootstrap,aged,changed,waiting).chat.navigationResourceRetained,{});
  assert.deepEqual(pendingSnapshots(bootstrap,previous,changed,'new-host').chat.navigationResourceRetained,{});
  assert.deepEqual(pendingSnapshots({...bootstrap,shellBootstrapKey:'new-key'},previous,changed).chat.navigationResourceRetained,{});
+ assert.deepEqual(pendingSnapshots({...bootstrap,clientId:'new-client'},previous,changed).chat.navigationResourceRetained,{});
  assert.equal(pendingSnapshots({...bootstrap,instanceGenerations:{...bootstrap.instanceGenerations,chat:2}},previous,changed).chat,undefined);
- assert.deepEqual(pendingSnapshots(bootstrap,previous,{...changed,resources:[]}).chat.navigationResourceRetained,{});
+ assert.equal(sidebarReadingSnapshot(pendingSnapshots(bootstrap,previous,{...changed,resources:[]}).chat).recentNavigation.items.length,1);
+});
+
+test('accepted empty interest retains bounded reading rows until reopen without granting coverage',()=>{
+ const {wanted,previous,value}=readingFixture(),closed={...wanted,id:2,resources:[]},empty=structuredClone(value);empty.demandId=2;
+ empty.instances.chat.resources={context:empty.instances.chat.resources.context};
+ const hidden=resourceSnapshots(bootstrap,empty,closed,previous.snapshots).chat;
+ assert.deepEqual(hidden.navigationResources,[]);assert.equal(hidden.recentNavigation,undefined);
+ assert.equal(sidebarReadingSnapshot(hidden).recentNavigation.items.length,1);
+ const reopen=pendingSnapshots(bootstrap,{shellResources:empty,snapshots:{chat:hidden}},{...wanted,id:3}).chat;
+ assert.equal(sidebarReadingSnapshot(reopen).recentNavigation.items.length,1);assert.deepEqual(reopen.navigationResources,[]);
+});
+
+test('Status reading membership survives same-query switch and release, but never carries activity evidence',()=>{
+ const kind='workStatusIdle',wanted={...demand,resources:[kind]},value=envelope(),ctx=value.instances.chat.resources.context.value;
+ ctx.workHomePinnedScope='all';ctx.view={navAge:'all',navStatusPages:{idle:0}};
+ value.instances.chat.resources[kind]={revision:1,value:{[kind]:{items:[{id:'a',activity:{kind:'attention',label:'Answer requested'}}],total:1,requestedIndex:0,workScope:'all',scope:{age:'all'}}}};
+ const previous={shellResources:value,snapshots:resourceSnapshots(bootstrap,value,wanted)};
+ const next=pendingSnapshots(bootstrap,previous,{...wanted,id:2,scope:['b','workspace','chat',null,null]}).chat;
+ const reading=sidebarReadingSnapshot(next);assert.equal(reading[kind].items[0].id,'a');assert.equal(activityFor(reading[kind].items[0],reading).kind,'updating');assert.deepEqual(next.navigationResources,[]);
+ const empty=structuredClone(value);empty.demandId=2;empty.instances.chat.resources={context:empty.instances.chat.resources.context};
+ const hidden=resourceSnapshots(bootstrap,empty,{...wanted,id:2,resources:[]},previous.snapshots).chat;
+ assert.equal(sidebarReadingSnapshot(hidden)[kind].items.length,1);
+ for(const patch of [{navAge:'24h'},{navStatusPages:{idle:1}}]){
+  const altered=structuredClone(empty);altered.instances.chat.resources.context.value.view={...ctx.view,...patch};
+  assert.equal(resourceSnapshots(bootstrap,altered,{...wanted,id:2,resources:[]},previous.snapshots).chat.navigationResourceRetained[kind],undefined);
+ }
+});
+test('optional reading retention refuses oversized pages without changing live data or coverage',()=>{
+ for(const payload of [{items:[{id:'oversize',title:'x'.repeat(512*1024)}],total:1},{items:Array.from({length:1001},(_,i)=>({id:String(i)})),total:1001}]){
+  const {wanted,value}=readingFixture();value.instances.chat.resources.recentNavigation.value={recentNavigation:payload};
+  const snapshots=resourceSnapshots(bootstrap,value,wanted);assert.equal(snapshots.chat.recentNavigation,payload);
+  const pending=pendingSnapshots(bootstrap,{shellResources:value,snapshots},{...wanted,id:2}).chat;
+  assert.equal(pending.navigationResourceRetained.recentNavigation,undefined);assert.deepEqual(pending.navigationResources,[]);
+ }
 });
 
 test('H6: selection retains geometry, not a previous demand’s Answer requested coverage',()=>{

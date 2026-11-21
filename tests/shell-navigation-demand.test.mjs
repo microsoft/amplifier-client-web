@@ -292,3 +292,67 @@ test('late pending HTTP cannot resurrect retry after an equal-value ready stream
  assert.equal(f.current().data.snapshots.chats.recentNavigation.items[0].id,'first');
  assert.equal(f.calls.length,2,'pending state adds no polling or replay');
 }));
+
+for(const principal of ['principal-b',undefined])test(`principal ${principal?'replacement':'loss'} clears reading owners and rejects held old responses`,()=>fixture(async f=>{
+ const original=state(undefined,{client:{hostInstanceId:'host-1',historyScope:'principal-a'}});
+ await f.render(original);await f.accept(0,original);const oldHost=f.current().hostFor(instance);
+ await act(async()=>{void f.current().refresh()});
+ const changed=state(undefined,{client:{hostInstanceId:'host-1',historyScope:principal}});
+ await f.render(changed);assert.equal(f.current().ready,false);assert.equal(oldHost.getSnapshot().recentNavigation,undefined);
+ await f.accept(1,original);assert.equal(f.current().ready,false,'late old-owner read cannot restore rows');
+ assert.equal(f.calls.length,3);assert.equal(f.calls[2].options.method,undefined,'identity change establishes a new baseline');
+ await f.accept(2,changed);assert.equal(f.current().ready,true);
+ assert.notEqual(f.current().hostFor(instance),oldHost,'secondary Recent cache gets a new owner');
+}));
+test('old-owner shell view receipt cannot publish private filters into the next principal',async()=>{
+ let resolve;
+ await fixture(async f=>{
+  const original=state(undefined,{client:{hostInstanceId:'host-1',historyScope:'principal-a'}});
+  await f.render(original);await f.accept(0,original);const old=f.current().hostFor(instance);let operation;
+  await act(async()=>{operation=old.dispatch('view.update',{patch:{navFilter:'private prior filter'}})});
+  const changed=state(undefined,{client:{hostInstanceId:'host-1',historyScope:'principal-b'}});
+  await f.render(changed);await f.accept(1,changed);
+  await act(async()=>{resolve({accepted:true,result:{shellView:{instanceId:'chats',generation:1,viewRevision:99,view:{navFilter:'private prior filter'}}}});await operation});
+  assert.equal(f.current().data.snapshots.chats.view.navFilter,undefined);
+  assert.equal(f.current().hostFor(instance).getSnapshot().view.navFilter,undefined);
+ },{dispatch:()=>new Promise(done=>{resolve=done})});
+});
+test('old-owner queued commands fail before dispatch after the principal changes',async()=>{
+ let resolve;const calls=[];
+ await fixture(async f=>{
+  const original=state(undefined,{client:{hostInstanceId:'host-1',historyScope:'principal-a'}});
+  await f.render(original);await f.accept(0,original);const old=f.current().hostFor(instance);let first,queued;
+  await act(async()=>{first=old.dispatch('view.update',{patch:{navFilter:'prior'}});queued=old.dispatch('workspace.rename',{id:'space',name:'do not send'});queued.catch(()=>{})});
+  const changed=state(undefined,{client:{hostInstanceId:'host-1',historyScope:'principal-b'}});
+  await f.render(changed);await f.accept(1,changed);
+  await act(async()=>{resolve({accepted:true});await first;await assert.rejects(queued,/account changed/)});
+  assert.equal(calls.length,1);assert.equal(calls[0].action,'shell.view.update');
+  await assert.rejects(old.dispatch('workspace.rename',{id:'space',name:'still do not send'}),/account changed/);
+  assert.equal(calls.length,1);
+ },{dispatch:(action,args)=>{calls.push({action,args});return new Promise(done=>{resolve=done})}});
+});
+test('authentication expiry clears reading immediately and cannot reuse the old shell host',()=>fixture(async f=>{
+ const original=state(undefined,{client:{hostInstanceId:'host-1',historyScope:'principal-a'}});
+ await f.render(original);await f.accept(0,original);const old=f.current().hostFor(instance);
+ await act(async()=>{void f.current().refresh()});await f.reply(1,{error:'Sign in required'},401);
+ assert.equal(f.current().ready,false);assert.equal(old.getSnapshot().recentNavigation,undefined);
+ await assert.rejects(old.dispatch('workspace.rename',{id:'space',name:'no'}),/account changed/);
+ assert.equal(f.calls.length,3);
+}));
+test('old selection receipt cannot publish after its drawer-close continuation crosses accounts',async()=>{
+ let closeDrawer;const calls=[];
+ await fixture(async f=>{
+  const original=state({workSurface:'chat',navPinned:false,navExpanded:true},{client:{hostInstanceId:'host-1',historyScope:'principal-a'}});
+  await f.render(original);await f.accept(0,original);const old=f.current().hostFor(instance);let operation;
+  await act(async()=>{operation=old.dispatch('session.select',{id:'chat-b'})});
+  assert.equal(calls.length,2);assert.equal(typeof calls[1].meta.suggestionIsCurrent,'function');
+  const changed=state(undefined,{client:{hostInstanceId:'host-1',historyScope:'principal-b'}});
+  await f.render(changed);await f.accept(1,changed);
+  assert.equal(calls[1].meta.suggestionIsCurrent(),false);
+  await act(async()=>{closeDrawer({accepted:false});await operation});
+  assert.equal(f.current().data.snapshots.chats.view.navFilter,undefined);
+ },{dispatch:(action,args,meta)=>{
+  calls.push({action,args,meta});
+  return action==='view.update'?new Promise(resolve=>{closeDrawer=resolve}):Promise.resolve({accepted:true,result:{shellView:{instanceId:'chats',generation:1,viewRevision:99,view:{navFilter:'private prior drawer'}}}});
+ }});
+});

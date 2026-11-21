@@ -206,7 +206,7 @@ export function useRecentShortcuts(host,state,act){
  const initial={limit:recentLimit(state.recentNavigation?.scope?.limit??state.view?.navRecentLimit),showAgentCreated:state.view?.navShowAgentCreated===true};
  const [settings,setSettings]=useState(initial),[page,setPage]=useState(state.recentNavigation||{items:[],total:0,remaining:0,limit:initial.limit});
  const [busy,setBusy]=useState(false),[error,setError]=useState('');
- const ownerFor=current=>JSON.stringify([current?.navigationResourceScope?.[0],current?.navigationResourceScope?.[1],current?.generation]);
+ const ownerFor=current=>JSON.stringify([current?.navigationResourceScope?.[0],current?.navigationResourceScope?.[1],current?.generation,current?.navigationReadingOwner]);
  const owner=ownerFor(state);
  const acceptedOwner=useRef(owner),observedOwner=useRef(owner);
  const accepted=useRef(page),acceptedSource=useRef(state.recentNavigation),intent=useRef(null),sequence=useRef(0),mounted=useRef(true),waiting=useRef(false),uncertain=useRef(false),readWait=useRef(null);
@@ -582,22 +582,23 @@ function StatusGroup({kind,model,navigation,now}){
  const group=workGroups[kind],view=navigation.sidebarView,id=useId(),root=useRef(null),restore=useRef(null);
  const collapsed=view.navStatusCollapsed||[],expanded=view.navStatusExpanded||[],closed=collapsed.includes(kind),all=expanded.includes(kind);
  const page=model.state[group.resource],requested=view.navStatusPages?.[kind]||0;
- const ready=hasNavigationResource(model.state,group.resource)&&page?.requestedIndex===requested
+ const covered=hasNavigationResource(model.state,group.resource)&&!model.state.navigationResourcePending?.[group.resource];
+ const ready=(hasNavigationResource(model.state,group.resource)||!!model.state.navigationResourceRetained?.[group.resource])&&page?.requestedIndex===requested
   &&page.workScope===(model.state.workHomePinnedScope||'all')
   &&page.scope?.age===(view.navAge||'all');
  const update=navigation.updateSidebar;
  useLayoutEffect(()=>{if(ready&&restore.current){root.current?.querySelector(`[data-status-page="${restore.current}"]`)?.focus();restore.current=null}},[ready,page?.index]);
  const turn=(index,direction)=>{restore.current=direction;update({navStatusPages:{...view.navStatusPages,[kind]:index}})};
  return <section ref={root} className="a-sidebar-section a-status-group" aria-label={group.title} data-status-group={kind}>
-  <div className="a-sidebar-section-heading"><button type="button" aria-expanded={!closed} aria-controls={id} onClick={()=>update({navStatusCollapsed:closed?collapsed.filter(key=>key!==kind):[...collapsed,kind]})}><span>{group.title}</span><ChevronRight className={closed?'':'is-open'}/>{!closed&&ready&&kind!=='idle'&&<small>{page.total}</small>}</button></div>
+  <div className="a-sidebar-section-heading"><button type="button" aria-expanded={!closed} aria-controls={id} onClick={()=>update({navStatusCollapsed:closed?collapsed.filter(key=>key!==kind):[...collapsed,kind]})}><span>{group.title}</span><ChevronRight className={closed?'':'is-open'}/>{!closed&&ready&&covered&&kind!=='idle'&&<small>{page.total}</small>}</button></div>
   <div id={id} hidden={closed}>
    {!closed&&<><NavigationResourceStatus state={model.state} resource={group.resource} label={group.title.toLowerCase()} refresh={model.refreshResources}/>
     {!ready&&!model.state.navigationResourcePending?.[group.resource]&&<p role="status" className="a-nav-empty">Loading chats…</p>}
     {ready&&(page.unavailable?<p className="a-nav-empty" role="alert">This workspace is unavailable.</p>:<>
      {(all?page.items:page.items.slice(0,2)).map(chat=><ChatRow key={chat.id} chat={chat} model={model} now={now}/>)}
-     {!page.total&&<p className="a-nav-empty">{group.empty}</p>}
+     {!page.total&&(covered?<p className="a-nav-empty">{group.empty}</p>:<p className="a-nav-empty" style={{position:'relative'}}><span aria-hidden="true" style={{visibility:'hidden'}}>{group.empty}</span><span role="status" style={{position:'absolute',inset:0}}>Updating…</span></p>)}
      {page.total>2&&<button className="a-sidebar-all a-link" type="button" aria-label={(all?'Show fewer ':'Show more ')+group.title.toLowerCase()+' chats'} onClick={()=>update({navStatusExpanded:all?expanded.filter(key=>key!==kind):[...expanded,kind]})}>{all?'Show fewer':'Show more'}<ChevronRight/></button>}
-     {all&&page.pages>1&&<div className="a-nav-pagination" aria-label={group.title+' pages'}><span>{page.start+1}–{page.end} of {page.total}</span><div><button type="button" className="a-link" data-status-page="previous" disabled={!page.index} aria-label={'Previous '+group.title.toLowerCase()+' page'} onClick={()=>turn(page.index-1,'previous')}>Previous</button><button type="button" className="a-link" data-status-page="next" disabled={page.index+1>=page.pages} aria-label={'Next '+group.title.toLowerCase()+' page'} onClick={()=>turn(page.index+1,'next')}>Next<ChevronRight/></button></div></div>}
+     {all&&page.pages>1&&<div className="a-nav-pagination" aria-label={group.title+' pages'}><span>{covered?`${page.start+1}–${page.end} of ${page.total}`:'Updating…'}</span><div><button type="button" className="a-link" data-status-page="previous" disabled={!covered||!page.index} aria-label={'Previous '+group.title.toLowerCase()+' page'} onClick={()=>turn(page.index-1,'previous')}>Previous</button><button type="button" className="a-link" data-status-page="next" disabled={!covered||page.index+1>=page.pages} aria-label={'Next '+group.title.toLowerCase()+' page'} onClick={()=>turn(page.index+1,'next')}>Next<ChevronRight/></button></div></div>}
     </>)}
    </>}
   </div>
@@ -615,7 +616,7 @@ function QuietSidebar({host,workspaceHost,navigation}){
   <NavigationEditor model={model} deleteOwner={(model.view.workSurface||'chat')==='chat'}/>
   {!workspaceHost&&<NavigationEditor model={workspaceModel}/>}
   {status?Object.keys(workGroups).map(kind=><StatusGroup key={kind} kind={kind} model={model} navigation={navigation} now={now}/>):<>
-  {(!!pins.total||model.state.navigationResourcePending?.pinnedNavigation)&&<SidebarSection id="pinned" title="Pinned" model={model}><NavigationResourceStatus state={model.state} resource="pinnedNavigation" label="pinned chats and workspaces" refresh={model.refreshResources}/>{model.state.pinnedNavigation?<PinnedItems page={pins} model={model} workspaceModel={workspaceModel} canEdit={!!workspaceHost||!model.draft.mode} now={now} navigation={navigation}/>:<PinnedChats page={pins} model={model} now={now}/>}</SidebarSection>}
+  {(!!pins.total||model.state.navigationResourcePending?.pinnedNavigation&&!model.state.navigationResourceRetained?.pinnedNavigation)&&<SidebarSection id="pinned" title="Pinned" model={model}><NavigationResourceStatus state={model.state} resource="pinnedNavigation" label="pinned chats and workspaces" refresh={model.refreshResources}/>{model.state.pinnedNavigation?<PinnedItems page={pins} model={model} workspaceModel={workspaceModel} canEdit={!!workspaceHost||!model.draft.mode} now={now} navigation={navigation}/>:<PinnedChats page={pins} model={model} now={now}/>}</SidebarSection>}
   <SidebarSection id="workspaces" title="Workspaces" model={model} actions={<button type="button" className="a-icon" aria-label="New workspace" onClick={()=>navigation.create()}><Plus/></button>}>
    <NavigationResourceStatus state={workspaceState} resource="workspaceShortcuts" label="workspaces" refresh={workspaceModel.refreshResources}/>
    {(hasNavigationResource(workspaceState,'workspaceShortcuts')||workspaceState.navigationResourceRetained?.workspaceShortcuts)?<WorkspaceExplorer state={workspaceState} act={workspaceHost?.dispatch||model.act} compact heading={false} onSelect={row=>navigation.browse('workspace',row.workspaceId)}/>:!workspaceState.navigationResourcePending?.workspaceShortcuts&&<p role="status">Loading workspaces…</p>}
