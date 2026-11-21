@@ -4,6 +4,7 @@ export const settingsSections=[
  {id:'ai',title:'AI connections',scope:'Across workspaces on this Amplifier host',pages:[['ai-connections','AI connections'],['overview','AI connections']]},
  {id:'external-agents',title:'External agents',scope:'Connections on this Amplifier host',pages:[['external-agents','External agents']]},
  {id:'smart-tools',title:'Smart Tools',scope:'This Amplifier host',pages:[['smart-tools','Smart Tools']]},
+ {id:'chat-input',title:'Chat & input',scope:'This browser on this host and account',pages:[['chat-input','Chat & input'],['suggestion-advanced','Suggested messages · Advanced settings']]},
  {id:'appearance',title:'Appearance',scope:'This interface',pages:[['appearance','Appearance']]},
  {id:'instance-branding',title:'App name & icon',scope:'Everyone using this server and port',pages:[['instance-branding','App name & icon']]},
  {id:'workspaces',title:'Workspaces',scope:'New workspaces on this host',pages:[['workspaces','Workspaces'],['workspace-starters','Workspace starters']]},
@@ -15,7 +16,7 @@ export const settingsSections=[
  {id:'advanced',title:'Advanced',scope:'Full configuration',pages:[['advanced','Advanced'],['model-capacity','Model capacity'],['providers','Provider configuration'],['routing','Model rules'],['app-bundles','Configured bundles'],['add-bundles','Discover bundles'],['defaults','Conversation defaults'],['registries','Module & source registries'],['tool-connections','Tool connections'],['repair','Backup & repair'],['reset','Advanced recovery'],['ready-conversations','Ready conversations'],['automation','Terminal & automation'],['install-app','Install app'],]},
 ];
 export const advancedGroups=[
- {title:'AI configuration',pages:['providers','routing']},
+ {title:'AI configuration',pages:['providers','routing','suggestion-advanced']},
  {title:'Bundles & modules',pages:['app-bundles','add-bundles','defaults','registries']},
  {title:'Tools',pages:['tool-connections']},
  {title:'Performance & support',pages:['ready-conversations','repair','reset','automation','install-app']},
@@ -34,4 +35,4 @@ export function settingsPatch(page,sections=settingsSections){
 }
 export function settingsUnread(state,section){return section.pages.reduce((sum,[page])=>sum+(state.attention?.pages?.[page]||0),0);}
 export function settingsTitle(page,sections=settingsSections){return sections.flatMap(s=>s.pages).find(([id])=>id===page)?.[1]||'Settings';}
-export function settingsParent(page,sections=settingsSections){const section=sections.find(s=>s.pages.some(([id])=>id===page));return ['privacy','advanced','workspaces','appearance'].includes(section?.id)&&page!==section.id?section.id:null;}
+export function settingsParent(page,sections=settingsSections){const section=sections.find(s=>s.pages.some(([id])=>id===page));return ['privacy','advanced','workspaces','appearance','chat-input'].includes(section?.id)&&page!==section.id?section.id:null;}

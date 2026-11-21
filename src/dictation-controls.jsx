@@ -12,15 +12,15 @@ export function DictationSettings(){
  const [value,setValue,error]=usePreference(),available=!!recognitionAPI();
  return <section className="a-dictation-settings"><h3>Dictation</h3><label htmlFor="dictation-visibility">Microphone in the message box</label><select id="dictation-visibility" value={value} onChange={e=>setValue(e.target.value)}><option value="auto">Automatic</option><option value="show">Show</option><option value="hide">Hide</option></select>{error&&<p role="alert">{error}</p>}<p className="a-caption">Applies to this browser. Automatic shows dictation on supported desktops and hides it on iOS and Android, where keyboards usually include it. Dictation adds text to your draft; you choose when to send.</p><p className="a-caption">{available?'Your browser handles speech recognition and may send audio to its speech service.':'This browser does not support speech recognition. You can use keyboard dictation where available.'}</p></section>;
 }
-export function DictationButton({draft,onChange,disabled,controlRef}){
- const [preference]=usePreference(),[listening,setListening]=useState(false),[error,setError]=useState(''),latest=useRef({draft,onChange});latest.current={draft,onChange};
+export function DictationButton({draft,onChange,disabled,controlRef,onListening}){
+ const [preference]=usePreference(),[listening,setListening]=useState(false),[error,setError]=useState(''),latest=useRef({draft,onChange,onListening});latest.current={draft,onChange,onListening};
  const controller=useRef(null),visible=dictationVisible(preference,navigator,!!recognitionAPI());
  useEffect(()=>{
   const Recognition=recognitionAPI();if(!Recognition)return;
-  const control=new DraftDictation(Recognition,{language:navigator.language,onText:text=>{const value=appendDictation(latest.current.draft,text);latest.current.draft=value;latest.current.onChange(value)},onState:setListening,onError:setError});
+  const control=new DraftDictation(Recognition,{language:navigator.language,onText:text=>{const value=appendDictation(latest.current.draft,text);latest.current.draft=value;latest.current.onChange(value)},onState:value=>{setListening(value);latest.current.onListening?.(value)},onError:setError});
   controller.current=control;controlRef.current=control;
   const cancel=()=>control.cancel();window.addEventListener('pagehide',cancel);
-  return()=>{control.onState=()=>{};control.cancel();window.removeEventListener('pagehide',cancel);if(controlRef.current===control)controlRef.current=null;controller.current=null};
+  return()=>{control.onState=()=>{};control.cancel();latest.current.onListening?.(false);window.removeEventListener('pagehide',cancel);if(controlRef.current===control)controlRef.current=null;controller.current=null};
  },[controlRef]);
  useEffect(()=>{if(disabled||!visible)controller.current?.cancel()},[disabled,visible]);
  if(!visible)return null;

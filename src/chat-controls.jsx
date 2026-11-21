@@ -8,6 +8,7 @@ import {ChevronDown,X,Paperclip,Download} from 'lucide-react';
 import {providerFields} from './setup-data';
 import {ModelSelect} from './model-select';
 import {NextMessageImpact,bundleToolsMayChange,selectionImpact} from './next-message-impact';
+import {ProviderSelect} from './model-selection-fields.jsx';
 import {newChatSetup,draftDefaults} from './new-chat';
 import {useComposerPopover} from './composer-popover';
 import {providerOptions} from './provider-options';
@@ -257,9 +258,7 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
    <div className="a-settings-row a-composer-options-heading"><strong id={`${descriptionId}-heading`}>Model for this chat</strong>{!embedded&&<button type="button" className="a-icon" aria-label={compact?'Close chat options':'Close model settings'} data-action="view.update" onClick={close}><X/></button>}</div>
    {binding?.eligible===false&&<p role="status">{binding.reason} The existing selection is preserved.</p>}
    <div data-composer-page="provider">
-   <label htmlFor="chat-provider">Connection</label><select id="chat-provider" value={selected?draft.instance:''} data-action={isDraft?'view.update':'conversation.configure'} disabled={blocked} onChange={e=>chooseProvider(e.target.value)}>
-    <option value="" disabled>{providers.length?'Choose a connection':noProviders?'No connections configured':failure||delayed?'Connections unavailable':'Loading connections…'}</option>{options.map(row=><option key={row.id} value={row.id} disabled={providers.find(p=>p.id===row.id)?.config?.chat_enabled===false}>{row.label}{selectionImpact(impact,row.id)&&' · May cost more'}</option>)}
-   </select>
+   <label htmlFor="chat-provider">Connection</label><ProviderSelect controlId="chat-provider" value={draft.instance} providers={providers} options={options} mayCostMore={id=>selectionImpact(impact,id)} placeholderDisabled data-action={isDraft?'view.update':'conversation.configure'} disabled={blocked} onChange={chooseProvider} placeholder={providers.length?'Choose a connection':noProviders?'No connections configured':failure||delayed?'Connections unavailable':'Loading connections…'}/>
    {draft.instance&&!selected&&<small>Saved connection {draft.instance} is not available in this configuration scope.</small>}
    </div>
    <div data-composer-page="model">

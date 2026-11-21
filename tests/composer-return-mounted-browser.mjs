@@ -106,7 +106,7 @@ async function failedPreference(storage){
  const original='Keep **bold** and *italic*.\n\n- First\n- Second\n\n```js\n  code\n```';
  const {context,page}=await newMount({text:original,storage});
  try{
-  const editor=composer(page),choice=page.getByLabel('Return key',{exact:true});
+  const editor=composer(page),choice=page.getByLabel('Enter / Return key',{exact:true});
   await setRange(page,'p',{start:4});
   const initial=await snapshot(page);
   await page.keyboard.type('new ');
@@ -123,7 +123,7 @@ async function failedPreference(storage){
   await expect(choice).toHaveValue('newline');
   await expect(page.getByRole('alert')).toHaveText(/applies in this tab only.*could not confirm saving/);
   await expect(editor).toHaveAccessibleDescription(safeHelp);
-  await expect(choice).toHaveAccessibleDescription(/This browser only.*Return adds a new line/);
+  await expect(choice).toHaveAccessibleDescription('Use Send to send your message.');
   const after=await snapshot(page);
   const proof={case:'failed-preference-'+storage,before,after,storageCalls:await page.evaluate(()=>window.returnStorageCalls)};
   report.checks.push(proof);
