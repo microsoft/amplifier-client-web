@@ -473,6 +473,18 @@ const savedModelState=()=>({
   'configuration.catalog':{configurationRevision:0,providers:[{id:'one',sharedCatalogKey:'account-one',info:{defaults:{model:'first'}}}],effective:{instance:'one',model:'first'}}
  }}
 });
+test('a failed refresh leaves the exact model editor visible outside Advanced alongside last-good choices',async()=>{
+ const state=savedModelState(),session={id:'chat',pendingModelSelection:{instance:'one',model:'manual-deployment-id'}};
+ state.modelCatalogs['account-one']={...state.modelCatalogs['account-one'],phase:'error',stale:true};
+ let root;
+ try{
+  await renderAct(async()=>root=create(React.createElement(ModelControl,{state,session,act:record([])})));
+  const advanced=root.root.findByProps({className:'a-picker-advanced'});
+  assert.equal(advanced.findAllByProps({id:'chat-model'}).length,0);
+  assert.equal(field(root,'chat-model').props.value,'manual-deployment-id');
+  assert.deepEqual(optionValues(root,'chat-model-catalog'),['','first','second']);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
 test('a connection conflict explains withheld choices instead of claiming the model is undiscovered',async()=>{
  const calls=[],state=savedModelState(),session={id:'chat',status:'working'};
  state.runtimeControl.chat['configuration.catalog'].connectionBindings={

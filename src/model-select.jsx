@@ -24,7 +24,8 @@ export function ModelSelect({id,label='Model',value='',onChange,onCommit,entry,m
  useRegionActivity(region,loading);
  const [shown,filter,query]=useListFilter(state,act,'model-picker-'+id,models,row=>[row.id,row.name],'Search '+label.toLowerCase(),{simple:true});
  const input = <><label htmlFor={id}>Exact model ID</label><input id={id} aria-label={label} value={value} disabled={disabled} placeholder={placeholder} data-action="view.update" onChange={e=>{edited.current=true;onChange(e.target.value)}} onBlur={e=>{if(edited.current&&e.target.value.trim()){edited.current=false;onCommit?.(e.target.value.trim())}}} onKeyDown={e=>{if(e.key==='Enter'&&e.currentTarget.value.trim()){e.preventDefault();edited.current=false;onCommit?.(e.currentTarget.value.trim())}}}/><small>Manual ID — not verified by discovery. The connection checks it when you send.</small></>;
- const manualFallback=manual&&!models.length;
+ // Failed discovery can retain stale options. Keep the editable recovery path visible.
+ const manualFallback=manual&&(!models.length||entry?.phase==='error');
  const options=<>
   {!manual&&<button type="button" disabled={disabled} onClick={()=>setExactScope(scope)}>Enter an exact model ID</button>}
   {manual&&!manualFallback&&input}
