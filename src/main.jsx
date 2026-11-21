@@ -112,7 +112,7 @@ import {Questions,QuestionNotice} from './questions';
 import {NewChatHandoffs} from './new-chat-handoffs.jsx';
 import {createActionFeedback} from './action-feedback';
 import './action-feedback.css';
-import {createChatScroll} from './chat-scroll';
+import {createChatScroll,visibleMessage} from './chat-scroll';
 import {followEarlierHistory} from './history-scroll';
 import {isTopLevelChat} from './chat-navigation';
 import {SubagentHistory} from './subagent-history';
@@ -803,12 +803,19 @@ function App(){
   setRecordingTarget({sessionId:session?.id,group});
  };
 
- const readingWindowLoader=useRef(null),readingReference=useRef(null);
+ const readingWindowLoader=useRef(null),readingReference=useRef(null),revealLoadedMessage=useRef(null);
+ revealLoadedMessage.current=ensureMessageVisible;
  readingReference.current=(id,messageId)=>session?.id===id?messages.find(row=>row.id===messageId)?.sourceReference:null;
  readingWindowLoader.current=async(id,messageId,isCurrent,reference)=>{
   if(session?.id!==id)return false;
   if(await ensureMessageVisible(messageId))return true;
-  return detail.around(messageId,{jump:false,isCurrent,reference});
+  const found=await detail.around(messageId,{jump:false,isCurrent,reference});
+  if(!found)return false;
+  // A newly opened history page can itself contain a collapsed source.
+  await new Promise(resolve=>requestAnimationFrame(resolve));
+  if(!isCurrent())return false;
+  if(!visibleMessage(messagesPane.current,messageId))await revealLoadedMessage.current(messageId);
+  return true;
  };
  useLayoutEffect(()=>{if(!messagesPane.current)return;const scroll=createChatScroll(messagesPane.current,stickToBottom,setAwayFromBottom,{loadAnchor:(...args)=>readingWindowLoader.current?.(...args),readingReference:(...args)=>readingReference.current?.(...args)});chatScroll.current=scroll;return()=>{scroll.dispose();chatScroll.current=null}},[!!state,shell.ready]);
  useLayoutEffect(()=>{chatScroll.current?.select(session?.id??null,!historyPending&&!state?.navigationPending)},[session?.id,historyPending,state?.navigationPending,shell.ready]);
@@ -1185,11 +1192,14 @@ function App(){
      const sid=session?.id,owner=quoteApi.current;
      if(quote.sessionId!==sid)throw Error('This source is from another chat. Cross-chat quotation is not available.');
      const top=messagesPane.current?.scrollTop;
-     const find=()=>[...document.querySelectorAll('[data-message-id]')].find(row=>row.dataset.messageId===quote.messageId);
-     let node=find();if(!node){await ensureMessageVisible(quote.messageId);node=find();}
-     if(!node){const found=await detail.around(quote.messageId,{isCurrent:()=>latest.current?.selectedSessionId===sid&&quoteApi.current===owner});if(!found)throw Error('Original unavailable. The saved quotation remains.');}
-     if(latest.current?.selectedSessionId!==sid||quoteApi.current!==owner)return;
-     setQuoteReturn({sid,top,button});if(node){node.tabIndex=-1;node.scrollIntoView({block:'center'});node.focus({preventScroll:true});}
+     const sameSource=()=>latest.current?.selectedSessionId===sid&&quoteApi.current===owner;
+     if(!visibleMessage(messagesPane.current,quote.messageId)){
+      const found=await readingWindowLoader.current(sid,quote.messageId,sameSource);
+      if(!sameSource())return;
+      if(!found)throw Error('Original unavailable. The saved quotation remains.');
+     }
+     setQuoteReturn({sid,top,button});
+     chatScroll.current?.jump(quote.messageId);
      const source=session.messages?.find(row=>row.id===quote.messageId);
      if(!source||source.textDetail)return 'Saved quotation retained; source version could not be compared.';
      const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(source.text||''));

@@ -112,7 +112,7 @@ export function WorkTimeline({items,data,state,act,row,renderMessage}){
  if(items.length===1&&!row?.interim&&!row?.voiceWork&&!row?.groupedLocal)return <TurnTimeline data={data} turnId={firstTurn} state={state} act={act}/>;
  const observation=turns.some(turn=>turn.observationWindow===true),partial=turns.some(turn=>turn.observationWindow||turn.partialWindow);
  const summary=turns.length?combinedWork(turns,now):{phase:'recorded',running:false,usage:{calls:0}};
- const counts=row?.groupedLocal&&!partial?['tools','models'].flatMap(kind=>{
+ const counts=row?.groupedLocal&&!partial&&show&&fields.includes('calls')?['tools','models'].flatMap(kind=>{
   if(!turns.every(turn=>Number.isFinite(turn.nodeCounts?.[kind])))return [];
   const n=turns.reduce((sum,turn)=>sum+turn.nodeCounts[kind],0);
   return n?[`${n} ${kind==='tools'?'tool':'model'} ${n===1?'call':'calls'}`]:[];
@@ -128,10 +128,15 @@ export function WorkTimeline({items,data,state,act,row,renderMessage}){
   }
   act('view.update',{patch:{executionExpanded:[...next]}});
  };
+ const workTotals=open&&!partial&&show&&fields.length>0&&summary.usage.calls>0?<UsageDetails usage={summary.usage} scope="turn" record={{id:summaryId,sessionId:state.selectedSessionId,phase:summary.phase,elapsedSeconds:summary.elapsedSeconds,calls:summary.usage.calls}} observedAt={now} label="Work usage" costLabel="Work cost (USD)"/>:null;
  return <section className="a-execution-turn a-execution-content a-work-group" data-part="execution-group" data-local-activity={row?.groupedLocal||undefined} data-group-id={row?.voiceWork?firstTurn||row.id:undefined} data-voice-work-group={row?.voiceWork||undefined} data-work-input-id={row?.voiceInputIds?.length===1?row.voiceInputIds[0]:undefined} data-interim-group={row?.interim?row.id:undefined} aria-label="Work between messages">
   <button type="button" className="a-execution-line a-execution-turn-line" data-action="view.update" data-view-label={`${reportLabel}${updates>0?` · ${updates} ${updates===1?'update':'updates'}`:''} · expand work details`} aria-expanded={open} aria-controls={bodyId} onClick={toggle}>
-   <ChevronRight className={`a-execution-chevron ${open?'open':''}`}/><span className="a-execution-label">{label}{updates>0&&` · ${updates} ${updates===1?'update':'updates'}`}</span>{row?.groupedLocal&&!partial&&summary.elapsed&&<span className="a-activity-duration">{summary.elapsed}</span>}{!partial&&!row?.groupedLocal&&<Usage usage={summary.usage} scope="turn" pending={summary.running}/>}<Status status={summary.phase}/>
+   <ChevronRight className={`a-execution-chevron ${open?'open':''}`}/><span className="a-execution-label">{label}{updates>0&&` · ${updates} ${updates===1?'update':'updates'}`}</span>{row?.groupedLocal&&!partial&&show&&fields.includes('elapsedSeconds')&&summary.elapsed&&<span className="a-activity-duration">{summary.elapsed}</span>}{!partial&&!row?.groupedLocal&&<Usage usage={summary.usage} scope="turn" pending={summary.running}/>}<Status status={summary.phase}/>
   </button>
-  {open&&<div className="a-work-group-items a-work-group-body" id={bodyId}>{!partial&&summary.usage.calls>0&&<UsageDetails usage={summary.usage} scope="turn" record={{id:summaryId,sessionId:state.selectedSessionId,phase:summary.phase,elapsedSeconds:summary.elapsedSeconds,calls:summary.usage.calls}} observedAt={now} label="Work usage" costLabel="Work cost (USD)"/>}{items.map(item=>item.message?<React.Fragment key={item.message.id}>{renderMessage?.(item.message)}</React.Fragment>:<TurnTimeline key={item.turnId} data={data} turnId={item.turnId} state={state} act={act} embedded automatic={detail==='detailed'&&!expanded.has(summaryId)}/>)}</div>}
+  {open&&<div className="a-work-group-items a-work-group-body" id={bodyId}>
+   {!row?.groupedLocal&&workTotals}
+   {items.map(item=>item.message?<React.Fragment key={item.message.id}>{renderMessage?.(item.message)}</React.Fragment>:<TurnTimeline key={item.turnId} data={data} turnId={item.turnId} state={state} act={act} embedded automatic={detail==='detailed'&&!expanded.has(summaryId)}/>)}
+   {row?.groupedLocal&&workTotals&&<details className="a-activity-totals"><summary>Work totals</summary>{workTotals}</details>}
+  </div>}
  </section>;
 }

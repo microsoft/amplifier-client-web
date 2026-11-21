@@ -81,9 +81,9 @@ export function ModelContent({node,error,now,act}){
  const facts=[['Provider',node.provider],['Model',node.model],['Status',node.status||node.phase],['Recorded',node.observationWindow?formatTime(node.createdAt):null],['Started',formatTime(node.startedAt)],['Ended',formatTime(node.endedAt)],['Elapsed',showElapsed?elapsedLabel(node,now):null],...Object.entries(node.requestInfo||{}).map(([key,value])=>[requestLabels[key]||key,typeof value==='boolean'?(value?'Yes':'No'):value])].filter(([,value])=>value!=null&&value!=='');
 
  return <><dl className="a-execution-model-facts">{facts.map(([label,value])=><React.Fragment key={label}><dt>{label}</dt><dd>{String(value)}</dd></React.Fragment>)}</dl>
-  <UsageDetails usage={node.usage||(node.observation?node.observedUsage:null)} scope="step" record={{...node,calls:1}} observedAt={now} label="Model call usage" costLabel="Call cost (USD)"/>
+  <UsageDetails usage={node.usage||(node.observation?node.observedUsage:null)} scope="step" record={{...node,calls:node.observation||node.observationWindow?undefined:1}} observedAt={now} label="Model call usage" costLabel="Call cost (USD)"/>
   <ExecutionBlock label="Error" text={error.value} loading={error.incomplete}/><FieldStatus label="Error" field={error}/>
-  <small>Provider recordings may contain summaries instead of full payloads.</small>
+  {(node.requestDetail||node.responseDetail)&&<p className="a-caption">{providerRecordMediaNote}</p>}
   {node.recordingsGroup&&navigation?.openRecordings&&['request','response'].some(field=>!node[field+'Detail']&&!recordingExpiredAt(node[field+'RecordingExpired']))&&<p className="a-caption">Saved recordings may be listed separately. <button type="button" className="a-link" data-action="view.update" onClick={()=>navigation.openRecordings(node.recordingsGroup)}>Show saved recordings</button></p>}
   {['request','response'].map(field=><ModelPayload key={JSON.stringify([field,node[field+'Detail'],node[field+'Recording']?.sha256])} node={node} field={field} act={act}/>)}
  </>;
@@ -121,7 +121,6 @@ function AvailableModelPayload({node,field,act}){
  if(!reference)return <p className="a-caption">{isRunning(node)?`Waiting for a linked ${field} recording…`:node.observationWindow?`This event has no ${field} payload.`:`This call’s ${field} recording isn’t available here.`} {!isRunning(node)&&field==='request'&&!node.observationWindow&&<>Recording settings save automatically and apply when a supported runtime next prepares. They cannot create recordings for past calls. {act&&<button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:settingsPatch('diagnostics')})}>Open recording settings</button>}</>}</p>;
  const path=recording?'/api/conversation/provider-recording?'+new URLSearchParams({sessionId:reference.sessionId,id:reference.id,field,digest:recording.sha256,...(reference.windowKey?{windowKey:reference.windowKey}:{})}):null;
  return <section className="a-model-payload" aria-label={`Recorded ${field}`}>
-  <p className="a-caption">{providerRecordMediaNote}</p>
   {recording&&<><a className="a-link" download href={clientUrl(path)}>Download {recording.truncated?'partial':'full'} recorded {field} (JSON)</a><small>Redacted provider event · {(recording.bytes/1024/1024).toFixed(1)} MB{recording.truncated?' · Capture limit reached; some content is omitted.':''}</small></>}
   <button type="button" className="a-link a-execution-request-toggle" aria-expanded={open} onClick={()=>{setOpen(!open);setShowRecording(false)}}>{open?'Hide':'View'} {field}{!open&&Number.isFinite(reference.length)&&` · ${reference.length.toLocaleString()} characters`}</button>
   {open&&<>

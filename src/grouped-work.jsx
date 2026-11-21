@@ -3,11 +3,13 @@ import {ChevronRight} from 'lucide-react';
 import {combinedWork,isRunning,workLabel} from './timeline-data.js';
 import {peerSummary} from './peer-groups.js';
 import {detailOpen} from './interface-detail.js';
+import {selectedMetrics,metricsVisible} from './execution-observability.js';
 import {useShellContext} from './shell/runtime';
 
 export function ActivityGroup({row,turns,state,act,renderRow}){
  const bodyId=useId(),[reading,setReading]=useState(false);
- const shell=useShellContext(),level=shell?.composition?.presentation?.interfaceDetail||'standard';
+ const presentation=useShellContext()?.composition?.presentation||{},level=presentation.interfaceDetail||'standard';
+ const showElapsed=metricsVisible(presentation,'turn')&&selectedMetrics(presentation).includes('elapsedSeconds');
  const expanded=new Set(state.view?.executionExpanded||[]);
  const records=row.local.items.map(item=>turns.get(item.turnId));
  const running=records.some(isRunning),partial=records.some(turn=>turn.partialWindow);
@@ -22,7 +24,7 @@ export function ActivityGroup({row,turns,state,act,renderRow}){
  }
  return <section className="a-activity-group" data-activity-group={row.id} data-running={running} aria-label="Conversation work">
   {!running&&<button type="button" className="a-execution-line a-activity-summary" aria-expanded={open} aria-controls={bodyId} onClick={toggle}>
-   <ChevronRight className={'a-execution-chevron'+(open?' open':'')}/><span>{partial?'Recent work':workLabel(summary.phase,summary.elapsed)} · {peerSummary(row.peers.rows)}</span>
+   <ChevronRight className={'a-execution-chevron'+(open?' open':'')}/><span>{partial?'Recent work':workLabel(summary.phase,showElapsed?summary.elapsed:null)} · {peerSummary(row.peers.rows)}</span>
   </button>}
   {open&&<div id={bodyId} className="a-activity-sections" onFocusCapture={()=>{if(running)setReading(true)}}>
    {row.groups.map(renderRow)}

@@ -8,6 +8,10 @@ export function readingPositions(storage){
   set(id,value){if(!id)return;rows[id]={...value,seenAt:Date.now()};rows=Object.fromEntries(Object.entries(rows).sort((a,b)=>b[1].seenAt-a[1].seenAt).slice(0,100));try{storage?.setItem(STORAGE_KEY,JSON.stringify(rows))}catch{}},
  };
 }
+// Collapsed peer transcripts can retain message elements for accessibility and
+// exact identity. They are not usable anchors until their disclosure is open.
+const visibleRows=pane=>Array.from(pane?.querySelectorAll('[data-message-id]')||[]).filter(node=>!node.closest?.('[hidden]'));
+export const visibleMessage=(pane,id)=>visibleRows(pane).find(node=>node.dataset.messageId===id);
 export function createChatScroll(pane,following={current:true},onAway=()=>{},{loadAnchor,readingReference}={}){
  const document=pane.ownerDocument,view=document.defaultView;
  // This owner preserves message anchors; browser anchoring can otherwise move
@@ -50,7 +54,7 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
  // Heights are integer CSS pixels; scrollTop can be fractional after scaling.
  // This is geometry rounding, not a proximity threshold for reading intent.
  const atBottom=()=>Math.abs(pane.scrollHeight-pane.clientHeight-pane.scrollTop)<=1;
- const messages=()=>[...pane.querySelectorAll('[data-message-id]')];
+ const messages=()=>visibleRows(pane);
  const clearOverflow=()=>{delete pane.dataset.overflowAbove;delete pane.dataset.overflowBelow};
  const capture=()=>{
   const top=pane.getBoundingClientRect().top,rows=messages();
@@ -65,7 +69,10 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
  const report=()=>{const remaining=pane.scrollHeight-pane.scrollTop-pane.clientHeight;if(ready){pane.dataset.overflowAbove=String(pane.scrollTop>8);pane.dataset.overflowBelow=String(remaining>1);updateGutterInsets()}else clearOverflow();onAway(remaining>80);if(ready){capture();view.clearTimeout(saveTimer);saveTimer=view.setTimeout(persist,200)}};
  const restorePosition=position=>{
   const anchor=messages().find(node=>node.dataset.messageId===position.messageId);
-  if(anchor)pane.scrollTop+=anchor.getBoundingClientRect().top-pane.getBoundingClientRect().top-position.offset;
+  if(anchor){
+   pane.scrollTop+=anchor.getBoundingClientRect().top-pane.getBoundingClientRect().top-position.offset;
+   if(position.focus){anchor.tabIndex=-1;anchor.focus({preventScroll:true})}
+  }
   else pane.scrollTop=Math.min(position.top||0,pane.scrollHeight);
  };
  const flush=()=>{
@@ -73,9 +80,9 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
   if(followingCall()){
    anchorLoad=null;unresolvedPosition=null;restore=null;initial=false;submitted=null;resuming=false;following.current=false;pane.scrollTop=pane.scrollHeight;
   }else if(restore){
-   if(restore.messageId&&!messages().length)return;
+   if(restore.messageId&&!restore.focus&&!messages().length&&!pane.querySelector?.('[data-activity-group],[data-peer-run]'))return;
    if(restore.messageId&&!messages().some(node=>node.dataset.messageId===restore.messageId)&&loadAnchor&&attemptedAnchor!==restore.messageId){
-    const token={sessionId,messageId:restore.messageId,reference:restore.reference};anchorLoad=token;attemptedAnchor=token.messageId;unresolvedPosition=restore;
+    const token={sessionId,messageId:restore.messageId,reference:restore.reference};anchorLoad=token;attemptedAnchor=token.messageId;unresolvedPosition=restore.focus?{messageId:restore.messageId,offset:restore.offset,top:restore.top}:restore;
     const current=()=>!disposed&&anchorLoad===token;
     // A successful loader queues a render; it does not guarantee that React
     // has committed its DOM yet. Keep restoration until the anchor mounts.
@@ -124,7 +131,7 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
   for(const child of pane.children)if(!observed.has(child)){resize.observe(child);observed.add(child)}
  };
  const mutations=new view.MutationObserver(()=>{observeChildren();update();queueIframeFocus()});
- resize.observe(pane);observeChildren();mutations.observe(pane,{subtree:true,childList:true,characterData:true});
+ resize.observe(pane);observeChildren();mutations.observe(pane,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['hidden']});
  pane.addEventListener('scroll',scroll,{passive:true});pane.addEventListener('wheel',wheel,{passive:true});pane.addEventListener('touchmove',stop,{passive:true});pane.addEventListener('keydown',keyDown);view.addEventListener('pagehide',persist);
  document.addEventListener('focusin',queueIframeFocus);document.addEventListener('focusout',queueIframeFocus);view.addEventListener('blur',queueIframeFocus);view.addEventListener('focus',queueIframeFocus);
  return {
@@ -149,7 +156,12 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
    ready=isReady;if(!ready){clearOverflow();clearIframeFocus()}else queueIframeFocus();update();
   },
   submitted(id){if(callId&&callSessionId===sessionId)callPaused=false;anchorLoad=null;unresolvedPosition=null;submitted=id;resuming=false;restore=null;initial=false;following.current=true;update()},
-  jump(id){stop();const node=messages().find(row=>row.dataset.messageId===id);if(node){node.tabIndex=-1;pane.scrollTop+=node.getBoundingClientRect().top-pane.getBoundingClientRect().top-16;node.focus({preventScroll:true});report()}},
+  jump(id){
+   stop();
+   const target={messageId:id,top:pane.scrollTop,offset:16,focus:true};
+   if(visibleMessage(pane,id)){restorePosition(target);report()}
+   else if(loadAnchor){attemptedAnchor=null;restore=target;update()}
+  },
   reveal(){stop();if(callId&&callSessionId===sessionId)callPaused=false;pane.scrollTop=pane.scrollHeight;report()},
   dispose(){persist();disposed=true;clearOverflow();clearIframeFocus();restoreGutterInsets();pane.style.overflowAnchor=previousOverflowAnchor;view.cancelAnimationFrame(frame);view.clearTimeout(saveTimer);resize.disconnect();mutations.disconnect();pane.removeEventListener('scroll',scroll);pane.removeEventListener('wheel',wheel);pane.removeEventListener('touchmove',stop);pane.removeEventListener('keydown',keyDown);view.removeEventListener('pagehide',persist);document.removeEventListener('focusin',queueIframeFocus);document.removeEventListener('focusout',queueIframeFocus);view.removeEventListener('blur',queueIframeFocus);view.removeEventListener('focus',queueIframeFocus)},
  };
