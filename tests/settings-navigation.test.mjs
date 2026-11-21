@@ -13,10 +13,20 @@ test('every destination round-trips through the existing public view action',()=
   assert.equal(settingsLocation(patch).page,page);
   assert.equal(settingsLocation(patch).section.id,section.id);
  }
- assert.equal(seen.size,33);assert.ok(seen.has('instance-branding'));assert.ok(seen.has('external-agents'));assert.ok(seen.has('storage'));assert.ok(seen.has('testing'));assert.ok(seen.has('model-capacity'));
+ assert.equal(seen.size,35);assert.ok(seen.has('chat-input'));assert.ok(seen.has('suggestion-advanced'));assert.ok(seen.has('instance-branding'));assert.ok(seen.has('external-agents'));assert.ok(seen.has('storage'));assert.ok(seen.has('testing'));assert.ok(seen.has('model-capacity'));
  assert.ok(!seen.has('browser-appearance'));assert.ok(!seen.has('custom-appearance'));
  assert.ok(seen.has('desktop'));assert.ok(!seen.has('publishing'));assert.ok(seen.has('workspaces'));
  assert.throws(()=>settingsPatch('not-a-page'),/Unknown settings page/);
+});
+test('one suggested-messages Advanced destination belongs to Chat & input and links from global Advanced',()=>{
+ assert.equal(settingsParent('suggestion-advanced'),'chat-input');
+ assert.deepEqual(settingsTrail(settingsPatch('suggestion-advanced')).map(row=>row.key),['index','chat-input','suggestion-advanced']);
+ assert.equal(advancedGroups.find(group=>group.title==='AI configuration').pages.includes('suggestion-advanced'),true);
+ const experience=readFileSync(new URL('../src/settings-experience.jsx',import.meta.url),'utf8');
+ assert.match(experience,/page==='chat-input'.*ComposerReturnSettings/);
+ assert.doesNotMatch(experience,/page==='privacy'.*SuggestionSettings|page==='advanced'.*SuggestionPromptSettings/);
+ const main=readFileSync(new URL('../src/main.jsx',import.meta.url),'utf8');
+ assert.doesNotMatch(main,/ComposerReturnSettings/);
 });
 test('saved and agent navigation from the old hierarchy stays meaningful',()=>{
  assert.equal(settingsLocation({settingsSection:'maintenance',settingsExpanded:['notifications']}).section.id,'notifications');

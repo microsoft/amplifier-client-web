@@ -19,7 +19,7 @@ import {MarkdownComposer} from './markdown-composer.jsx';
 import {useTranscriptSuggestion} from './use-transcript-suggestion.jsx';
 import {suggestionOutboxPending} from './transcript-suggestion.js';
 import {clearSuggestionModels} from './suggestion-model-settings.jsx';
-import {ComposerReturnHelp,ComposerReturnSettings} from './composer-return-preference.jsx';
+import {ComposerReturnHelp} from './composer-return-preference.jsx';
 import {automaticReturnMode} from './composer-return.js';
 import {ComposerAdd} from './composer-add.jsx';
 import {ButtonTooltips} from './tooltips';
@@ -1068,7 +1068,7 @@ function App(){
  }});
  const settingsState={...state,view:{...state?.view,settingsCanvas:canvasSettingsVisible}};
  const settingsAct=(name,args={},meta={})=>act(name,name==='view.update'&&canvasSettingsVisible&&args.patch?.panel==='settings'?{...args,patch:{...args.patch,panel:null,settingsCanvas:true}}:args,meta);
- const settingsSurface=<SettingsExperience state={settingsState} session={settingsSession} act={settingsAct} dispatch={dispatch} open={open} close={()=>canvasSettingsVisible?act('canvas.tabClose',{id:state.canvas.id}):dismissPanel()} navigationRef={settingsNavigation} appearance={<><AppearanceSettings state={state} appearance={appearance} act={dispatch} editor={appearanceEditor} previewOwner={appearancePreviewOwner} preferenceStatus={appearancePreferenceStatus} onPreferenceChange={updateAppearancePreference} onPreferenceSelect={selectAppearanceProfile}/><ComposerReturnSettings/></>}/>;
+ const settingsSurface=<SettingsExperience state={settingsState} session={settingsSession} act={settingsAct} dispatch={dispatch} open={open} close={()=>canvasSettingsVisible?act('canvas.tabClose',{id:state.canvas.id}):dismissPanel()} navigationRef={settingsNavigation} appearance={<AppearanceSettings state={state} appearance={appearance} act={dispatch} editor={appearanceEditor} previewOwner={appearancePreviewOwner} preferenceStatus={appearancePreferenceStatus} onPreferenceChange={updateAppearancePreference} onPreferenceSelect={selectAppearanceProfile}/>}/>;
  const browsing=workSurface(state)!=='chat';
  // Navigation/work-surface departure is handled by the suggestion owner so it
  // may retain READY privately. Actual history loading and safety blockers clear it.

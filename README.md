@@ -37,9 +37,17 @@ the development host. This client does not install or start the agent backend.
 
 ## Suggested messages
 
-On a host that supports app-level suggestions, Settings → Privacy lets you save
-an explicit suggestion provider connection, model and reasoning effort, independently of the chat
-model. Suggestions are off by default and also require this browser tab's opt-in.
+On a host that supports app-level suggestions, Settings → Chat & input has one
+everyday **Show suggested messages** switch and the Return-key preference.
+Suggestions are off by default. Your choice is remembered in this browser for
+this sign-in, across service restarts; another sign-in starts off.
+The suggestion provider/account and model are shown separately from the chat model.
+The same feature's **Advanced settings** holds explicit host setup across workspaces,
+model/effort choices, expert recent/full text sharing and a deeper custom instruction.
+Global Advanced and Privacy link to this one feature destination rather than owning
+duplicate editors. If host setup is missing, enabling opens a compact **Save setup
+and enable** flow; opening it alone changes neither host settings nor your choice.
+Host-save success and failed browser-preference persistence are reported separately.
 There is no automatic model selection or fallback; a configured connection is
 not a claim that every provider or model supports this feature.
 
@@ -57,8 +65,9 @@ creation or regeneration control. Reopening or reloading an eligible conversatio
 can ask the host for its current source-bound result, including a cached empty
 outcome, without duplicate model work. The host owns durable private suggestion
 storage; ghosts are never stored as drafts or in a second persistent browser cache.
-Starting a new chat before it has a response makes no request. In Settings →
-Advanced, the suggestion prompt can be edited and reset to the host default.
+Starting a new chat before it has a response makes no request. In suggested-message
+Advanced settings, restoring the default instruction stages an edit requiring Save;
+the actual sharing modes remain recent conversation or full visible conversation.
 
 The private preview is not part of the editor document. Tab in the focused empty
 editor, or **Use suggestion**, adds literal, editable, undoable text; sending is

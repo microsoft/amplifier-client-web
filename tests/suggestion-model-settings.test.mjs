@@ -4,11 +4,12 @@ import React,{act as renderAct} from 'react';
 import {create} from 'react-test-renderer';
 import {createServer} from 'vite';
 const server=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
-const {SuggestionSettings,publishSuggestionModels}=await server.ssrLoadModule('/src/suggestion-model-settings.jsx');
+const {SuggestionSetup,SuggestionSettings,publishSuggestionModels}=await server.ssrLoadModule('/src/suggestion-model-settings.jsx');
 const {suggestionScope}=await server.ssrLoadModule('/src/transcript-suggestion.js');
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 globalThis.window=new EventTarget();
 globalThis.sessionStorage={getItem:()=>null};
+globalThis.localStorage={getItem:()=>null,setItem(){}};
 test.after(()=>server.close());
 const metadata={info:{config_fields:[]},configSchema:{fields:[{id:'reasoning_effort',choices:['low','medium','high'],requires_model:true}]}};
 const models=['haiku-fixture','sonnet-fixture','opus-fixture','other-fixture'];
@@ -18,7 +19,7 @@ function frame(){return {client:{hostInstanceId:crypto.randomUUID(),historyScope
 async function mounted(state){
  publishSuggestionModels(suggestionScope(state),{suggestionModels:config,providers:[{id:'anthropic',displayName:'Global account',module:'provider-anthropic',sharedCatalogKey:'global-key'}]},0);
  const calls=[],act=async(action,args)=>{calls.push({action,args});return {accepted:true}};let root;
- const render=()=>renderAct(async()=>{const element=React.createElement(SuggestionSettings,{state,act,navigate(){}});if(root)root.update(element);else root=create(element)});
+ const render=()=>renderAct(async()=>{const element=React.createElement(SuggestionSetup,{state,act,navigate(){}});if(root)root.update(element);else root=create(element)});
  await render();return {root,calls,render,close:()=>renderAct(async()=>root.unmount())};
 }
 test('deferred shared projection uses exact saved-global-key full setup catalog without configurationTarget',async()=>{
@@ -26,7 +27,7 @@ test('deferred shared projection uses exact saved-global-key full setup catalog 
  const h=await mounted(state);try{
   assert.equal(field(h.root,'Suggestion model').type,'select');
   assert.deepEqual(field(h.root,'Suggestion model').findAllByType('option').map(row=>row.props.value).filter(Boolean),models);
-  assert.equal(h.root.root.find(node=>node.type==='input'&&node.props.type==='range').props.max,2);
+  assert.deepEqual(field(h.root,'Suggestion reasoning effort').findAllByType('option').map(row=>row.props.value),['','low','medium','high']);
   assert.equal(h.calls.some(row=>row.action==='providers.models'),false,'Full matching public projection is already present');
   assert.equal(h.calls.some(row=>['conversation.configure','providers.configureSuggestions','conversation.send'].includes(row.action)),false);
  }finally{await h.close()}
@@ -63,4 +64,99 @@ test('older full catalog cannot replace a newer deferred shared generation',asyn
   assert.equal(field(h.root,'Suggestion model').type,'input');
   assert.equal(h.calls.filter(row=>row.action==='providers.models').length,1);
  }finally{await h.close()}
+});
+const button=(root,name)=>root.root.findAllByType('button').find(node=>node.children.join('')===name);
+const toggle=root=>root.root.find(node=>node.type==='input'&&node.props.type==='checkbox'&&!node.props['aria-label']);
+async function everyday({saved={...config},saveResult,storageFails=false}={}){
+ const state=frame();state.client.historyScope=crypto.randomUUID().replaceAll('-','').repeat(2);
+ const storage=new Map();globalThis.localStorage={getItem:key=>storage.get(key)??null,setItem(key,value){if(storageFails)throw Error('blocked');storage.set(key,value)}};
+ publishSuggestionModels(suggestionScope(state),{suggestionModels:saved,providers:[{id:'anthropic',displayName:'Global account',sharedCatalogKey:'global-key'}]},0);
+ const calls=[];let root;
+ const act=async(action,args)=>{calls.push({action,args});if(action==='providers.configureSuggestions')return saveResult?saveResult(args):{accepted:true,result:{suggestionModels:{...saved,...args},configurationChanged:true}};return {accepted:true}};
+ const render=()=>renderAct(async()=>{const element=React.createElement(SuggestionSettings,{state,act,navigate(){}});if(root)root.update(element);else root=create(element)});
+ await render();return {state,calls,storage,get root(){return root},render,close:()=>renderAct(async()=>root.unmount())};
+}
+test('configured everyday toggle is immediate durable browser preference with zero host writes',async()=>{
+ const h=await everyday();try{
+  assert.equal(toggle(h.root).props.checked,false);await renderAct(async()=>toggle(h.root).props.onChange({target:{checked:true}}));
+  assert.equal(toggle(h.root).props.checked,true);assert.equal([...h.storage.values()][0],'true');assert.deepEqual(h.calls,[]);
+  await renderAct(async()=>toggle(h.root).props.onChange({target:{checked:false}}));assert.equal(toggle(h.root).props.checked,false);assert.deepEqual(h.calls,[]);
+ }finally{await h.close()}
+});
+test('missing setup cancel/rejection keeps browser choice off; Save setup and enable uses one partial global write',async()=>{
+ for(const mode of ['cancel','rejected','success']){
+  const h=await everyday({saved:{...config,enabled:false,transcriptMode:'full',humanTurns:9},saveResult:mode==='rejected'?async()=>({accepted:false,error:'No setup permission'}):undefined});try{
+   await renderAct(async()=>toggle(h.root).props.onChange({target:{checked:true}}));assert.equal(toggle(h.root).props.checked,false);
+   if(mode==='cancel'){await renderAct(async()=>button(h.root,'Cancel setup').props.onClick());assert.deepEqual(h.calls,[]);continue}
+   await renderAct(async()=>button(h.root,'Save setup and enable').props.onClick());
+   assert.deepEqual(h.calls.filter(row=>row.action==='providers.configureSuggestions'),[{action:'providers.configureSuggestions',args:{enabled:true,provider:'anthropic',model:'haiku-fixture',effort:'low',scope:'global',configurationTarget:{kind:'global'}}}]);
+   assert.equal(toggle(h.root).props.checked,mode==='success');
+   if(mode==='rejected')assert.ok(h.root.root.findAllByProps({role:'alert'}).some(node=>node.children.join('').includes('No setup permission')));
+  }finally{await h.close()}
+ }
+});
+test('late setup success after newer Off never enables browser; storage failure reports split outcome',async()=>{
+ let release;const h=await everyday({saved:{...config,enabled:false},saveResult:args=>new Promise(resolve=>{release=()=>resolve({accepted:true,result:{suggestionModels:{...config,...args}}})})});try{
+  await renderAct(async()=>toggle(h.root).props.onChange({target:{checked:true}}));
+  let pending;await renderAct(async()=>{pending=button(h.root,'Save setup and enable').props.onClick()});
+  await renderAct(async()=>toggle(h.root).props.onChange({target:{checked:false}}));
+  await renderAct(async()=>{release();await pending});assert.equal(toggle(h.root).props.checked,false);
+ }finally{await h.close()}
+ const failed=await everyday({saved:{...config,enabled:false},storageFails:true});try{
+  await renderAct(async()=>toggle(failed.root).props.onChange({target:{checked:true}}));await renderAct(async()=>button(failed.root,'Save setup and enable').props.onClick());
+  assert.equal(toggle(failed.root).props.checked,false);
+  assert.ok(failed.root.root.findAllByProps({role:'status'}).some(node=>node.children.join('').includes('Host setup was saved. Suggestions remain off')));
+ }finally{await failed.close()}
+});
+test('held setup success respects newer cross-tab Off',async()=>{
+ let release;const h=await everyday({saved:{...config,enabled:false},saveResult:args=>new Promise(resolve=>{release=()=>resolve({accepted:true,result:{suggestionModels:{...config,...args}}})})});try{
+  await renderAct(async()=>toggle(h.root).props.onChange({target:{checked:true}}));
+  let pending;await renderAct(async()=>{pending=button(h.root,'Save setup and enable').props.onClick()});
+  const preferenceKey='amplifier.transcript-suggestions.v2:'+h.state.client.historyScope;h.storage.set(preferenceKey,'false');
+  await renderAct(async()=>{const e=new Event('storage');Object.assign(e,{key:preferenceKey,storageArea:localStorage});window.dispatchEvent(e)});
+  await renderAct(async()=>{release();await pending});
+  assert.equal(toggle(h.root).props.checked,false);assert.equal(h.storage.get(preferenceKey),'false');
+ }finally{await h.close()}
+});
+test('host-wide Off saves without a present provider or model and preserves unrelated selection fields',async()=>{
+ const state=frame();publishSuggestionModels(suggestionScope(state),{suggestionModels:{...config,model:'unavailable'},providers:[]},0);
+ const calls=[];let root;const act=async(action,args)=>{calls.push({action,args});return {accepted:true,result:{suggestionModels:{...config,enabled:false}}}};
+ try{
+  await renderAct(async()=>root=create(React.createElement(SuggestionSetup,{state,act,navigate(){}})));
+  const allow=root.root.find(node=>node.type==='input'&&node.props.type==='checkbox');
+  await renderAct(async()=>allow.props.onChange({target:{checked:false}}));
+  assert.equal(button(root,'Save setup').props.disabled,false);await renderAct(async()=>button(root,'Save setup').props.onClick());
+  assert.deepEqual(calls.filter(row=>row.action==='providers.configureSuggestions'),[{action:'providers.configureSuggestions',args:{enabled:false,scope:'global',configurationTarget:{kind:'global'}}}]);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+test('editing setup while host is already disabled still saves the chosen model and tuning',async()=>{
+ const state=frame();publishSuggestionModels(suggestionScope(state),{suggestionModels:{...config,enabled:false},providers:[{id:'anthropic',sharedCatalogKey:'global-key'}]},0);
+ const calls=[];let root;const act=async(action,args)=>{calls.push({action,args});return {accepted:true,result:{suggestionModels:{...config,...args}}}};
+ try{
+  await renderAct(async()=>root=create(React.createElement(SuggestionSetup,{state,act,navigate(){}})));
+  await renderAct(async()=>field(root,'Suggestion model').props.onChange({target:{value:'other-fixture'}}));
+  await renderAct(async()=>button(root,'Save setup').props.onClick());
+  const args=calls.find(row=>row.action==='providers.configureSuggestions').args;
+  assert.equal(args.enabled,false);assert.equal(args.model,'other-fixture');assert.equal(args.effort,null);assert.equal(args.transcriptMode,'last_n');
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+test('held compact setup completion after account A-B-A does not enable either account',async()=>{
+ let release;const h=await everyday({saved:{...config,enabled:false},saveResult:args=>new Promise(resolve=>{release=()=>resolve({accepted:true,result:{suggestionModels:{...config,...args}}})})});try{
+  await renderAct(async()=>toggle(h.root).props.onChange({target:{checked:true}}));let pending;
+  await renderAct(async()=>{pending=button(h.root,'Save setup and enable').props.onClick()});
+  const original=h.state.client.historyScope;h.state.client.historyScope='d'.repeat(64);await h.render();
+  h.state.client.historyScope=original;await h.render();
+  await renderAct(async()=>{release();await pending});assert.equal(toggle(h.root).props.checked,false);
+  assert.equal([...h.storage.values()].includes('true'),false);
+ }finally{await h.close()}
+});
+test('unadvertised saved effort is preserved as summary, never a useless select or silent reset',async()=>{
+ const state=frame();state.setup.providerCatalogs.anthropic.metadata={configSchema:{fields:[]}};state.modelCatalogs['global-key'].metadata={configSchema:{fields:[]}};
+ publishSuggestionModels(suggestionScope(state),{suggestionModels:{...config,effort:'saved-only'},providers:[{id:'anthropic',sharedCatalogKey:'global-key'}]},0);
+ let root;const calls=[];try{
+  await renderAct(async()=>root=create(React.createElement(SuggestionSetup,{state,act:async(action,args)=>{calls.push({action,args});return {accepted:true}},navigate(){}})));
+  assert.equal(field(root,'Suggestion reasoning effort'),undefined);
+  assert.ok(root.root.findAllByType('p').some(node=>node.children.join('').includes('Saved reasoning effort: saved-only')));
+  assert.equal(calls.some(row=>row.action==='providers.configureSuggestions'),false);
+ }finally{await renderAct(async()=>root?.unmount())}
 });

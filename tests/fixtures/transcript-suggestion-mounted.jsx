@@ -3,7 +3,7 @@ import React,{useLayoutEffect,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {MarkdownComposer} from '../../src/markdown-composer.jsx';
 import {useTranscriptSuggestion} from '../../src/use-transcript-suggestion.jsx';
-import {SuggestionSettings,SuggestionPromptSettings} from '../../src/suggestion-model-settings.jsx';
+import {SuggestionSettings,SuggestionAdvancedSettings} from '../../src/suggestion-model-settings.jsx';
 import {createConversationNavigation} from '../../src/conversation-navigation.js';
 import '../../src/reference.css';
 import '../../src/transcript-suggestion.css';
@@ -11,7 +11,7 @@ import '../../src/transcript-suggestion.css';
 const config={enabled:true,provider:'cheap',model:'cheap-model',effort:'low',prompt:'Default fixture prompt.',defaultPrompt:'Default fixture prompt.',transcriptMode:'last_n',humanTurns:6,revision:'config1'};
 const fixtureMetadata={info:{config_fields:[]},configSchema:{fields:[{id:'reasoning_effort',choices:['low','medium','high'],requires_model:true}]}};
 const fixtureCatalog={phase:'ready',supported:true,provenance:'provider-api',sharedCatalogKey:'cheap-key',loadedAt:100,models:['cheap-model','haiku-fixture','other-model','fourth-model'],metadata:fixtureMetadata};
-const initial={client:{hostInstanceId:'fixture',historyScope:'principal'},selectedSessionId:'one',view:{},modelCatalogs:{'cheap-key':{phase:'ready',supported:true,provenance:'provider-api',loadedAt:100,modelsDeferred:true,metadata:{info:{},configSchema:{fields:[]}}}},setup:{providerCatalogs:{cheap:fixtureCatalog}},sessions:[{id:'one',status:'idle',messages:[{id:'user1',role:'user',text:'An earlier request.'},{id:'answer1',role:'assistant',text:'A visible answer.'}]},{id:'two',status:'idle',messages:[{id:'answer-B',role:'assistant',text:'A second visible answer.'}]}]};
+const initial={client:{hostInstanceId:'fixture',historyScope:'a'.repeat(64)},selectedSessionId:'one',view:{},modelCatalogs:{'cheap-key':{phase:'ready',supported:true,provenance:'provider-api',loadedAt:100,modelsDeferred:true,metadata:{info:{},configSchema:{fields:[]}}}},setup:{providerCatalogs:{cheap:fixtureCatalog}},sessions:[{id:'one',status:'idle',messages:[{id:'user1',role:'user',text:'An earlier request.'},{id:'answer1',role:'assistant',text:'A visible answer.'}]},{id:'two',status:'idle',messages:[{id:'answer-B',role:'assistant',text:'A second visible answer.'}]}]};
 function App(){
  const [state,setState]=useState(initial),[draft,setDraft]=useState(''),[props,setProps]=useState({}),[blocked,setBlocked]=useState(false),[composing,setComposing]=useState(false),[connected,setConnected]=useState(true),[advanced,setAdvanced]=useState(false);
  const live=useRef(null),editorRef=useRef(null),quoteApi=useRef(null),sends=useRef([]),calls=useRef([]),selection=useRef({...config}),pending=useRef(false),sequence=useRef(1);
@@ -88,6 +88,6 @@ function App(){
  return <><form onSubmit={event=>{event.preventDefault();if(!quoteApi.current?.suggestionValidating())sends.current.push('form submit')}}>
   <MarkdownComposer value={draft} readOnly={!!live.current.draftNavigationPending} editorRef={editorRef} quoteApi={quoteApi} onChange={text=>{suggestion.supersede('editor-change');setDraft(text)}} onSend={()=>{if(!quoteApi.current?.suggestionValidating())sends.current.push(draft)}} onFiles={()=>{}} suggestion={suggestion.ghost} onSuggestionSupersede={suggestion.supersede} onComposing={setComposing} {...props}/>
   <button type="submit">Send fixture</button>
- </form><SuggestionSettings state={state} act={act} navigate={()=>setAdvanced(true)}/><button type="button" onClick={()=>setAdvanced(true)}>Advanced settings</button>{advanced&&<SuggestionPromptSettings state={state} act={act} navigate={()=>{}}/>}</>;
+ </form><SuggestionSettings state={state} act={act} navigate={()=>setAdvanced(true)}/><button type="button" onClick={()=>setAdvanced(true)}>Advanced settings</button>{advanced&&<SuggestionAdvancedSettings state={state} act={act} navigate={()=>{}}/>}</>;
 }
 createRoot(document.getElementById('fixture')).render(<App/>);
