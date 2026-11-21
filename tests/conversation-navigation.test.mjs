@@ -146,3 +146,28 @@ test('a host restart clears the pending draft fence',()=>{
  const restarted={...before,client:{hostInstanceId:'new-host'}};nav.remember(restarted);
  assert.equal(nav.apply(restarted),restarted);
 });
+
+test('composer focus is one-use and requires exact explicit selection commit',()=>{
+ const nav=createConversationNavigation(),before=state('a'),interaction={revision:1};
+ assert.equal(nav.claimFocus(before,{interaction,editable:true}),false,'Hydration has no focus intent');
+ const token=nav.beginFocus(before,'b',{interaction,desktop:true});
+ assert.equal(nav.claimFocus(state('b'),{interaction,editable:true}),false,'Optimistic selection is not commitment');
+ nav.settleFocus(token,true);
+ assert.equal(nav.claimFocus(state('b'),{interaction,editable:true}),true);
+ assert.equal(nav.claimFocus(state('b'),{interaction,editable:true}),false,'SSE/render repeats do not steal focus');
+});
+test('newer selection, rejection, user interaction and unsafe surfaces revoke pending focus',()=>{
+ for(const scenario of ['newer','rejected','input','host','panel','readonly','navigation','touch']){
+  const nav=createConversationNavigation(),before=state('a'),interaction={revision:1},after=state('b');
+  const token=nav.beginFocus(before,'b',{interaction,desktop:scenario!=='touch'});
+  if(scenario==='newer')nav.beginFocus(before,'c',{interaction,desktop:true});
+  nav.settleFocus(token,scenario!=='rejected');
+  let current=interaction,editable=true;
+  if(scenario==='input')current={revision:2};
+  if(scenario==='host')after.client={hostInstanceId:'other'};
+  if(scenario==='panel')after.view.panel='settings';
+  if(scenario==='readonly')editable=false;
+  if(scenario==='navigation')after.navigationPending=true;
+  assert.equal(nav.claimFocus(after,{interaction:current,editable}),false,scenario);
+ }
+});

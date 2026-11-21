@@ -35,6 +35,65 @@ npm run dev
 Open the local address printed by Vite. API and WebSocket requests are proxied to
 the development host. This client does not install or start the agent backend.
 
+## Suggested messages
+
+On a host that supports app-level suggestions, Settings → Chat & input has one
+everyday **Show suggested messages** switch and the Enter / Return preference.
+Suggestions are off by default. The choice is synced in this authenticated
+installation owner's saved settings across clients, reloads and sign-ins.
+It is not a cloud or cross-host account preference. Old browser choices are
+not migrated or promoted into the synced setting.
+The suggestion provider/account and model are shown separately from the chat model.
+The same feature's **Advanced settings** holds explicit host setup across workspaces,
+model/effort choices, expert recent/full text sharing and a deeper custom instruction.
+Global Advanced and Privacy link to this one feature destination rather than owning
+duplicate editors. If host setup is missing, enabling opens a compact **Save setup
+and enable** flow; opening it alone changes neither host settings nor your choice.
+Host-setup success and a failed synced-preference save are reported separately.
+Preference saves use a setting-specific revision so another client's newer Off
+choice wins over a delayed setup-and-enable operation.
+There is no automatic model selection or fallback; a configured connection is
+not a claim that every provider or model supports this feature.
+
+The host sends bounded visible conversation text to the selected provider,
+including other participants' messages—not an agent's private context or an
+unsent draft. The client requests a suggestion only by conversation and committed
+message identifiers. The selected chat can request once when idle with an empty
+message box while the page is visible and focused, including when you visit an
+existing chat. No other chat or background page requests work. A source-bound
+READY response can remain in bounded private memory while its source and settings
+are unchanged; revisits still validate the original attempt without model work.
+Finite responses obey their original expiry. Failed, empty, cancelled or missing
+attempts do not trigger a client retry loop. Suggestions are automatic; there is no
+creation or regeneration control. Reopening or reloading an eligible conversation
+can ask the host for its current source-bound result, including a cached empty
+outcome, without duplicate model work. The host owns durable private suggestion
+storage; ghosts are never stored as drafts or in a second persistent browser cache.
+Starting a new chat before it has a response makes no request. In suggested-message
+Advanced settings, restoring the default instruction stages an edit requiring Save;
+the actual sharing modes remain recent conversation or full visible conversation.
+Advanced model details (pricing, catalog origin and refresh time) stay in a
+secondary disclosure; ordinary connection/model controls remain readable.
+
+Writing offers Automatic with its actual platform outcome, explicit **Send
+message**, or **Start a new line**. Existing Automatic/newline preferences and
+the conservative touch default are preserved. Explicit Send uses the same
+guarded Enter handler; Shift+Enter continues writing and IME confirmation does
+not send. The keyboard preference remains browser-local, separate from the
+synced suggestion setting and from appearance profiles.
+
+The private preview is not part of the editor document. Tab in the focused empty
+editor, or **Use suggestion**, adds literal, editable, undoable text; sending is
+always a separate action. Typing or pasting hides the placeholder. Clearing the
+message box, including Undo after acceptance, can restore the same valid
+suggestion after a status-only check, without another model call. Escape dismisses
+it for that source; Stop, attachments, quotes and source/configuration changes
+invalidate it. Explicit desktop chat selection focuses an editable composer once
+after navigation commits, unless newer user interaction or a blocked surface
+takes priority. Touch-capable environments do not automatically focus it. The mounted browser check
+`node tests/transcript-suggestion-mounted-browser.mjs` uses synthetic action
+responses. It does not qualify a provider, installed host, or LAN deployment.
+
 ## Check and build
 
 ```sh

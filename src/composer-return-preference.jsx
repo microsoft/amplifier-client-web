@@ -19,18 +19,19 @@ export function ComposerReturnHelp({id}){
 
 export function ComposerReturnSettings(){
  const {value,error,mode,automatic,set}=useComposerReturn(),id=useId();
- return <section className="a-appearance-settings a-appearance-preference-group" aria-labelledby={id}>
-  <h2 id={id}>Writing</h2>
-  <div className="a-appearance-option" data-composer-return-preference>
-   <div className="a-appearance-option-description">
-    <h3><label htmlFor={id+'-return'}>Return key</label></h3>
-    <p id={id+'-help'}>This browser only, separate from appearance profiles. {value==='automatic'?'Automatic: '+returnKeyHelp(automatic):returnKeyHelp(mode)}</p>
+ return <section className="a-writing-settings" aria-labelledby={id}>
+  <h4 id={id}>Writing</h4>
+  <div className="a-settings-row" data-composer-return-preference>
+   <div>
+    <label htmlFor={id+'-return'}>Enter / Return key</label>
+    <p id={id+'-help'}>{mode==='desktop-send'?'Shift+Enter adds a new line.':'Use Send to send your message.'}</p>
     {error&&<p role="alert">{error}</p>}
    </div>
-   <div className="a-appearance-control">
+   <div>
     <select id={id+'-return'} value={value} aria-describedby={id+'-help'} onChange={event=>set(event.target.value)}>
-     <option value="automatic">Automatic (recommended)</option>
-     <option value="newline">Always insert a new line</option>
+     <option value="automatic">{automatic==='desktop-send'?'Automatic — send message':'Automatic — start a new line'}</option>
+     <option value="send">Send message</option>
+     <option value="newline">Start a new line</option>
     </select>
    </div>
   </div>

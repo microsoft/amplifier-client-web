@@ -261,3 +261,38 @@
 #amp-one .a-testing-settings dd>small{display:block;color:var(--a-muted)}
 #amp-one :is(.a-testing-settings,.a-testing-section) .a-dialog-actions{gap:10px;margin-top:16px}
 @media(max-width:600px){#amp-one .a-voice-connection{padding:14px}#amp-one .a-testing-settings dl{grid-template-columns:minmax(0,1fr);gap:4px}#amp-one .a-testing-settings dd+dt{margin-top:12px}}
+
+/* Suggested-message and writing settings share the everyday form rhythm:
+   readable measure, distinct groups and label/control proximity, not tiny type. */
+#amp-one :is(.a-suggestion-preferences,.a-suggestion-advanced,.a-writing-settings){max-width:46rem;min-width:0}
+#amp-one :is(.a-suggestion-preferences,.a-suggestion-form,.a-writing-settings) h4{margin:0 0 8px}
+#amp-one :is(.a-suggestion-preferences,.a-suggestion-form,.a-writing-settings) p{margin:6px 0 12px;line-height:1.5;overflow-wrap:anywhere}
+#amp-one .a-suggestion-preferences>.a-settings-row{margin:0 0 8px;gap:24px}
+#amp-one .a-suggestion-switch{display:flex;align-items:center;justify-content:center;flex:none;min-width:44px;min-height:44px;margin:0}
+#amp-one .a-suggestion-switch>input{flex:none;width:20px;height:20px;margin:0}
+#amp-one .a-writing-settings{margin-top:28px;padding-top:24px;border-top:1px solid var(--a-line)}
+#amp-one .a-writing-settings .a-settings-row{align-items:flex-start;margin-top:16px}
+#amp-one .a-writing-settings select{max-width:100%;min-height:44px}
+#amp-one .a-suggestion-field{display:grid;grid-template-columns:minmax(8rem,.8fr) minmax(0,1.6fr);align-items:start;gap:8px 24px;margin:24px 0;min-width:0}
+#amp-one .a-suggestion-field>label{margin:0;padding-top:10px;font-weight:500}
+#amp-one .a-suggestion-field>:not(label){width:100%;min-width:0;margin:0}
+#amp-one .a-suggestion-field :is(select,input){width:100%;min-height:44px;margin:0}
+#amp-one .a-suggestion-field input[type=number]{max-width:9rem}
+#amp-one .a-suggestion-disclosure{margin:20px 0 0;padding:0;border:0;border-top:1px solid var(--a-line);border-radius:0;min-width:0}
+#amp-one .a-suggestion-disclosure>summary{padding:14px 0;font-weight:500;cursor:pointer;line-height:1.5}
+#amp-one .a-suggestion-disclosure .a-suggestion-field:first-of-type{margin-top:8px}
+#amp-one .a-suggestion-form .a-control-actions,#amp-one .a-suggestion-instruction .a-control-actions{display:flex;flex-wrap:wrap;gap:12px;margin:24px 0 0}
+#amp-one .a-suggestion-form .a-control-actions button,#amp-one .a-suggestion-instruction .a-control-actions button{min-height:44px}
+#amp-one .a-suggestion-badge{display:inline-block;font-size:var(--a-text-sm,13px);font-weight:400;margin-left:8px;padding:2px 8px;border-radius:10px;background:var(--a-tint);color:var(--a-ink)}
+#amp-one .a-suggestion-instruction textarea{display:block;width:100%;margin:8px 0 0;min-height:180px;resize:vertical}
+#amp-one .a-model-select[data-model-presentation=compact]{display:grid;gap:8px}
+#amp-one .a-model-select[data-model-presentation=compact] .a-list-filter{margin:0}
+#amp-one .a-model-select[data-model-presentation=compact] .a-list-filter>small{display:none}
+#amp-one .a-model-details{border:0;margin:0;padding:0;font-size:var(--a-text-sm,13px)}
+#amp-one .a-model-details>summary{padding:2px 0;font-weight:400}
+@media(max-width:700px){
+ #amp-one .a-suggestion-field{grid-template-columns:minmax(0,1fr);gap:8px;margin:22px 0}
+ #amp-one .a-suggestion-field>label{padding:0}
+ #amp-one .a-writing-settings .a-settings-row{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
+ #amp-one .a-writing-settings select{width:100%}
+}

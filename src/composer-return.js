@@ -1,7 +1,7 @@
 import {composerEnter} from './markdown-composer.js';
 
 export const RETURN_KEY_STORAGE='amplifier.composer.returnKey.v1';
-const validPreference=value=>value==='automatic'||value==='newline';
+const validPreference=value=>value==='automatic'||value==='newline'||value==='send';
 
 // A conservative platform default, not a soft/physical keyboard detector.
 // Capture it when the editor mounts: resize, pointer use and peripheral changes
@@ -16,7 +16,7 @@ export function automaticReturnMode(environment=globalThis){
  }catch{return 'newline';}
 }
 
-export const returnKeyMode=(preference,automatic)=>preference==='automatic'&&automatic==='desktop-send'?'desktop-send':'newline';
+export const returnKeyMode=(preference,automatic)=>preference==='send'||preference==='automatic'&&automatic==='desktop-send'?'desktop-send':'newline';
 export const returnKeyHelp=mode=>mode==='desktop-send'
  ?'Enter to send. Shift+Enter or Ctrl+Enter adds a new line.'
  :'Return adds a new line. Use Send to send.';

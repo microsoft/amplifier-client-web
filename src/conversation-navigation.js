@@ -14,11 +14,24 @@ export function usesNavigationQueue(action,args={}){
 }
 
 export function createConversationNavigation(limit=32){
- const cache=new Map(),pending=new Map();let epoch;
+ const cache=new Map(),pending=new Map();let epoch,focusIntent=null;
+ const focusScope=state=>JSON.stringify([state?.client?.hostInstanceId,state?.client?.historyScope]);
+ function beginFocus(state,id,{interaction,desktop=false}={}){
+  focusIntent=desktop&&id?{id,scope:focusScope(state),interaction,committed:false}:null;
+  return focusIntent;
+ }
+ function settleFocus(token,accepted){if(token&&focusIntent===token){if(accepted)token.committed=true;else focusIntent=null}}
+ function claimFocus(state,{interaction,editable=false}={}){
+  const intent=focusIntent;if(!intent?.committed)return false;
+  focusIntent=null; // Commit consumes the intent even when the surface is unsafe.
+  const view=state?.view||{};
+  return editable&&intent.interaction===interaction&&intent.scope===focusScope(state)&&intent.id===state?.selectedSessionId&&
+   !state.navigationPending&&!state.draftNavigationPending&&(!view.workSurface||view.workSurface==='chat')&&!view.panel&&!view.settingsCanvas&&!view.messageEdit;
+ }
  const selected=state=>state?.sessions?.find(row=>row.id===state.selectedSessionId);
  function remember(state){
   const nextEpoch=state?.client?.hostInstanceId;
-  if(epoch!==undefined&&nextEpoch!==epoch){cache.clear();pending.clear()}
+  if(epoch!==undefined&&nextEpoch!==epoch){cache.clear();pending.clear();focusIntent=null}
   epoch=nextEpoch;
   const row=selected(state);if(!row)return;
   cache.delete(row.id);cache.set(row.id,{session:{id:row.id,workspaceId:row.workspaceId,title:row.title,draft:row.draft}});
@@ -51,5 +64,6 @@ export function createConversationNavigation(limit=32){
    view:{...state.view,workSurface:'chat',draft:session.draft||'',draftDocument:null},
    canvas:{open:false},canvasWorkspace:{views:[]},canvasArtifacts:[]};
  }
- return {remember,begin,beginDraft,apply,settle:token=>pending.delete(token)};
+ return {remember,begin,beginDraft,apply,settle:token=>pending.delete(token),
+  beginFocus,settleFocus,claimFocus,cancelFocus:()=>{focusIntent=null}};
 }

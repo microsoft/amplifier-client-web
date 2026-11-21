@@ -127,6 +127,75 @@ test('model selector searches only discovered models and displays an unlisted sa
  }finally{await renderAct(async()=>root?.unmount())}
 });
 
+test('chat Advanced and compact suggestion pickers keep independent search thresholds',async()=>{
+ const {ModelSelect}=await server.ssrLoadModule('/src/model-select.jsx');
+ const advanced=content=>React.createElement('details',{className:'chat-advanced'},React.createElement('summary',null,'Advanced'),content);
+ for(const {presentation,count,query='',search} of [
+  {presentation:'full',count:8,search:false},{presentation:'full',count:9,search:true},
+  {presentation:'full',count:8,query:'missing',search:true},
+  {presentation:'compact',count:12,query:'missing',search:false},{presentation:'compact',count:13,search:true},
+ ]){
+  let root;const calls=[],entry={phase:'ready',models:Array.from({length:count},(_,i)=>'model-'+i)};
+  try{
+   await renderAct(async()=>root=create(React.createElement(ModelSelect,{id:'union',value:'model-0',entry,presentation,
+    renderOptions:presentation==='full'?advanced:undefined,state:{view:{settingsFilters:{'model-picker-union':query}}},
+    act:async(...args)=>calls.push(args),onChange:()=>{throw Error('Opening is not a model edit')}})));
+   assert.equal(root.root.findAll(node=>node.type==='input'&&node.props.type==='search').length,search?1:0);
+   const details=root.root.findByType('details');
+   assert.equal(details.props.open,undefined,'Secondary controls start collapsed');
+   assert.equal(renderedText(details.findByType('summary').children),presentation==='compact'?'Model details':'Advanced');
+   assert.equal(root.root.findByType('select').findAllByType('option').length,query&&search?1:count+1);
+   assert.deepEqual(calls,[],'Neither presentation saves or discovers merely from opening');
+  }finally{await renderAct(async()=>root?.unmount())}
+ }
+});
+
+test('compact exact-ID entry and failed discovery stay outside Model details without duplicates',async()=>{
+ const {ModelSelect}=await server.ssrLoadModule('/src/model-select.jsx');
+ let root,entry={phase:'ready',models:['known'],provenance:'configured',loadedAt:1};
+ const changed=[],committed=[],render=()=>React.createElement(ModelSelect,{id:'compact-union',value:'known',entry,
+  presentation:'compact',state:{view:{}},act:async()=>{},onChange:value=>changed.push(value),onCommit:value=>committed.push(value)});
+ const insideDetails=node=>{for(let parent=node.parent;parent;parent=parent.parent)if(parent.type==='details')return true;return false};
+ try{
+  await renderAct(async()=>root=create(render()));
+  const details=root.root.findByType('details');
+  assert.equal(details.findAllByProps({'data-model-origin':'configured'}).length,1);
+  await renderAct(async()=>details.findByType('button').props.onClick());
+  const input=root.root.findByType('input');
+  assert.equal(insideDetails(input),false);
+  await renderAct(async()=>input.props.onChange({target:{value:'private-deployment'}}));
+  assert.deepEqual(committed,[]);
+  await renderAct(async()=>input.props.onKeyDown({key:'Enter',currentTarget:{value:'private-deployment'},preventDefault(){}}));
+  assert.deepEqual(changed,['private-deployment']);assert.deepEqual(committed,['private-deployment']);
+  entry={...entry,phase:'error',error:'Discovery failed',stale:true};
+  await renderAct(async()=>root.update(render()));
+  assert.equal(root.root.findAllByType('input').length,1);
+  assert.equal(insideDetails(root.root.findByType('input')),false);
+  assert.equal(insideDetails(root.root.find(node=>node.type==='small'&&node.children.includes('Discovery failed'))),false);
+  assert.deepEqual(root.root.findByType('select').findAllByType('option').map(node=>node.props.value),['','known']);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+
+test('shared connection field preserves chat cost markers without adding them to suggestions',async()=>{
+ const {ProviderSelect}=await server.ssrLoadModule('/src/model-selection-fields.jsx');
+ const providers=[{id:'one',displayName:'Account one'},{id:'two',displayName:'Account two',config:{chat_enabled:false}}];
+ let root;const changed=[];
+ const render=chat=>React.createElement(ProviderSelect,{controlId:'shared-provider',value:'one',providers,
+  onChange:value=>changed.push(value),...(chat?{placeholderDisabled:true,mayCostMore:id=>id==='two'}:{})});
+ try{
+  await renderAct(async()=>root=create(render(true)));
+  let options=root.root.findAllByType('option');
+  assert.equal(options[0].props.disabled,true);
+  assert.match(renderedText(options[2].children),/May cost more/);assert.equal(options[2].props.disabled,true);
+  await renderAct(async()=>root.update(render(false)));
+  options=root.root.findAllByType('option');
+  assert.equal(options[0].props.disabled,false);
+  assert.doesNotMatch(renderedText(root.toJSON()),/May cost more/);
+  await renderAct(async()=>root.root.findByType('select').props.onChange({target:{value:'one'}}));
+  assert.deepEqual(changed,['one'],'Selection is the exact connection ID');
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+
 test('model selector retains only host-supplied refresh data and never unions earlier connection lists',async()=>{
  const {ModelSelect}=await server.ssrLoadModule('/src/model-select.jsx');
  const changed=[],committed=[],props={id:'choice',label:'Model',value:'saved-model',state:{view:{}},act:async()=>{},onChange:value=>changed.push(value),onCommit:value=>committed.push(value)};

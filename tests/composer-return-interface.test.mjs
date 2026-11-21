@@ -49,9 +49,11 @@ test('Writing preference is labeled, immediately shared with a mounted editor an
   assert.equal(text(help()),'Enter to send. Shift+Enter or Ctrl+Enter adds a new line.');
   assert.equal(output().props['data-mode'],'desktop-send');
   const label=root.root.findByType('label');
-  assert.equal(label.props.htmlFor,select().props.id);assert.equal(text(label),'Return key');
+  assert.equal(label.props.htmlFor,select().props.id);assert.equal(text(label),'Enter / Return key');
   assert.equal(select().props['aria-describedby'],root.root.findByType('p').props.id);
-  assert.match(text(root.root.findByType('p')),/This browser only.*Automatic: Enter to send/);
+  assert.equal(text(root.root.findByType('p')),'Shift+Enter adds a new line.');
+  assert.equal(text(select().findAllByType('option')[0]),'Automatic — send message');
+  assert.equal(text(select().findAllByType('option')[1]),'Send message');
   assert.equal(root.root.findAllByType('button').length,0,'No accidental composer-form submit control');
   await act(async()=>select().props.onChange({target:{value:'newline'}}));
   assert.equal(output().props['data-mode'],'newline');assert.equal(text(output()),'Unsent draft');assert.equal(mounts,1);
