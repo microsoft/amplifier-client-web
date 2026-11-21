@@ -47,6 +47,43 @@ test('eligibility suppresses edits, quotes, uploads and work without requiring n
  for(const patch of [{draft:' '},{messageEdit:{}},{messageReply:{}},{panel:'settings'},{settingsCanvas:true},{draftDocument:{segments:[{type:'quote'}]}}]){const state=frame();Object.assign(state.view,patch);assert.equal(suggestionEligible(state),false)}
  for(const patch of [{status:'working'},{status:'stopped'},{status:'stopping'},{status:'error'},{historyLoading:true},{workspaceAvailable:false},{ownership:{status:'yielded'}},{draftAttachments:[{id:'f'}]},{workers:[{status:'queued'}]}]){const state=frame();Object.assign(state.sessions[0],patch);assert.equal(suggestionEligible(state),false)}
 });
+test('semantic empty checkpoint admits preview but whitespace and nonempty structure do not',()=>{
+ for(const draftDocument of [null,{version:1,segments:[]},{version:1,segments:[{type:'text',text:'',content:{type:'paragraph'}}]}]){
+  const state=frame();state.view.draft='';state.view.draftDocument=draftDocument;assert.equal(suggestionEligible(state),true);
+ }
+ for(const draftDocument of [{},{version:1,segments:[null]},{version:1,segments:[{type:'text',text:'',content:{type:'paragraph',content:{}}}]},{version:1,segments:[{type:'quote'}]},{version:1,segments:[{type:'text',text:' ',content:{type:'paragraph',content:[{type:'text',text:' '}]}}]},{version:1,segments:[{type:'text',text:'',content:{type:'code_block'}}]}]){
+  const state=frame();state.view.draftDocument=draftDocument;assert.equal(suggestionEligible(state),false);
+ }
+});
+test('temporary edits and accepted text retain READY only until original expiry; hard dismissal stays spent',async()=>{
+ for(const action of ['edit','accept']){
+  const h=harness(),args=h.request();h.controller.receive(args,h.result(args));const original=h.controller.candidate();
+  if(action==='accept')assert.equal((await original.validate())(),true);else h.controller.suspend();
+  h.state.view.draft='temporary';
+  h.controller.observe(h.state,'model1',false,{retainReady:true});
+  assert.equal(h.controller.candidate(),null);assert.equal(await h.controller.restore(),false);
+  h.state.view.draft='';h.observe();assert.equal(await h.controller.restore(),true);
+  assert.equal(h.controller.candidate().expiresAt,original.expiresAt);assert.equal(original.available(),false);assert.equal(h.request(),null);
+  h.controller.candidate().dismiss();h.observe();assert.equal(await h.controller.restore(),false);
+ }
+ const h=harness(),args=h.request();h.controller.receive(args,h.result(args));h.controller.suspend();h.advance();h.observe();assert.equal(await h.controller.restore(),false);assert.equal(h.request(),null);
+});
+test('overlapping restores coalesce and terminal rejection cannot revive via a late READY',async()=>{
+ const h=harness(),args=h.request();h.controller.receive(args,h.result(args));h.controller.suspend();let release;
+ h.readStatus(()=>new Promise(resolve=>{release=resolve}));
+ const first=h.controller.restore();assert.equal(await h.controller.restore(),false);assert.equal(h.statusCalls.length,1);
+ release({...h.result(args),status:'cancelled'});assert.equal(await first,false);assert.equal(h.controller.candidate(),null);assert.equal(await h.controller.restore(),false);
+});
+test('archive target forgets retained candidate even after selection leaves it',async()=>{
+ const h=harness(),args=h.request();h.controller.receive(args,h.result(args));h.state.selectedSessionId=null;h.observe();
+ h.controller.forgetSession('s');h.state.selectedSessionId='s';h.observe();
+ assert.equal(await h.controller.restore(),false);assert.equal(h.request(),null);
+});
+test('observed external archive evicts retained READY before first return even when archive is later undone',async()=>{
+ const h=harness(),args=h.request();h.controller.receive(args,h.result(args));h.state.selectedSessionId=null;h.observe();
+ h.state.conversationOrganization={archived:{s:{}}};h.state.selectedSessionId='s';h.observe();assert.equal(h.controller.candidate(),null);
+ h.state.conversationOrganization.archived={};h.observe();assert.equal(await h.controller.restore(),false);assert.equal(h.request(),null);
+});
 test('one request, private preview, exact status validation then one synchronous claim, never a send',async()=>{
  const h=harness(),args=h.request();assert.equal(args.expectedLastMessageId,'a');assert.equal(h.request(),null);
  assert.equal(h.controller.receive(args,{...h.result(args),status:'pending'}),true);

@@ -241,6 +241,7 @@ function App(){
   });
  },[acceptState]);
  const dispatch=useCallback((action,args={},meta={})=>{
+  if(action==='session.archive')suggestionFence.current?.forgetSession(args.id??latest.current?.selectedSessionId);
   if(['session.select','session.draft','session.create'].includes(action))suggestionFence.current?.suspend();
   else if(['conversation.send','conversation.stop','message.edit','message.reply','attachment.add','providers.configureSuggestions'].includes(action))suggestionFence.current?.invalidate();
   if(action==='conversation.send'){
@@ -876,7 +877,7 @@ function App(){
   draftSaves.current.set(payload,save);save.catch(()=>draftSaves.current.delete(payload));return save;
  }
  function editDraft(value,documentValue){
-  suggestionFence.current?.invalidate();
+  suggestionFence.current?.suspend();
   if(referenceDraftLock.current||latest.current?.draftNavigationPending)return;
   if(documentValue===undefined&&value&&quoteApi.current?.document()){
    if(value.startsWith(lastDraft.current)){try{quoteApi.current.append(value.slice(lastDraft.current.length));}catch(error){reportError(error)}return;}
@@ -1057,9 +1058,9 @@ function App(){
  const browsing=workSurface(state)!=='chat';
  // Navigation/work-surface departure is handled by the suggestion owner so it
  // may retain READY privately. Actual history loading and safety blockers clear it.
- const suggestionBlocked=!!(!shell.ready||!hasAppearanceIdentity(state?.appearance)||state?.appearance?.availability==='failed'||draft||busy||uploading||availableAttachments.length||referencingDraft||suggestionComposing||dictating||callActive||voiceStarting||conversationHistoryPending(session,false,messages)||executionUnavailable||detail.focused||!connected||
+ const suggestionBlocked=!!(!shell.ready||!hasAppearanceIdentity(state?.appearance)||state?.appearance?.availability==='failed'||busy||uploading||availableAttachments.length||referencingDraft||dictating||callActive||voiceStarting||conversationHistoryPending(session,false,messages)||executionUnavailable||detail.focused||!connected||
   suggestionOutboxPending(outbox.entries,outboxSource,session?.id));
- const suggestion=useTranscriptSuggestion({state,readState:()=>pendingView.current.apply(latest.current),act:dispatch,blocked:suggestionBlocked,connected,
+ const suggestion=useTranscriptSuggestion({state,readState:()=>pendingView.current.apply(latest.current),act:dispatch,blocked:suggestionBlocked,connected,composing:suggestionComposing,
   recipient:recipientAgentId,canUse:()=>!lastDraft.current&&!uploadCount.current&&!referenceDraftLock.current&&!dictationControl.current?.current&&!suggestionOutboxPending(outbox.current.current,deliveryScope(latest.current,session),session?.id)&&!pendingView.current.apply(latest.current)?.draftNavigationPending});
  suggestionFence.current=suggestion.owner;
  const browse=(surface,id=null)=>act('view.update',{patch:{...browsePatch(surface,id),navExpanded:false}});

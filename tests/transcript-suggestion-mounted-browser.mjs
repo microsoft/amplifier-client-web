@@ -41,6 +41,36 @@ if(process.argv.includes('--preflight')){
   await demand(true);await expect(ghost).toBeVisible();assert.equal((await requests()).length,1,'Idle visible focused visit automatically suggests');
   const attemptA=(await requests())[0].args.requestId;
   assert.equal((await snapshot()).draft,'');assert.equal((await snapshot()).doc.content[0].content,undefined);
+  await expect(page.getByText('Suggested message · not sent',{exact:true})).toBeVisible();
+  report.placeholderStyle=await page.locator('.a-composer-suggestion-text').evaluate(node=>{const text=getComputedStyle(node),button=getComputedStyle(node.parentElement.querySelector('button'));return {fontStyle:text.fontStyle,opacity:text.opacity,color:text.color,buttonMinHeight:button.minHeight,labelVisible:!!node.parentElement.querySelector('.a-composer-suggestion-label')?.getClientRects().length}});
+  assert.equal(report.placeholderStyle.fontStyle,'italic');assert.equal(report.placeholderStyle.opacity,'1');assert.equal(report.placeholderStyle.labelVisible,true);assert.ok(parseFloat(report.placeholderStyle.buttonMinHeight)>=44);
+  await page.locator('.a-suggestion-editor').screenshot({path:output+'/ghost-light.png'});
+  await page.emulateMedia({colorScheme:'dark'});await page.locator('.a-suggestion-editor').screenshot({path:output+'/ghost-dark.png'});await page.emulateMedia({colorScheme:'light'});
+  await editor.focus();await editor.press('Enter');assert.deepEqual((await snapshot()).sends,[]);assert.equal((await snapshot()).draft,'');
+  await editor.press('ControlOrMeta+a');await editor.press('Backspace');await expect(ghost).toBeVisible();
+  await editor.evaluate(node=>{const event=new Event('paste',{bubbles:true,cancelable:true});Object.defineProperty(event,'clipboardData',{value:{types:['text/html'],files:[],getData:()=>''}});node.dispatchEvent(event)});await expect(ghost).toBeVisible();assert.equal((await requests()).length,1);
+  for(const method of ['type','paste']){
+   const statusesBefore=(await calls('session.suggestion.status')).length;
+   if(method==='type')await editor.pressSequentially('temporary text');
+   else await editor.evaluate(node=>{const event=new Event('paste',{bubbles:true,cancelable:true});Object.defineProperty(event,'clipboardData',{value:{types:['text/plain'],files:[],getData:format=>format==='text/plain'?'pasted temporary text':''}});node.dispatchEvent(event)});
+   await expect(ghost).toHaveCount(0);assert.equal((await calls('session.suggestion.status')).length,statusesBefore,'No host reads per keystroke/paste');
+   await editor.press('ControlOrMeta+a');await editor.press('Backspace');await expect(ghost).toBeVisible();
+   assert.equal((await requests()).length,1);assert.equal((await calls('session.suggestion.status')).at(-1).args.requestId,attemptA);
+  }
+  await editor.pressSequentially('draft while away');await expect(ghost).toHaveCount(0);
+  const beforeDraftLeave=(await calls('session.suggestion.status')).length;
+  await page.evaluate(()=>window.suggestionFixture.beginDraft());await expect(ghost).toHaveCount(0);
+  await page.evaluate(()=>window.suggestionFixture.returnFromDeparture());await expect(ghost).toHaveCount(0);
+  assert.equal((await calls('session.suggestion.status')).length,beforeDraftLeave);
+  await editor.press('ControlOrMeta+a');await editor.press('Backspace');await expect(ghost).toBeVisible();assert.equal((await requests()).length,1);
+  await editor.pressSequentially('clear while away');await page.evaluate(()=>window.suggestionFixture.leaveChatSurface());
+  const awayStatus=(await calls('session.suggestion.status')).length;
+  await page.evaluate(()=>window.suggestionFixture.setDraft(''));await expect(ghost).toHaveCount(0);assert.equal((await calls('session.suggestion.status')).length,awayStatus);
+  await page.evaluate(()=>window.suggestionFixture.returnFromDeparture());await expect(ghost).toBeVisible();assert.equal((await requests()).length,1);
+  await page.evaluate(()=>window.suggestionFixture.holdStatus(true));
+  await editor.pressSequentially('first');await editor.press('ControlOrMeta+a');await editor.press('Backspace');await expect(ghost).toHaveCount(0);
+  await editor.pressSequentially('newer');await page.evaluate(()=>window.suggestionFixture.releaseStatus());await expect(ghost).toHaveCount(0);assert.equal((await snapshot()).draft,'newer');
+  await editor.press('ControlOrMeta+a');await editor.press('Backspace');await expect(ghost).toBeVisible();assert.equal((await requests()).length,1);
   for(const departure of ['beginDraft','leaveChatSurface']){
    const beforeStatus=(await calls('session.suggestion.status')).length;
    await page.evaluate(method=>window.suggestionFixture[method](),departure);await expect(ghost).toHaveCount(0);
@@ -60,9 +90,9 @@ if(process.argv.includes('--preflight')){
   await demand(false);await expect(ghost).toHaveCount(0);await demand(true);await expect(ghost).toBeVisible();assert.equal((await requests()).length,2);
   await editor.focus();await editor.press('Shift+Tab');assert.equal((await snapshot()).draft,'');await editor.focus();await expect(editor).toBeFocused();await expect(ghost).toBeVisible();await editor.press('Tab');
   await expect.poll(async()=>(await snapshot()).doc.content[0].content?.[0]?.text).toBe('**literal** @participant /not-a-command');
-  await editor.press('ControlOrMeta+z');await expect.poll(async()=>(await snapshot()).draft).toBe('');await expect(ghost).toHaveCount(0);
-  await demand(false);await demand(true);await expect(ghost).toHaveCount(0);assert.equal((await requests()).length,2,'Acceptance/Undo cannot re-infer or restore');
-  report.visibleVisits={onlySelected:true,hiddenZero:true,unfocusedZero:true,readyStatusOnly:true,readyNotCancelled:true,beginDraftSameSelectionPreserved:true,nonChatSurfacePreserved:true,acceptUndoSpent:true};
+  await editor.press('ControlOrMeta+z');await expect.poll(async()=>(await snapshot()).draft).toBe('');await expect(ghost).toBeVisible();
+  await demand(false);await demand(true);await expect(ghost).toBeVisible();assert.equal((await requests()).length,2,'Acceptance/Undo restores status-only without inference');await dismiss();
+  report.visibleVisits={onlySelected:true,hiddenZero:true,unfocusedZero:true,readyStatusOnly:true,readyNotCancelled:true,beginDraftSameSelectionPreserved:true,nonChatSurfacePreserved:true,acceptUndoStatusOnlyRestore:true,typePasteClearRestore:true,draftLeaveReturnRestore:true,enterDoesNotSendGhost:true};
   await response();await page.evaluate(()=>window.suggestionFixture.holdStatus(true));await editor.focus();await editor.press('Tab');await expect(ghost).toHaveAttribute('aria-busy','true');
   const beforeAcceptanceDeparture=(await requests()).length;
   await page.evaluate(()=>window.suggestionFixture.beginDraft());await expect(ghost).toHaveCount(0);
@@ -71,7 +101,7 @@ if(process.argv.includes('--preflight')){
   await page.evaluate(()=>window.suggestionFixture.returnFromDeparture());await expect(ghost).toBeVisible();assert.equal((await requests()).length,beforeAcceptanceDeparture);await dismiss();
   for(const gesture of ['click','tap']){await response();await ghost[gesture]();await expect.poll(async()=>(await snapshot()).draft.length).toBeGreaterThan(0);await editor.press('ControlOrMeta+z');await expect.poll(async()=>(await snapshot()).draft).toBe('')}
   await response();await dismiss();const beforeDismiss=(await requests()).length;await demand(false);await demand(true);await expect(ghost).toHaveCount(0);assert.equal((await requests()).length,beforeDismiss);
-  await response();await editor.dispatchEvent('compositionstart',{data:''});await expect(ghost).toHaveCount(0);await editor.dispatchEvent('compositionend',{data:''});await expect(ghost).toHaveCount(0);
+  await response();await editor.dispatchEvent('compositionstart',{data:''});await expect(ghost).toHaveCount(0);await editor.dispatchEvent('compositionend',{data:''});await expect(ghost).toBeVisible();await dismiss();
   const beforeHiddenResponse=(await requests()).length;await demand(false);
   for(const phase of ['user','interim','final']){
    await page.evaluate(phase=>window.suggestionFixture.stage(phase),phase);
@@ -103,7 +133,7 @@ if(process.argv.includes('--preflight')){
   const statuses=(await calls('session.suggestion.status')).length;await editor.press('Tab');await editor.press('Enter');await page.locator('form').evaluate(node=>node.requestSubmit());assert.equal((await calls('session.suggestion.status')).length,statuses);
   await editor.pressSequentially('my newer draft');await page.evaluate(()=>window.suggestionFixture.releaseStatus());await expect(page.locator('[data-suggestion-validating=true]')).toHaveCount(0);
   assert.equal((await snapshot()).doc.content[0].content[0].text,'my newer draft');assert.deepEqual((await snapshot()).sends,[]);
-  await editor.press('ControlOrMeta+z');await expect.poll(async()=>(await snapshot()).draft).toBe('');await expect(ghost).toHaveCount(0);
+  await editor.press('ControlOrMeta+z');await expect.poll(async()=>(await snapshot()).draft).toBe('');await expect(ghost).toBeVisible();await dismiss();
   await response();await page.evaluate(()=>window.suggestionFixture.editEarlier({publish:false}));await editor.focus();await editor.press('Tab');await expect(ghost).toHaveCount(0);assert.equal((await snapshot()).draft,'');
   const beforeNoChat=(await requests()).length;await page.evaluate(()=>window.suggestionFixture.newChat());await expect(ghost).toHaveCount(0);assert.equal((await requests()).length,beforeNoChat);
   await page.evaluate(()=>{window.suggestionFixture.setDraft('saved draft');window.suggestionFixture.reopen()});await expect(ghost).toHaveCount(0);assert.equal((await requests()).length,beforeNoChat,'Visit does not overwrite or request from a nonempty draft');

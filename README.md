@@ -56,7 +56,11 @@ Advanced, the suggestion prompt can be edited and reset to the host default.
 
 The private preview is not part of the editor document. Tab in the focused empty
 editor, or **Use suggestion**, adds literal, editable, undoable text; sending is
-always a separate action. The mounted browser check
+always a separate action. Typing or pasting hides the placeholder. Clearing the
+message box, including Undo after acceptance, can restore the same unexpired
+suggestion after a status-only check, without another model call. Escape dismisses
+it for that source; Stop, attachments, quotes and source/configuration changes
+invalidate it. The mounted browser check
 `node tests/transcript-suggestion-mounted-browser.mjs` uses synthetic action
 responses. It does not qualify a provider, installed host, or LAN deployment.
 

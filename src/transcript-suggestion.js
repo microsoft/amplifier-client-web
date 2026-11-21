@@ -6,6 +6,14 @@ export function suggestionText(value){
  return value.trim()||null;
 }
 export const suggestionEditorEmpty=doc=>doc?.childCount===1&&doc.firstChild.type.name==='paragraph'&&doc.firstChild.content.size===0;
+export function suggestionDraftEmpty(view={}){
+ if(view.draft)return false;
+ const document=view.draftDocument;
+ if(document==null)return true;
+ if(document.version!==1||!Array.isArray(document.segments))return false;
+ const part=document.segments[0],content=part?.content;
+ return document.segments.length===0||document.segments.length===1&&part?.type==='text'&&part.text===''&&content?.type==='paragraph'&&(content.content==null||Array.isArray(content.content)&&content.content.length===0);
+}
 export function suggestionScope(state){
  const {hostInstanceId,historyScope}=state?.client||{};
  return typeof hostInstanceId==='string'&&hostInstanceId&&typeof historyScope==='string'&&historyScope?JSON.stringify([hostInstanceId,historyScope]):null;
@@ -13,9 +21,10 @@ export function suggestionScope(state){
 export const plainSuggestionTab=event=>event.key==='Tab'&&!event.shiftKey&&!event.ctrlKey&&!event.metaKey&&!event.altKey&&!event.isComposing&&event.keyCode!==229;
 export const suggestionOutboxPending=(entries,scope,sessionId)=>entries.some(row=>!row.closed&&row.scope===scope&&row.sessionId===(sessionId??null));
 
-export function suggestionEligible(state,{ignoreDeparture=false}={}){
+export function suggestionEligible(state,{ignoreDeparture=false,ignoreDraft=false}={}){
  const session=state?.sessions?.find(row=>row.id===state.selectedSessionId),view=state?.view||{};
- return !!session&&(ignoreDeparture||(!view.workSurface||view.workSurface==='chat')&&!state.navigationPending&&!state.draftNavigationPending)&&!view.panel&&!view.settingsCanvas&&!view.messageEdit&&!view.messageReply&&!view.draft&&!view.draftDocument?.segments?.length&&
+ const document=view.draftDocument,draftSafe=document==null||suggestionDraftEmpty({...view,draft:''});
+ return !!session&&!session.archived&&!Object.hasOwn(state.conversationOrganization?.archived||{},session.id)&&(ignoreDeparture||(!view.workSurface||view.workSurface==='chat')&&!state.navigationPending&&!state.draftNavigationPending)&&!view.panel&&!view.settingsCanvas&&!view.messageEdit&&!view.messageReply&&(ignoreDraft?draftSafe:suggestionDraftEmpty(view))&&
   !(session.draftAttachments||state.draftAttachments)?.length&&!session.historyLoading&&!session.historyReadOnlyReason&&session.workspaceAvailable!==false&&!ownershipState(session).blocked&&
   !['starting','working','running','busy','stopping','stopped','error','failed'].includes(session.status)&&!(session.workers||[]).some(row=>['queued','starting','working','running','stopping'].includes(row.status));
 }
@@ -43,13 +52,13 @@ export function suggestionWitness(state){
 }
 
 // One inference per response source/configuration. Only a privately retained,
-// unconsumed ready preview can return after an exact status-only reconciliation.
+// ready preview can return after an exact status-only reconciliation.
 // Transport is deliberately injected: this controller never sends a draft.
 export function createSuggestionController({readState,canUse=()=>true,readStatus,now=Date.now,requestId=()=>crypto.randomUUID()}){
- let scope=null,current=null,epoch=0,candidate=null,request=null;
+ let scope=null,current=null,epoch=0,candidate=null,request=null,restoring=null;
  const spent=new Set(),ready=new Map();
  const remember=key=>{spent.add(key);while(spent.size>128)spent.delete(spent.values().next().value)};
- function suspend(){epoch++;candidate=null;if(request){remember(request.key);request=null}}
+ function suspend(){epoch++;candidate=null;restoring=null;if(request){remember(request.key);request=null}}
  function invalidate(){if(current?.key)ready.delete(current.key);suspend()}
  function observe(state,configRevision,eligible,{retainReady=false,recipient}={}){
   const nextScope=suggestionScope(state),witness=suggestionWitness(state),key=witness&&JSON.stringify([witness.key,configRevision,recipient]);
@@ -59,6 +68,7 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
   // or explicit configuration/source selection can allocate inference again.
   const attemptKey=witness&&JSON.stringify([nextScope,deliveryScope(state,session),session.id,witness.lastMessageId,configRevision,recipient,session.nextMessageRevision??0,session.interruptionRevision??0]);
   if(nextScope!==scope){scope=nextScope;spent.clear();ready.clear();suspend()}
+  for(const [savedKey,saved]of ready)if(Object.hasOwn(state?.conversationOrganization?.archived||{},saved.args.sessionId)||state?.sessions?.some(row=>row.id===saved.args.sessionId&&row.archived))ready.delete(savedKey);
   if(current&&current.sessionId===state?.selectedSessionId&&(current.key!==key||!eligible&&!retainReady))ready.delete(current.key);
   if(current?.key!==key||current?.eligible!==eligible)suspend();
   current={key,attemptKey,witness,eligible,configRevision,sessionId:state?.selectedSessionId};
@@ -68,6 +78,8 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
  }
  return {
   observe,
+  generation:()=>epoch,
+  forgetSession(sessionId){for(const [key,saved]of ready)if(saved.args.sessionId===sessionId)ready.delete(key);if(current?.sessionId===sessionId)suspend()},
   attempted:()=>!current?.key||spent.has(current.attemptKey),
   nextRequest(){
    if(!current?.eligible||!current.witness||!canUse()||spent.has(current.attemptKey)||request||candidate)return null;
@@ -91,8 +103,10 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
   },
   async restore(){
    const key=current?.key,saved=ready.get(key),captured=epoch;
-   const fresh=()=>current?.key===key&&epoch===captured&&current.eligible&&canUse()&&suggestionEligible(readState())&&suggestionWitness(readState())?.key===current.witness.key;
+   const fresh=()=>ready.get(key)===saved&&current?.key===key&&epoch===captured&&current.eligible&&canUse()&&suggestionEligible(readState())&&suggestionWitness(readState())?.key===current.witness.key;
    if(!saved||!fresh()||saved.expiresAt<=now()||!readStatus){if(saved?.expiresAt<=now())ready.delete(key);return false}
+   if(restoring?.saved===saved&&restoring.epoch===captured)return false;
+   const operation={saved,epoch:captured};restoring=operation;
    // An explicit visit may inspect a prior ready attempt, never infer again.
    try{
     const result=await readStatus(saved.args,fresh);
@@ -101,7 +115,7 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
     const expiresAt=Math.min(saved.expiresAt,result.expiresAt??saved.expiresAt);
     if(expiresAt<=now()){ready.delete(key);return false}
     candidate={...saved,epoch,expiresAt,api:null,validating:false};ready.set(key,candidate);return true;
-   }catch{return false}
+   }catch{return false}finally{if(restoring===operation)restoring=null}
   },
   candidate(){
    if(!available())return null;
@@ -116,20 +130,21 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
       // never inference, retries, source repair or a replacement candidate.
       const result=await readStatus(saved.args,current);
       if(!current())return null;
-      if(result?.status!=='ready'||result.requestId!==saved.args.requestId||result.sessionId!==saved.args.sessionId||result.sourceKey!==saved.sourceKey||result.configRevision!==saved.configRevision||result.suggestion!==saved.text)return null;
+      if(result?.status!=='ready'||result.requestId!==saved.args.requestId||result.sessionId!==saved.args.sessionId||result.sourceKey!==saved.sourceKey||result.configRevision!==saved.configRevision||result.suggestion!==saved.text){invalidate();return null}
       if(result.expiresAt!=null){
-       if(!Number.isFinite(result.expiresAt))return null;
+       if(!Number.isFinite(result.expiresAt)){invalidate();return null}
        saved.expiresAt=Math.min(saved.expiresAt,result.expiresAt);
       }
       if(!current())return null;
       let used=false;
       // Keep the final local checks and editor insertion in one synchronous
       // continuation after the host read; this permit cannot be replayed.
-      return ()=>{if(used||!current())return false;used=true;invalidate();return true};
+      return ()=>{if(used||!current())return false;used=true;suspend();return true};
      }catch{return null}
      finally{saved.validating=false}
     },
-    dismiss:()=>{if(candidate===saved)invalidate()}};
+    dismiss:()=>{if(candidate===saved)invalidate()},
+    suspend:()=>{if(candidate===saved)suspend()}};
    return saved.api;
   },
   invalidate,

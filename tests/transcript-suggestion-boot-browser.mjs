@@ -16,7 +16,7 @@ const shell=createShellHttpFixture(()=>state),calls=[],errors=[],external=[],rea
 const snapshot=()=>{const next=shell.state();return {...next,client:{...next.client,historyScope:'boot-principal'}}};
 const suggestionActions=()=>calls.filter(row=>row.action.startsWith('session.suggestion.'));
 const writes=()=>calls.filter(row=>['conversation.send','session.create','session.draft','providers.configureSuggestions','conversation.configure'].includes(row.action));
-let browser,vite,page,heldAttach;
+let browser,vite,page,heldAttach,attempt,expiresAt;
 const report={scope:'actual production App with maintained synthetic HTTP/shell/event adapters; no installed host, provider or physical focus acceptance'};
 await mkdir(output,{recursive:true});
 try{
@@ -38,6 +38,10 @@ try{
   if(url.pathname!=='/api/actions')return route.fulfill({json:{ok:true}});
   const body=route.request().postDataJSON();calls.push(body);
   if(body.action==='providers.suggestionModels')return route.fulfill({json:{accepted:true,result:{suggestionModels:{enabled:true,provider:'fixture',model:'fixture-model',effort:'low',transcriptMode:'last_n',humanTurns:6,revision:'boot-config'},providers:[{id:'fixture',module:'provider-fixture',sharedCatalogKey:'global-fixture-key'}]}}});
+  if(body.action.startsWith('session.suggestion.')){
+   if(body.action==='session.suggestion.request'){attempt=body.args;expiresAt=Date.now()+60000}
+   return route.fulfill({json:{accepted:true,result:{requestId:body.args.requestId,sessionId:body.args.sessionId,status:'ready',suggestion:'Try the next step.',sourceKey:'fixture-source',configRevision:'boot-config',expiresAt}}});
+  }
   if(body.action==='view.update'){state.view={...state.view,...body.args.patch};state.revision++}
   return route.fulfill({json:{accepted:true,state:snapshot()}});
  });
@@ -65,7 +69,20 @@ try{
  await expect(page.getByRole('slider',{name:/Reasoning effort/})).toHaveAttribute('max','2');
  assert.equal(calls.filter(row=>row.action==='providers.models').length,0,'Matching complete host projection needs no redundant discovery');
  assert.deepEqual(suggestionActions(),[]);assert.deepEqual(writes(),[]);assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
- report.status='PASS';report.checks={preClientBoot:true,clientApiExposed:true,authenticatedUnselectedAppRendered:true,undefinedAndNullSelection:true,enabledOptedInNoSourceNoSuggestion:true,noDraftWritesOrSends:true,deferredProjectionWithMatchingFullSetup:true,hostCatalogOptionsAndEffort:true,noChatModelMutation:true};
- console.log('PASS: actual App boot, undefined/null hydration, zero inference/writes, projected deferred global catalog hydrates four options and effort in Privacy.');
+ state.sessions=[{id:'one',title:'Synthetic response',sessionKind:'root',workspace:'/fixture',workspaceId:'project',status:'idle',historyManaged:true,historyLoaded:true,messages:[{id:'a',role:'assistant',text:'Complete.'}],workers:[]}];
+ state.selectedSessionId='one';state.view={...state.view,panel:null,workSurface:'chat',draft:'',draftDocument:null};state.revision++;
+ await page.evaluate(next=>window.emitFixtureState(next),snapshot());
+ const ghost=page.getByRole('button',{name:'Use suggested message'});await expect(ghost).toBeVisible();
+ const clear=async()=>{await composer.focus();await composer.press('ControlOrMeta+a');await composer.press('Backspace');await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().view.draft||'')).toBe('');await expect(ghost).toBeVisible()};
+ await composer.pressSequentially('Temporary user text');await expect(ghost).toHaveCount(0);await clear();
+ await composer.evaluate(node=>{const event=new Event('paste',{bubbles:true,cancelable:true});Object.defineProperty(event,'clipboardData',{value:{types:['text/plain'],files:[],getData:t=>t==='text/plain'?'Temporary paste':''}});node.dispatchEvent(event)});await expect(ghost).toHaveCount(0);await clear();
+ await composer.press('Tab');await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().view.draft)).toBe('Try the next step.');
+ await composer.press('ControlOrMeta+z');await expect(ghost).toBeVisible();assert.equal(await composer.evaluate(node=>node.textContent),'');
+ assert.equal(suggestionActions().filter(row=>row.action==='session.suggestion.request').length,1);
+ assert.equal(suggestionActions().filter(row=>row.action==='session.suggestion.cancel').length,0);
+ assert.ok(suggestionActions().filter(row=>row.action==='session.suggestion.status').every(row=>row.args.requestId===attempt.requestId));
+ assert.deepEqual(writes(),[]);assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
+ report.status='PASS';report.checks={preClientBoot:true,clientApiExposed:true,authenticatedUnselectedAppRendered:true,undefinedAndNullSelection:true,enabledOptedInNoSourceNoSuggestion:true,noSendsOrConfigurationSaves:true,deferredProjectionWithMatchingFullSetup:true,hostCatalogOptionsAndEffort:true,noChatModelMutation:true,typeAndPasteClearSameAttempt:true,acceptedUndoRestores:true};
+ console.log('PASS: actual App boot/catalog plus synthetic READY type/paste-clear and accepted-Undo status-only restoration; zero provider calls or sends.');
 }catch(error){report.status='FAIL';report.error=error.stack;throw error}
 finally{report.calls=calls;report.errors=errors;report.external=external;report.reads=reads;await writeFile(output+'/result.json',JSON.stringify(report,null,2)+'\n');await browser?.close();await vite?.close()}

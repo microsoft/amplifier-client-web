@@ -4,25 +4,27 @@ import {suggestionPreference,useSuggestionPreference} from './suggestion-prefere
 import {useSuggestionModels} from './suggestion-model-settings.jsx';
 
 // Status reads reconcile one exact attempt; they never trigger model work.
-export function useTranscriptSuggestion({state,readState,act,blocked,canUse,recipient,connected=true}){
+export function useTranscriptSuggestion({state,readState,act,blocked,canUse,recipient,connected=true,composing=false}){
  const scope=suggestionScope(state),[enabled]=useSuggestionPreference(scope),data=useSuggestionModels(state,act),config=data.suggestionModels;
- const [visible,setVisible]=useState(()=>!document.hidden),[focused,setFocused]=useState(()=>document.hasFocus()),[,refresh]=useState(0),live=useRef(null),controller=useRef(null),previousRecipient=useRef(recipient);
- live.current={readState,canUse,enabled,scope,blocked,config,act,connected,recipient};
+ const [visible,setVisible]=useState(()=>!document.hidden),[focused,setFocused]=useState(()=>document.hasFocus()),[editing,setEditing]=useState(false),[,refresh]=useState(0),live=useRef(null),controller=useRef(null),previousRecipient=useRef(recipient),inputPending=useRef(false);
+ live.current={readState,canUse,enabled,scope,blocked,config,act,connected,recipient,composing};
  if(!controller.current)controller.current=createSuggestionController({readState:()=>live.current.readState(),readStatus:async(args,current)=>{
   const receipt=await live.current.act('session.suggestion.status',args,{feedback:false,suggestionIsCurrent:current,signal:AbortSignal.timeout(5000)});
   return receipt?.accepted===true?receipt.result:null;
  },canUse:()=>{
   const current=live.current;
-  return !document.hidden&&document.hasFocus()&&current.connected&&current.enabled&&suggestionPreference(current.scope)&&current.config?.enabled===true&&!current.blocked&&current.canUse();
+  return !document.hidden&&document.hasFocus()&&current.connected&&current.enabled&&suggestionPreference(current.scope)&&current.config?.enabled===true&&!current.blocked&&!current.composing&&!inputPending.current&&current.canUse();
  }});
- const owner=controller.current,witness=suggestionWitness(state),eligible=enabled&&visible&&focused&&connected&&config?.enabled===true&&!blocked&&suggestionEligible(state);
+ const owner=controller.current,witness=suggestionWitness(state),eligible=enabled&&visible&&focused&&connected&&config?.enabled===true&&!blocked&&!composing&&!editing&&suggestionEligible(state);
+ const editorScope=JSON.stringify([scope,state?.selectedSessionId]),previousEditorScope=useRef(editorScope);
+ useEffect(()=>{if(previousEditorScope.current!==editorScope){previousEditorScope.current=editorScope;inputPending.current=false;setEditing(false)}},[editorScope]);
  if(previousRecipient.current!==recipient){owner.invalidate();previousRecipient.current=recipient}
  const trigger=JSON.stringify([witness?.key,config?.revision,recipient]);
- const departing=state?.navigationPending||state?.draftNavigationPending||state?.view?.workSurface&&state.view.workSurface!=='chat';
- // Navigation can leave the old selected ID mounted until acknowledgement.
- // Suspend its ready preview, but never treat edits/disablement/Stop as leaving.
- const retainReady=enabled&&connected&&config?.enabled===true&&!blocked&&suggestionEligible(state,{ignoreDeparture:true})&&(!visible||!focused||departing);
+ // READY survives temporary local text and navigation, not hard safety changes.
+ // No status reads occur until the visible, editable composer is empty again.
+ const retainReady=enabled&&connected&&config?.enabled===true&&!blocked&&suggestionEligible(state,{ignoreDeparture:true,ignoreDraft:true});
  owner.observe(state,config?.revision,eligible,{retainReady,recipient});
+ const generation=owner.generation();
  useEffect(()=>{
   const hide=()=>{if(document.hidden)owner.suspend();setVisible(!document.hidden)};
   const leave=()=>owner.suspend();
@@ -57,8 +59,14 @@ export function useTranscriptSuggestion({state,readState,act,blocked,canUse,reci
    if(args){refresh(value=>value+1);void poll('session.suggestion.request',args)}
   }
   return()=>{active=false;clearTimeout(timer);if(args&&!terminal)void act('session.suggestion.cancel',{sessionId:args.sessionId,requestId:args.requestId},{feedback:false}).catch(()=>{})};
- },[owner,trigger,eligible,config?.revision,act]);
+ },[owner,trigger,eligible,config?.revision,act,generation]);
  const ghost=owner.candidate();
  useEffect(()=>{if(!ghost)return;const timer=setTimeout(()=>refresh(value=>value+1),Math.max(0,ghost.expiresAt-Date.now()+1));return()=>clearTimeout(timer)},[ghost?.expiresAt]);
- return {ghost,owner,supersede:reason=>reason==='editor-uneditable'&&retainReady?owner.suspend():owner.invalidate()};
+ return {ghost,owner,supersede:reason=>{
+  if(reason==='editor-input'){inputPending.current=true;setEditing(true);owner.suspend()}
+  else if(reason==='editor-input-end'){if(!inputPending.current)return;inputPending.current=false;setEditing(false)}
+  else if(reason==='editor-change'){inputPending.current=false;setEditing(false);owner.suspend()}
+  else if(reason==='editor-uneditable'&&retainReady)owner.suspend();else owner.invalidate();
+  refresh(value=>value+1);
+ }};
 }

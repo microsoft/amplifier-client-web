@@ -47,7 +47,7 @@ function App(){
   if(action.endsWith('status')&&holdStatus.current)return new Promise(resolve=>held.current.push(()=>resolve(response())));
   return response();
  }).current;
- const suggestion=useTranscriptSuggestion({state:live.current,readState:()=>live.current,act,blocked:blocked||composing||!connected,connected,canUse:()=>!live.current.view.draft});
+ const suggestion=useTranscriptSuggestion({state:live.current,readState:()=>live.current,act,blocked:blocked||!connected,composing,connected,canUse:()=>!live.current.view.draft});
  useLayoutEffect(()=>{
   window.suggestionFixture={
    setProps,setBlocked,setState,setConnected,setDraft,setPending:value=>{pending.current=value},select:id=>setState(current=>({...current,selectedSessionId:id})),failSave:value=>{failSave.current=value},
@@ -86,7 +86,7 @@ function App(){
   };
  },[]);
  return <><form onSubmit={event=>{event.preventDefault();if(!quoteApi.current?.suggestionValidating())sends.current.push('form submit')}}>
-  <MarkdownComposer value={draft} readOnly={!!live.current.draftNavigationPending} editorRef={editorRef} quoteApi={quoteApi} onChange={text=>{suggestion.supersede();setDraft(text)}} onSend={()=>{if(!quoteApi.current?.suggestionValidating())sends.current.push(draft)}} onFiles={()=>{}} suggestion={suggestion.ghost} onSuggestionSupersede={suggestion.supersede} onComposing={setComposing} {...props}/>
+  <MarkdownComposer value={draft} readOnly={!!live.current.draftNavigationPending} editorRef={editorRef} quoteApi={quoteApi} onChange={text=>{suggestion.supersede('editor-change');setDraft(text)}} onSend={()=>{if(!quoteApi.current?.suggestionValidating())sends.current.push(draft)}} onFiles={()=>{}} suggestion={suggestion.ghost} onSuggestionSupersede={suggestion.supersede} onComposing={setComposing} {...props}/>
   <button type="submit">Send fixture</button>
  </form><SuggestionSettings state={state} act={act} navigate={()=>setAdvanced(true)}/><button type="button" onClick={()=>setAdvanced(true)}>Advanced settings</button>{advanced&&<SuggestionPromptSettings state={state} act={act} navigate={()=>{}}/>}</>;
 }
