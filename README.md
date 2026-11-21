@@ -48,19 +48,24 @@ including other participants' messages—not an agent's private context or an
 unsent draft. The client requests a suggestion only by conversation and committed
 message identifiers. The selected chat can request once when idle with an empty
 message box while the page is visible and focused, including when you visit an
-existing chat. No other chat or background page requests work. Returning to an
-unexpired ready suggestion checks its original attempt without another model
-call; failed, empty, cancelled or expired sources are not automatically retried.
+existing chat. No other chat or background page requests work. A source-bound
+READY response can remain in bounded private memory while its source and settings
+are unchanged; revisits still validate the original attempt without model work.
+Finite responses obey their original expiry. Failed, empty, cancelled or missing
+attempts are not automatically retried. **Suggest next message** or **Generate
+another suggestion** explicitly requests a new paid attempt, with usage disclosure.
 Starting a new chat before it has a response makes no request. In Settings →
 Advanced, the suggestion prompt can be edited and reset to the host default.
 
 The private preview is not part of the editor document. Tab in the focused empty
 editor, or **Use suggestion**, adds literal, editable, undoable text; sending is
 always a separate action. Typing or pasting hides the placeholder. Clearing the
-message box, including Undo after acceptance, can restore the same unexpired
+message box, including Undo after acceptance, can restore the same valid
 suggestion after a status-only check, without another model call. Escape dismisses
 it for that source; Stop, attachments, quotes and source/configuration changes
-invalidate it. The mounted browser check
+invalidate it. Explicit desktop chat selection focuses an editable composer once
+after navigation commits, unless newer user interaction or a blocked surface
+takes priority. Touch-capable environments do not automatically focus it. The mounted browser check
 `node tests/transcript-suggestion-mounted-browser.mjs` uses synthetic action
 responses. It does not qualify a provider, installed host, or LAN deployment.
 

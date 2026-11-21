@@ -20,6 +20,7 @@ import {useTranscriptSuggestion} from './use-transcript-suggestion.jsx';
 import {suggestionOutboxPending} from './transcript-suggestion.js';
 import {clearSuggestionModels} from './suggestion-model-settings.jsx';
 import {ComposerReturnHelp,ComposerReturnSettings} from './composer-return-preference.jsx';
+import {automaticReturnMode} from './composer-return.js';
 import {ComposerAdd} from './composer-add.jsx';
 import {ButtonTooltips} from './tooltips';
 import {ConversationRail} from './conversation-rail.jsx';
@@ -163,6 +164,14 @@ function App(){
  const [awayFromBottom,setAwayFromBottom]=useState(false);
  const questionReviewState=useState({});
  const creatingSession=useRef(null),uploadQueue=useRef(Promise.resolve()),uploadCount=useRef(0),fileInput=useRef(null),messagesPane=useRef(null),stickToBottom=useRef(true),chatScroll=useRef(null),historyScrollAnchor=useRef(null),composerRef=useRef(null),root=useRef(null),latest=useRef(null),voiceClient=useRef(null),messagesEnd=useRef(null),draftTimer=useRef(),stagedDraft=useRef(null),stagedDraftPayload=useRef(null),lastNotify=useRef(new Set()),lastDraft=useRef(''),canvasVisibilityQueue=useRef(Promise.resolve()),commandQueue=useRef(Promise.resolve()),voiceControlQueue=useRef(Promise.resolve()),navigationQueue=useRef(Promise.resolve()),canvasDirtyBarrier=useRef(null),reviewQueue=useRef(Promise.resolve()),stateListeners=useRef(new Set()),seenEffects=useRef(new Set()),effectHandler=useRef(()=>{}),pendingView=useRef(createPendingView()),serverState=useRef(null),conversationNavigation=useRef(createConversationNavigation());
+ const focusInteraction=useRef({touch:false});
+ useEffect(()=>{
+  const supersede=event=>{focusInteraction.current={touch:event.type==='pointerdown'?event.pointerType!=='mouse':event.type==='keydown'?false:focusInteraction.current.touch}};
+  for(const name of ['pointerdown','keydown','input','focusin','compositionstart'])document.addEventListener(name,supersede,true);
+  const leave=()=>{conversationNavigation.current.cancelFocus()};
+  window.addEventListener('blur',leave);
+  return()=>{for(const name of ['pointerdown','keydown','input','focusin','compositionstart'])document.removeEventListener(name,supersede,true);window.removeEventListener('blur',leave)};
+ },[]);
  const [connectionFailure,setConnectionFailure]=useState(null);
  const chatLinkReceiver=useRef(null),[chatLink,setChatLink]=useState(null);
  const reportError=useCallback(error=>{
@@ -241,6 +250,7 @@ function App(){
   });
  },[acceptState]);
  const dispatch=useCallback((action,args={},meta={})=>{
+  if(isNavigationAction(action,args)||['session.create','call.start'].includes(action)||action==='view.update'&&['panel','settingsCanvas','messageEdit'].some(key=>Object.hasOwn(args.patch||{},key)))conversationNavigation.current.cancelFocus();
   if(action==='session.archive')suggestionFence.current?.forgetSession(args.id??latest.current?.selectedSessionId);
   if(['session.select','session.draft','session.create'].includes(action))suggestionFence.current?.suspend();
   else if(['conversation.send','conversation.stop','message.edit','message.reply','attachment.add','providers.configureSuggestions'].includes(action))suggestionFence.current?.invalidate();
@@ -357,6 +367,8 @@ function App(){
   // acceptance. The same navigation queue and Settings/Canvas guards still own
   // the transition; rejection must not destroy the control that shows it.
   const navigationToken=openingDraft?conversationNavigation.current.beginDraft():selectedId&&!meta.chatLink&&!chatReference&&!handoffNavigation&&!canvasDirtyBarrier.current?conversationNavigation.current.begin(pendingView.current.apply(latest.current),selectedId,meta.navigationSession):null;
+  const focusToken=selectedId&&!meta.chatLink&&!chatReference&&!handoffNavigation
+   ?conversationNavigation.current.beginFocus(latest.current,selectedId,{interaction:focusInteraction.current,desktop:automaticReturnMode(window)==='desktop-send'&&!focusInteraction.current.touch}):null;
   if(navigationToken&&serverState.current){latest.current=conversationNavigation.current.apply(serverState.current);setState(pendingView.current.apply(latest.current))}
   if(action==='canvas.visibility')args={sessionId:latest.current?.selectedSessionId??null,canvasId:latest.current?.canvas?.id??null,...args};
   const pending=action==='canvas.visibility'?pendingView.current.addCanvas(latest.current,args.open):action==='view.update'?(meta.pendingViewToken??pendingView.current.add(args.patch||{},args.sessionId)):null;
@@ -480,9 +492,11 @@ function App(){
    if(pending)pendingView.current.settle(pending);
    if(navigationToken){
     conversationNavigation.current.settle(navigationToken);
+    conversationNavigation.current.settleFocus(focusToken,result.accepted===true);
     latest.current=conversationNavigation.current.apply(serverState.current);
     setState(pendingView.current.apply(latest.current));
    }
+   else if(focusToken){conversationNavigation.current.settleFocus(focusToken,result.accepted===true);if(latest.current)setState(pendingView.current.apply(latest.current))}
    if(pending&&latest.current)setState(pendingView.current.apply(latest.current));
    if(chatReference&&result.accepted===true)requestAnimationFrame(()=>{
     if(meta.chatReferenceIntent!==archiveRevision.current||latest.current?.selectedSessionId!==args.id)return;
@@ -495,7 +509,7 @@ function App(){
    });
    if(!handledActionResults.current.has(result)){handledActionResults.current.add(result);handleEffects(result.effects)}
    return result;
-  }).catch(error=>{if(stop&&!stopPostStarted)capabilityStopFence.current.settleStop(stop,'not-applied');if(navigationToken){conversationNavigation.current.settle(navigationToken);if(serverState.current){latest.current=conversationNavigation.current.apply(serverState.current);setState(pendingView.current.apply(latest.current))}}if(error.state&&validDeliveryState(error.state))acceptState(error.state);if(pending){pendingView.current.settle(pending);if(latest.current)setState(pendingView.current.apply(latest.current))}if(chatReference&&meta.chatReferenceIntent!==archiveRevision.current)error.navigationSuperseded=true;throw error}).finally(()=>{settleTracking();settleFeedback()});
+  }).catch(error=>{conversationNavigation.current.settleFocus(focusToken,false);if(stop&&!stopPostStarted)capabilityStopFence.current.settleStop(stop,'not-applied');if(navigationToken){conversationNavigation.current.settle(navigationToken);if(serverState.current){latest.current=conversationNavigation.current.apply(serverState.current);setState(pendingView.current.apply(latest.current))}}if(error.state&&validDeliveryState(error.state))acceptState(error.state);if(pending){pendingView.current.settle(pending);if(latest.current)setState(pendingView.current.apply(latest.current))}if(chatReference&&meta.chatReferenceIntent!==archiveRevision.current)error.navigationSuperseded=true;throw error}).finally(()=>{settleTracking();settleFeedback()});
   queue.current=promise.catch(()=>{});
   if(permissionHistory)canvasVisibilityQueue.current=queue.current;
   if(action==='canvas.views.dirty'){
@@ -1063,6 +1077,13 @@ function App(){
  const suggestion=useTranscriptSuggestion({state,readState:()=>pendingView.current.apply(latest.current),act:dispatch,blocked:suggestionBlocked,connected,composing:suggestionComposing,
   recipient:recipientAgentId,canUse:()=>!lastDraft.current&&!uploadCount.current&&!referenceDraftLock.current&&!dictationControl.current?.current&&!suggestionOutboxPending(outbox.current.current,deliveryScope(latest.current,session),session?.id)&&!pendingView.current.apply(latest.current)?.draftNavigationPending});
  suggestionFence.current=suggestion.owner;
+ useLayoutEffect(()=>{
+  const editor=composerRef.current;
+  const editable=!!editor?.isConnected&&!!editor.getClientRects().length&&editor.isContentEditable&&editor.getAttribute('aria-readonly')!=='true'&&editor.getAttribute('aria-disabled')!=='true'&&
+   !!state&&state.selectedSessionId===latest.current?.selectedSessionId&&shell.ready&&connected&&!historyPending&&!executionUnavailable&&!referencingDraft&&!suggestionComposing&&!dictating&&!callActive&&!voiceStarting&&!detail.focused&&
+   !document.hidden&&document.hasFocus()&&![...document.querySelectorAll('[role="dialog"]')].some(node=>node.getClientRects().length);
+  if(conversationNavigation.current.claimFocus(pendingView.current.apply(latest.current),{interaction:focusInteraction.current,editable}))editor.focus({preventScroll:true});
+ });
  const browse=(surface,id=null)=>act('view.update',{patch:{...browsePatch(surface,id),navExpanded:false}});
  const visitHistory=async key=>{
   const entry=destinationHistory.current.snapshot().entries.find(row=>row.key===key);
@@ -1161,6 +1182,11 @@ function App(){
     <div className="a-compose-end"><DictationButton key={session?.id??'dictation-new'} draft={draft} onChange={value=>{if((latest.current?.selectedSessionId??null)===(session?.id??null))editDraft(value)}} controlRef={dictationControl} onListening={value=>{if(value)suggestionFence.current?.invalidate();setDictating(value)}} disabled={executionUnavailable||historyPending||referencingDraft||sendingHere||browsing||callActive}/><button type={primaryAction.action==='conversation.send'?'submit':'button'} className="a-send" data-part="composer-primary-action" data-action={primaryAction.action} aria-label={primaryAction.action==='call.start'&&state.voiceConfiguration?.available===false?'Set up voice':primaryAction.label} title={primaryAction.action==='call.start'&&state.voiceConfiguration?.available===false?'Set up voice in Settings':primaryAction.label} disabled={primaryAction.disabled||(referencingDraft&&primaryAction.action==='conversation.send')} onClick={primaryAction.action==='call.start'?startCall:primaryAction.action==='call.end'?()=>act('call.end'):primaryAction.action==='conversation.stop'?()=>act('conversation.stop',{sessionId:session.id}):undefined}>{primaryAction.icon==='voice'?<AudioLines/>:primaryAction.icon==='cancel'?<X/>:<ArrowUp/>}</button></div>
     </div>
     <ComposerReturnHelp id={composerReturnHelpId}/>
+    {suggestion.canGenerate&&<div className="a-caption" data-private="true" data-part="suggestion-availability">
+     <button type="button" className="a-link" onClick={suggestion.generate} title="Requests a new suggestion using your selected provider. May incur usage.">{suggestion.ghost?'Generate another suggestion':'Suggest next message'}</button>
+     <span> · May incur usage.</span>
+     {!suggestion.ghost&&<span role="status"> {({empty:'No useful suggestion was returned.',failed:'Suggestion failed.',timeout:'Suggestion timed out.',cancelled:'Previous suggestion was interrupted.',expired:'Previous suggestion expired.',prior_attempt_unavailable:'Previous suggestion is unavailable.',duplicate_source:'Previous suggestion is unavailable.',busy:'A suggestion is already in progress.',disabled:'Suggestions are disabled.',missing_selection:'Choose a suggestion model in Settings.',unsupported:'This suggestion model is not supported.',stale:'The conversation changed.',dismissed:'Suggestion dismissed.'})[suggestion.status]||''}</span>}
+    </div>}
     <div className="a-compose-configuration">
      {session&&responseActive&&!callActive&&primaryAction.action!=='conversation.stop'&&<button type="button" className="a-compose-stop" aria-label="Stop response" data-action="conversation.stop" disabled={session.status==='stopping'||executionUnavailable} onClick={()=>act('conversation.stop',{sessionId:session.id})}>{session.status==='stopping'?'Stopping…':'Stop'}</button>}
      <ShellSlot name="composer.actions"><ComposerOptions state={state} session={session} act={act} working={working} detail={presentation.interfaceDetail||presentation.executionDetail} recipientAgentId={recipientAgentId} onRecipientChange={id=>setRecipientChoices(current=>({...current,[recipientKey]:id}))}/></ShellSlot>

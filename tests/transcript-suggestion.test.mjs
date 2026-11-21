@@ -26,6 +26,38 @@ function harness(){
  const request=()=>{observe();return controller.nextRequest()};
  return {controller,request,result,observe,statusCalls,status:patch=>{statusPatch=patch},readStatus:read=>{statusReader=read},get state(){return state},set state(next){state=next},disable(){eligible=false;observe()},revision(next){revision=next;observe()},advance(ms=60001){time+=ms}};
 }
+test('source-bound READY survives beyond61seconds only with exact retention marker and mode',async()=>{
+ const h=harness(),args=h.request(),result={...h.result(args),retention:'source',expiresAt:null,reused:true};
+ assert.equal(h.controller.receive(args,result),true);assert.equal(h.controller.candidate().expiresAt,null);
+ h.advance(61000);assert.ok(h.controller.candidate());h.controller.suspend();h.observe();h.status({retention:'source',expiresAt:null});
+ assert.equal(await h.controller.restore(),true);assert.ok(await h.controller.candidate().validate());assert.equal(h.request(),null);
+ for(const patch of [{status:'pending',retention:'source',expiresAt:null},{status:'ready',expiresAt:null},{status:'ready',retention:'unknown',expiresAt:100000},{status:'ready',retention:'source',expiresAt:100000}]){
+  const x=harness(),a=x.request();assert.equal(x.controller.receive(a,{...x.result(a),...patch}),false);assert.equal(x.controller.candidate(),null);
+ }
+ const x=harness(),a=x.request();x.controller.receive(a,{...x.result(a),retention:'source',expiresAt:null});x.controller.suspend();x.status({expiresAt:100000});
+ assert.equal(await x.controller.restore(),false,'Source mode may not silently turn into a finite lease');
+});
+test('explicit regeneration alone allocates a fresh UUID and flag after a spent failure',()=>{
+ const h=harness(),first=h.request();h.controller.receive(first,{...h.result(first),status:'empty',suggestion:null});
+ assert.equal(h.controller.status(),'empty');assert.equal(h.request(),null);
+ const second=h.controller.nextRequest({regenerate:true});assert.ok(second.regenerate);assert.notEqual(second.requestId,first.requestId);
+ assert.equal(h.controller.nextRequest({regenerate:true}),null,'Repeated click while pending cannot allocate another');
+ h.controller.receive(second,{...h.result(second),retention:'source',expiresAt:null});
+ assert.equal(h.controller.candidate().text,'Try this');
+});
+test('restore distinguishes prior attempt unavailable from verified model-empty',async()=>{
+ const h=harness(),args=h.request();h.controller.receive(args,h.result(args));h.controller.suspend();h.status({status:'empty',reason:'prior_attempt_unavailable',suggestion:null});
+ assert.equal(await h.controller.restore(),false);assert.equal(h.controller.status(),'prior_attempt_unavailable');assert.equal(h.request(),null);
+});
+test('source-bound READY LRU touches restored entries without inference on capacity eviction',async()=>{
+ let state=frame(),sequence=0;
+ const controller=createSuggestionController({readState:()=>state,requestId:()=>String(++sequence),readStatus:async args=>({status:'ready',...args,sourceKey:'source-'+args.sessionId,configRevision:'r',suggestion:'Try this',retention:'source',expiresAt:null})});
+ const select=id=>{state={...frame(),selectedSessionId:id,sessions:[{...frame().sessions[0],id}]};controller.observe(state,'r',true)};
+ for(let i=0;i<32;i++){select('s'+i);const args=controller.nextRequest();controller.receive(args,{...args,status:'ready',sourceKey:'source-'+args.sessionId,configRevision:'r',suggestion:'Try this',retention:'source',expiresAt:null})}
+ select('s0');assert.equal(await controller.restore(),true);
+ select('s32');const args=controller.nextRequest();controller.receive(args,{...args,status:'ready',sourceKey:'source-s32',configRevision:'r',suggestion:'Try this',retention:'source',expiresAt:null});
+ select('s0');assert.equal(await controller.restore(),true);select('s1');assert.equal(await controller.restore(),false);assert.equal(controller.nextRequest(),null);assert.equal(sequence,33);
+});
 test('one short single-line plain text or null; reject control and directional text',()=>{
  for(const text of ['',null,{},'a\nb','a\tb','a\u0085b','a\u2028b','a\u202eb','a'.repeat(241)])assert.equal(suggestionText(text),null);
  for(const text of ['/run @agent **literal**','😀'.repeat(240),'<script>literal</script>'])assert.equal(suggestionText(text),text);

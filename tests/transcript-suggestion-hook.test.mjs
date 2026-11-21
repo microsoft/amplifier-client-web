@@ -36,7 +36,7 @@ test('hook mounts before client state and waits through unselected boot snapshot
  }finally{Object.assign(globalThis,originals)}
 });
 
-async function scenario({wrongReady=false,ready=false}={}){
+async function scenario({wrongReady=false,ready=false,response}={}){
  const originals={window:globalThis.window,document:globalThis.document,sessionStorage:globalThis.sessionStorage};
  globalThis.window=new EventTarget();globalThis.document=Object.assign(new EventTarget(),{hidden:false,hasFocus:()=>true});globalThis.sessionStorage={getItem:()=> 'true'};
  const state={client:{hostInstanceId:crypto.randomUUID(),historyScope:'principal'},selectedSessionId:'s',view:{},sessions:[{id:'s',status:'idle',messages:[{id:'a',role:'assistant',text:'Done'}]}]};
@@ -44,10 +44,10 @@ async function scenario({wrongReady=false,ready=false}={}){
  const configure=patch=>{config={...config,...patch};publishSuggestionModels(suggestionScope(state),{suggestionModels:config,providers:[]},0)};
  configure({});
  const calls=[];let recipient='one',blocked=false,root,suggestion;
- const act=async(action,args)=>{calls.push({action,args});return {accepted:true,result:{...args,requestId:wrongReady?'wrong':args.requestId,status:wrongReady||ready?'ready':'pending',suggestion:wrongReady||ready?'Try this':null,configRevision:'config',sourceKey:'source'}}};
+ const act=async(action,args)=>{calls.push({action,args});return response?response(action,args):{accepted:true,result:{...args,requestId:wrongReady?'wrong':args.requestId,status:wrongReady||ready?'ready':'pending',suggestion:wrongReady||ready?'Try this':null,configRevision:'config',sourceKey:'source'}}};
  function Probe(){suggestion=useTranscriptSuggestion({state,readState:()=>state,act,recipient,blocked,canUse:()=>true});return null}
  const render=()=>renderAct(async()=>{if(root)root.update(React.createElement(Probe));else root=create(React.createElement(Probe))});
- return {calls,state,get ghost(){return suggestion?.ghost},get owner(){return suggestion?.owner},render,edit:reason=>renderAct(async()=>suggestion.supersede(reason)),configure:patch=>renderAct(async()=>configure(patch)),recipient:next=>{recipient=next},block:()=>{blocked=true},async close(){await renderAct(async()=>root?.unmount());Object.assign(globalThis,originals)}};
+ return {calls,state,get ghost(){return suggestion?.ghost},get owner(){return suggestion?.owner},get status(){return suggestion?.status},get canGenerate(){return suggestion?.canGenerate},generate:()=>renderAct(async()=>{suggestion.generate();suggestion.generate()}),render,edit:reason=>renderAct(async()=>suggestion.supersede(reason)),configure:patch=>renderAct(async()=>configure(patch)),recipient:next=>{recipient=next},block:()=>{blocked=true},async close(){await renderAct(async()=>root?.unmount());Object.assign(globalThis,originals)}};
 }
 test('changing only recipient cancels the original pending attempt immediately',async()=>{
  const h=await scenario();try{
@@ -63,6 +63,20 @@ test('unverified ready identity cannot suppress cancellation of the actual attem
   h.block();await h.render();
   assert.equal(h.calls.filter(row=>row.action==='session.suggestion.cancel'&&row.args.requestId===original.requestId).length,1);
  }finally{await h.close()}
+});
+test('refused or malformed results expose explicit recovery without render-driven retry',async()=>{
+ for(const kind of ['refused','bad-config','missing-source','throw']){
+  let reject=true;
+  const h=await scenario({response:async(action,args)=>{
+   if(reject){if(kind==='throw')throw Error('transport');if(kind==='refused')return {accepted:false};return {accepted:true,result:{...args,status:'ready',suggestion:'Try this',sourceKey:kind==='missing-source'?null:'source',configRevision:kind==='bad-config'?'wrong':'config'}}}
+   return {accepted:true,result:{...args,status:'pending',suggestion:null,sourceKey:'source',configRevision:'config'}};
+  }});try{
+   await h.render();assert.notEqual(h.status,'pending',kind);assert.equal(h.canGenerate,true,kind);
+   await h.render();assert.equal(h.calls.filter(row=>row.action==='session.suggestion.request').length,1);
+   reject=false;await h.generate();
+   const requests=h.calls.filter(row=>row.action==='session.suggestion.request');assert.equal(requests.length,2);assert.equal(requests[1].args.regenerate,true);assert.notEqual(requests[0].args.requestId,requests[1].args.requestId);
+  }finally{await h.close()}
+ }
 });
 test('production admission includes the same shell and appearance render gates as boot',async()=>{
  const source=await readFile(new URL('../src/main.jsx',import.meta.url),'utf8');

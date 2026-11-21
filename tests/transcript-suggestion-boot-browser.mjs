@@ -16,7 +16,11 @@ const shell=createShellHttpFixture(()=>state),calls=[],errors=[],external=[],rea
 const snapshot=()=>{const next=shell.state();return {...next,client:{...next.client,historyScope:'boot-principal'}}};
 const suggestionActions=()=>calls.filter(row=>row.action.startsWith('session.suggestion.'));
 const writes=()=>calls.filter(row=>['conversation.send','session.create','session.draft','providers.configureSuggestions','conversation.configure'].includes(row.action));
-let browser,vite,page,heldAttach,attempt,expiresAt;
+let browser,vite,page,heldAttach,attempt,expiresAt,holdSelection=false;
+let manualAttempts=0;
+const attemptOutcomes=new Map();
+const heldSelections=[];
+const selectChat=id=>{state.selectedSessionId=id;const row=state.sessions.find(row=>row.id===id);state.view={...state.view,panel:null,workSurface:'chat',draft:row?.draft||'',draftDocument:null};state.revision++};
 const report={scope:'actual production App with maintained synthetic HTTP/shell/event adapters; no installed host, provider or physical focus acceptance'};
 await mkdir(output,{recursive:true});
 try{
@@ -24,6 +28,7 @@ try{
  const origin=new URL(vite.resolvedUrls.local[0]).origin;
  browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}:{})});
  page=await browser.newPage({viewport:{width:1280,height:900}});page.on('pageerror',error=>errors.push(error.message));
+ await page.clock.install();
  await page.addInitScript(installFixtureEvents);
  await page.addInitScript(()=>sessionStorage.setItem('amplifier.transcript-suggestions.v1:'+JSON.stringify(['fixture-shell-host','boot-principal']),'true'));
  await page.route('**/*',async route=>{
@@ -39,10 +44,15 @@ try{
   const body=route.request().postDataJSON();calls.push(body);
   if(body.action==='providers.suggestionModels')return route.fulfill({json:{accepted:true,result:{suggestionModels:{enabled:true,provider:'fixture',model:'fixture-model',effort:'low',transcriptMode:'last_n',humanTurns:6,revision:'boot-config'},providers:[{id:'fixture',module:'provider-fixture',sharedCatalogKey:'global-fixture-key'}]}}});
   if(body.action.startsWith('session.suggestion.')){
-   if(body.action==='session.suggestion.request'){attempt=body.args;expiresAt=Date.now()+60000}
-   return route.fulfill({json:{accepted:true,result:{requestId:body.args.requestId,sessionId:body.args.sessionId,status:'ready',suggestion:'Try the next step.',sourceKey:'fixture-source',configRevision:'boot-config',expiresAt}}});
+   if(body.action==='session.suggestion.request'){attempt=body.args;expiresAt=null;attemptOutcomes.set(attempt.requestId,body.args.regenerate&&++manualAttempts===1?'empty':'ready')}
+   const status=attemptOutcomes.get(body.args.requestId)||'ready';
+   return route.fulfill({json:{accepted:true,result:{requestId:body.args.requestId,sessionId:body.args.sessionId,status,suggestion:status==='ready'?'Try the next step.':null,sourceKey:'fixture-source',configRevision:'boot-config',expiresAt:status==='ready'?null:Date.now()+3600000,retention:status==='ready'?'source':null,reused:false}}});
   }
   if(body.action==='view.update'){state.view={...state.view,...body.args.patch};state.revision++}
+  if(body.action==='session.select'){
+   if(holdSelection){heldSelections.push({route,body});return}
+   selectChat(body.args.id);
+  }
   return route.fulfill({json:{accepted:true,state:snapshot()}});
  });
  await page.goto(origin);await expect.poll(()=>!!heldAttach).toBe(true);
@@ -51,6 +61,7 @@ try{
  assert.deepEqual(calls,[],'No actions before client attachment and first state');assert.deepEqual(errors,[]);
  await heldAttach.fulfill({json:shell.response(heldAttach.request())});
  const composer=page.getByRole('textbox',{name:'Message Amplifier',exact:true});await expect(composer).toBeVisible();
+ await expect(composer).not.toBeFocused();
  await page.waitForFunction(()=>window.amplifier.getState().client?.historyScope==='boot-principal');
  await expect.poll(()=>calls.filter(row=>row.action==='providers.suggestionModels').length).toBe(1);
  assert.equal(await page.evaluate(()=>window.amplifier.getState().selectedSessionId),null);
@@ -73,6 +84,7 @@ try{
  state.selectedSessionId='one';state.view={...state.view,panel:null,workSurface:'chat',draft:'',draftDocument:null};state.revision++;
  await page.evaluate(next=>window.emitFixtureState(next),snapshot());
  const ghost=page.getByRole('button',{name:'Use suggested message'});await expect(ghost).toBeVisible();
+ await page.clock.fastForward(61001);await expect(ghost).toBeVisible();
  const clear=async()=>{await composer.focus();await composer.press('ControlOrMeta+a');await composer.press('Backspace');await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().view.draft||'')).toBe('');await expect(ghost).toBeVisible()};
  await composer.pressSequentially('Temporary user text');await expect(ghost).toHaveCount(0);await clear();
  await composer.evaluate(node=>{const event=new Event('paste',{bubbles:true,cancelable:true});Object.defineProperty(event,'clipboardData',{value:{types:['text/plain'],files:[],getData:t=>t==='text/plain'?'Temporary paste':''}});node.dispatchEvent(event)});await expect(ghost).toHaveCount(0);await clear();
@@ -82,7 +94,36 @@ try{
  assert.equal(suggestionActions().filter(row=>row.action==='session.suggestion.cancel').length,0);
  assert.ok(suggestionActions().filter(row=>row.action==='session.suggestion.status').every(row=>row.args.requestId===attempt.requestId));
  assert.deepEqual(writes(),[]);assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
- report.status='PASS';report.checks={preClientBoot:true,clientApiExposed:true,authenticatedUnselectedAppRendered:true,undefinedAndNullSelection:true,enabledOptedInNoSourceNoSuggestion:true,noSendsOrConfigurationSaves:true,deferredProjectionWithMatchingFullSetup:true,hostCatalogOptionsAndEffort:true,noChatModelMutation:true,typeAndPasteClearSameAttempt:true,acceptedUndoRestores:true};
+ const beforeManual=suggestionActions().filter(row=>row.action==='session.suggestion.request').length;
+ await page.getByRole('button',{name:'Generate another suggestion',exact:true}).click();
+ await expect(page.getByRole('status').filter({hasText:'No useful suggestion was returned.'})).toBeVisible();
+ assert.equal(suggestionActions().filter(row=>row.action==='session.suggestion.request').length,beforeManual+1);
+ const firstManual=suggestionActions().filter(row=>row.action==='session.suggestion.request').at(-1).args;assert.equal(firstManual.regenerate,true);
+ state.revision++;await page.evaluate(next=>window.emitFixtureState(next),snapshot());assert.equal(suggestionActions().filter(row=>row.action==='session.suggestion.request').length,beforeManual+1);
+ await page.getByRole('button',{name:'Suggest next message',exact:true}).click();await expect(ghost).toBeVisible();
+ const secondManual=suggestionActions().filter(row=>row.action==='session.suggestion.request').at(-1).args;assert.equal(secondManual.regenerate,true);assert.notEqual(secondManual.requestId,firstManual.requestId);
+ state.sessions.push(...['two','three'].map(id=>({...state.sessions[0],id,title:'Switch '+id,messages:[{id:'answer-'+id,role:'assistant',text:'Complete '+id}]})));
+ state.revision++;await page.evaluate(next=>window.emitFixtureState(next),snapshot());
+ // Exercise the actual App dispatch/navigation owner from a DOM activation.
+ // The synthetic shell's cached navigation resource need not republish its list.
+ await page.evaluate(()=>{
+  for(const id of ['two','three']){const button=document.createElement('button');button.id='fixture-select-'+id;button.textContent='Switch '+id;button.onclick=()=>window.amplifier.dispatch('session.select',{id});document.body.append(button)}
+ });
+ const chatButton=id=>page.locator('#fixture-select-'+id);
+ await chatButton('two').click();await expect(composer).toBeFocused();await expect(ghost).toBeVisible();
+ await page.keyboard.press('Tab');await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().view.draft)).toBe('Try the next step.');
+ await composer.press('ControlOrMeta+z');await expect(ghost).toBeVisible();
+ assert.equal(calls.filter(row=>row.action==='conversation.send').length,0);
+ // A delayed explicit selection must not steal focus back from a newer action.
+ holdSelection=true;await chatButton('three').click();await expect.poll(()=>heldSelections.length).toBe(1);
+ const other=page.getByRole('button',{name:'Home',exact:true}).first();await other.focus();
+ const held=heldSelections.shift();selectChat(held.body.args.id);await held.route.fulfill({json:{accepted:true,state:snapshot()}});holdSelection=false;
+ await page.waitForFunction(()=>window.amplifier.getState().selectedSessionId==='three'&&!window.amplifier.getState().navigationPending);
+ await expect(composer).not.toBeFocused();
+ state.revision++;await page.evaluate(next=>window.emitFixtureState(next),snapshot());await expect(composer).not.toBeFocused();
+ await page.evaluate(()=>Object.defineProperty(navigator,'maxTouchPoints',{configurable:true,get:()=>1}));
+ await chatButton('two').click();await page.waitForFunction(()=>window.amplifier.getState().selectedSessionId==='two'&&!window.amplifier.getState().navigationPending);await expect(composer).not.toBeFocused();
+ report.status='PASS';report.checks={preClientBoot:true,clientApiExposed:true,authenticatedUnselectedAppRendered:true,undefinedAndNullSelection:true,enabledOptedInNoSourceNoSuggestion:true,noSendsOrConfigurationSaves:true,deferredProjectionWithMatchingFullSetup:true,hostCatalogOptionsAndEffort:true,noChatModelMutation:true,typeAndPasteClearSameAttempt:true,acceptedUndoRestores:true,explicitChatSwitchFocus:true,immediateTabAcceptance:true,userMovedFocusProtected:true,touchEnvironmentNoAutoFocus:true,sourceBoundBeyond61seconds:true,manualOnlyRegenerate:true,knownEmptyNoAutoLoop:true};
  console.log('PASS: actual App boot/catalog plus synthetic READY type/paste-clear and accepted-Undo status-only restoration; zero provider calls or sends.');
 }catch(error){report.status='FAIL';report.error=error.stack;throw error}
 finally{report.calls=calls;report.errors=errors;report.external=external;report.reads=reads;await writeFile(output+'/result.json',JSON.stringify(report,null,2)+'\n');await browser?.close();await vite?.close()}
