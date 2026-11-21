@@ -4,10 +4,11 @@ import {suggestionPreference} from './suggestion-preference.jsx';
 import {useSuggestionModels} from './suggestion-model-settings.jsx';
 
 // Status reads reconcile one exact attempt; they never trigger model work.
-export function useTranscriptSuggestion({state,readState,act,blocked,canUse,recipient,connected=true,composing=false}){
- const scope=suggestionScope(state),enabled=suggestionPreference(state),data=useSuggestionModels(state,act),config=data.suggestionModels;
+export function useTranscriptSuggestion({state,suggestionsSupported,readState,act,blocked,canUse,recipient,connected=true,composing=false}){
+ const scope=suggestionScope(state),enabled=suggestionsSupported&&suggestionPreference(state);
+ const data=useSuggestionModels(suggestionsSupported?state:null,act),config=data.suggestionModels;
  const [visible,setVisible]=useState(()=>!document.hidden),[focused,setFocused]=useState(()=>document.hasFocus()),[editing,setEditing]=useState(false),[,refresh]=useState(0),live=useRef(null),controller=useRef(null),previousRecipient=useRef(recipient),inputPending=useRef(false);
- live.current={readState,canUse,enabled,scope,blocked,config,act,connected,recipient,composing};
+ live.current={readState,canUse,enabled,scope,blocked,config,act,connected,recipient,composing,suggestionsSupported};
  if(!controller.current)controller.current=createSuggestionController({readState:()=>live.current.readState(),readStatus:async(args,current)=>{
   const receipt=await live.current.act('session.suggestion.status',args,{feedback:false,suggestionIsCurrent:current,signal:AbortSignal.timeout(5000)});
   return receipt?.accepted===true?receipt.result:null;
@@ -36,6 +37,10 @@ export function useTranscriptSuggestion({state,readState,act,blocked,canUse,reci
   if(!eligible)return;
   let active=true,timer,args=null,terminal=false;
   const deadline=Date.now()+16000;
+  const canCancel=()=>live.current.connected&&live.current.suggestionsSupported&&scope===suggestionScope(live.current.readState());
+  const cancel=()=>{
+   if(args&&canCancel())void act('session.suggestion.cancel',{sessionId:args.sessionId,requestId:args.requestId},{feedback:false,suggestionIsCurrent:canCancel}).catch(()=>{});
+  };
   const current=()=>active&&!!args&&owner.requestCurrent(args);
   const poll=async(action,requestArgs)=>{
    if(!current())return;
@@ -51,7 +56,7 @@ export function useTranscriptSuggestion({state,readState,act,blocked,canUse,reci
     if(!received){owner.unavailable(args);refresh(value=>value+1);return}
     if(result.status==='pending'){
      if(Date.now()<deadline)timer=setTimeout(()=>poll('session.suggestion.status',{sessionId:args.sessionId,requestId:args.requestId}),350);
-     else{owner.unavailable(args);refresh(value=>value+1);void act('session.suggestion.cancel',{sessionId:args.sessionId,requestId:args.requestId},{feedback:false}).catch(()=>{})}
+     else{owner.unavailable(args);refresh(value=>value+1);cancel()}
     }
    }catch{owner.unavailable(args);refresh(value=>value+1)/* No automatic retry of an uncertain request. */}
   };
@@ -61,7 +66,7 @@ export function useTranscriptSuggestion({state,readState,act,blocked,canUse,reci
    args=owner.nextRequest();
    if(args){refresh(value=>value+1);void poll('session.suggestion.request',args)}
   }
-  return()=>{active=false;clearTimeout(timer);if(args&&!terminal)void act('session.suggestion.cancel',{sessionId:args.sessionId,requestId:args.requestId},{feedback:false}).catch(()=>{})};
+  return()=>{active=false;clearTimeout(timer);if(args&&!terminal)cancel()};
  },[owner,trigger,eligible,config?.revision,act,generation]);
  const ghost=owner.candidate();
  useEffect(()=>{if(!ghost||ghost.expiresAt===null)return;const timer=setTimeout(()=>refresh(value=>value+1),Math.max(0,ghost.expiresAt-Date.now()+1));return()=>clearTimeout(timer)},[ghost?.expiresAt]);

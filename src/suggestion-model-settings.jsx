@@ -19,18 +19,18 @@ export function publishSuggestionModels(scope,result,configurationRevision=0){
 export function clearSuggestionModels(){
  for(const saved of stores.values()){saved.generation++;saved.snapshot=empty;saved.pending=null;saved.listeners.forEach(fn=>fn())}
 }
-export function useSuggestionModels(state,act){
+export function useSuggestionModels(state,act,verified=true){
  const scope=suggestionScope(state),saved=store(scope),revision=state?.configurationRevision??0;
  const data=useSyncExternalStore(fn=>{saved.listeners.add(fn);return()=>saved.listeners.delete(fn)},()=>saved.snapshot);
  useEffect(()=>{
-  if(!scope||saved.snapshot!==empty&&saved.configurationRevision===revision||saved.pending&&saved.pendingRevision===revision)return;
+  if(!verified||!scope||saved.snapshot!==empty&&saved.configurationRevision===revision||saved.pending&&saved.pendingRevision===revision)return;
   if(saved.pending)saved.generation++;
   const generation=saved.generation;
   saved.pendingRevision=revision;
   saved.pending=act('providers.suggestionModels',{}, {feedback:false}).then(receipt=>{
    if(generation===saved.generation&&receipt?.accepted)publishSuggestionModels(scope,receipt.result,revision);
   }).catch(()=>{}).finally(()=>{if(generation===saved.generation)saved.pending=null});
- },[scope,act,saved,data,revision]);
+ },[scope,act,saved,data,revision,verified]);
  return saved.configurationRevision===revision?data:empty;
 }
 const availableProviders=data=>(data.providers||[]).filter(row=>row.enabled!==false&&!row.authenticationRequired);
@@ -38,8 +38,8 @@ const configured=(config,providers)=>config?.enabled===true&&!!config.model?.tri
 function SharingDisclosure(){return <><p className="a-caption">Uses conversation text, not unsent drafts. Provider charges may apply.</p><details className="a-suggestion-disclosure"><summary>About text sharing</summary><p>Visible messages from all participants go to the selected provider. An agent’s private context is not shared. Cached suggestions remain separate from your drafts.</p></details></>}
 
 // The everyday preference never edits host configuration on an already-set-up host.
-export function SuggestionSettings({state,act,navigate}){
- const data=useSuggestionModels(state,act),scope=suggestionScope(state),config=data.suggestionModels,providers=availableProviders(data);
+export function SuggestionSettings({state,act,navigate,verified=true}){
+ const data=useSuggestionModels(state,act,verified),scope=suggestionScope(state),config=data.suggestionModels,providers=availableProviders(data);
  const [enabled,setEnabled,error,saving]=useSuggestionPreference(state,act),[setup,setSetup]=useState(null),[setupBusy,setSetupBusy]=useState(false),[notice,setNotice]=useState('');
  const layout=useContext(SettingsLayoutContext),current=useRef(null),identity=useRef({scope,epoch:0}),toggleId=useId();
  if(identity.current.scope!==scope)identity.current={scope,epoch:identity.current.epoch+1};
@@ -67,7 +67,7 @@ export function SuggestionSettings({state,act,navigate}){
   <SharingDisclosure/>
   {!config&&<p role="status">Suggestion settings are unavailable on this host.</p>}
   {setup?.scope===scope&&setup.epoch===identity.current.epoch&&<div role="group" aria-label="Set up suggested messages"><h4>Set up suggested messages</h4>
-   <SuggestionSetup state={state} act={act} navigate={navigate} compact onBusy={setSetupBusy} onSaved={(result,receipt)=>finish(result,setup.token,receipt)} onCancel={()=>setSetup(null)}/>
+   <SuggestionSetup state={state} act={act} navigate={navigate} verified={verified} compact onBusy={setSetupBusy} onSaved={(result,receipt)=>finish(result,setup.token,receipt)} onCancel={()=>setSetup(null)}/>
   </div>}
   <button type="button" className="a-link" onClick={()=>navigate('suggestion-advanced')}>Advanced settings</button>
   {error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}
@@ -76,8 +76,8 @@ export function SuggestionSettings({state,act,navigate}){
 
 // One implementation serves host Advanced settings and the first-enable flow.
 // Drafts and asynchronous result ownership stay private to the exact account.
-export function SuggestionSetup({state,act,navigate,compact=false,onSaved,onCancel,onBusy}){
- const data=useSuggestionModels(state,act),scope=suggestionScope(state),config=data.suggestionModels;
+export function SuggestionSetup({state,act,navigate,verified=true,compact=false,onSaved,onCancel,onBusy}){
+ const data=useSuggestionModels(state,act,verified),scope=suggestionScope(state),config=data.suggestionModels;
  const [draft,setDraft]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const alive=useRef(true),sending=useRef(false),current=useRef(null),layout=useContext(SettingsLayoutContext),identity=useRef({scope,epoch:0}),reviewRoot=useRef(null);
  if(identity.current.scope!==scope)identity.current={scope,epoch:identity.current.epoch+1};
@@ -92,9 +92,9 @@ export function SuggestionSetup({state,act,navigate,compact=false,onSaved,onCanc
  const choices=(providerFields(entry?.metadata||chosen,{model:value.model,default_model:value.model}).find(field=>field.id==='reasoning_effort')?.choices||[]).map(row=>typeof row==='object'?row.value:row);
  useEffect(()=>{
   const key=JSON.stringify([scope,config?.revision,value.provider,catalogKey]);
-  if(!layout.active||!chosen||!needsCatalog||requested.current.has(key))return;
+  if(!verified||!layout.active||!chosen||!needsCatalog||requested.current.has(key))return;
   requested.current.add(key);void refreshCatalog();
- },[scope,config?.revision,value.provider,catalogKey,needsCatalog,layout.active]);
+ },[scope,config?.revision,value.provider,catalogKey,needsCatalog,layout.active,verified]);
  async function refreshCatalog(refresh=false){
   if(!chosen)return;setCatalogError('');
   try{const receipt=await act('providers.models',{id:chosen.id,scope:'global',configurationTarget:{kind:'global'},...(refresh?{refresh:true}:{})},{feedback:false});if(receipt?.accepted!==true)throw Error(receipt?.error||'Could not request models for this connection.')}
@@ -143,8 +143,8 @@ export function SuggestionSetup({state,act,navigate,compact=false,onSaved,onCanc
  </section>;
 }
 export function SuggestionAdvancedSettings(props){return <div className="a-suggestion-advanced"><SuggestionSetup {...props}/><SuggestionPromptSettings {...props}/></div>}
-export function SuggestionPromptSettings({state,act,navigate}){
- const data=useSuggestionModels(state,act),scope=suggestionScope(state),config=data.suggestionModels,id=useId();
+export function SuggestionPromptSettings({state,act,navigate,verified=true}){
+ const data=useSuggestionModels(state,act,verified),scope=suggestionScope(state),config=data.suggestionModels,id=useId();
  const [draft,setDraft]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const current=useRef({scope,epoch:0});if(current.current.scope!==scope)current.current={scope,epoch:current.current.epoch+1};
  const reviewRoot=useRef(null);

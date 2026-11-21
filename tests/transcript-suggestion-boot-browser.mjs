@@ -11,12 +11,16 @@ const output=process.env.AMPLIFIER_TEST_ARTIFACTS||'/tmp/transcript-suggestion-b
 const artifact=process.argv[2]?await readClientArtifact(process.argv[2],process.argv[3]):null;
 let state={revision:1,settings:{workspace:'/fixture',suggestedMessages:true,suggestedMessagesRevision:0},runtime:{available:true},view:{setupJourney:'done',scheme:'system',navPinned:true},sessions:[],workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:null,selectedWorkspaceId:'project',setup:{providers:[{id:'fixture',module:'provider-fixture',enabled:true,config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false},attention:{items:[],sessions:{}}};
 const catalogMetadata={info:{config_fields:[]},configSchema:{fields:[{id:'reasoning_effort',choices:['low','medium','high'],requires_model:true}]}};
+const suggestionCatalog=['settings.update','providers.suggestionModels','providers.configureSuggestions','session.suggestion.request','session.suggestion.status','session.suggestion.cancel'].map(name=>({name}));
+let supportsSuggestions=false,historyScope='b'.repeat(64),holdCatalog=false,heldCatalog=null;
 let suggestionConfig={enabled:true,provider:'fixture',model:'fixture-model',effort:'low',transcriptMode:'last_n',humanTurns:6,revision:'boot-config',prompt:'Default fixture instruction.',defaultPrompt:'Default fixture instruction.'},rejectSetup=false;
 state.modelCatalogs={'global-fixture-key':{phase:'ready',supported:true,provenance:'provider-api',modelsDeferred:true,loadedAt:100,metadata:{info:{},configSchema:{fields:[]}}}};
 state.setup.providerCatalogs={fixture:{phase:'ready',supported:true,provenance:'provider-api',sharedCatalogKey:'global-fixture-key',loadedAt:100,models:['fixture-model','haiku-fixture','sonnet-fixture','fourth-model'],metadata:catalogMetadata}};
 const shell=createShellHttpFixture(()=>state),calls=[],errors=[],external=[],reads=[];
 const shells=new Map();
-const snapshot=(target=page)=>{const next=(shells.get(target)||shell).state();return {...next,client:{...next.client,historyScope:'b'.repeat(64),...(artifact?{build:{serverVersion:artifact.built.version,frontend:artifact.built}}:{})}}};
+const snapshot=(target=page)=>{const next=(shells.get(target)||shell).state();return {...next,client:{...next.client,historyScope,...(artifact?{build:{serverVersion:artifact.built.version,frontend:artifact.built}}:{})}}};
+const catalogResponse=()=>supportsSuggestions?suggestionCatalog:[{name:'settings.update'}];
+const suggestionCalls=()=>calls.filter(row=>row.action==='settings.update'?Object.hasOwn(row.args.patch||{},'suggestedMessages'):suggestionCatalog.some(entry=>entry.name===row.action));
 const suggestionActions=()=>calls.filter(row=>row.action.startsWith('session.suggestion.'));
 const writes=()=>calls.filter(row=>['conversation.send','session.create','session.draft','providers.configureSuggestions','conversation.configure'].includes(row.action));
 let browser,vite,staticFixture,page,heldAttach,attempt,holdSelection=false,attached=false,modelCalls=0,rejectPreference=false,holdPreference=false;
@@ -53,7 +57,10 @@ try{
   }
   const result=ownerShell.response(route.request());if(result!==undefined)return route.fulfill({json:result});
   if(url.pathname==='/api/state')return route.fulfill({json:snapshot(owner)});
-  if(url.pathname==='/api/actions'&&route.request().method()==='GET')return route.fulfill({json:[]});
+  if(url.pathname==='/api/actions'&&route.request().method()==='GET'){
+   if(holdCatalog){heldCatalog=route;return}
+   return route.fulfill({json:catalogResponse()});
+  }
   if(url.pathname!=='/api/actions')return route.fulfill({json:{ok:true}});
   const body=route.request().postDataJSON();calls.push(body);
   if(body.action==='settings.update'){
@@ -102,6 +109,20 @@ try{
  await expect(composer).not.toBeFocused();
  await page.waitForFunction(()=>window.amplifier.getState().client?.historyScope==='b'.repeat(64));
  if(artifact)assert.equal(await page.evaluate(()=>window.amplifier.getState().client.build.frontend.id),artifact.built.id);
+ // A host may retain suggested-message preferences after downgrading. Only its
+ // advertised actions authorize the optional controls and the background read.
+ await page.waitForFunction(()=>window.amplifier.getActions().some(row=>row.name==='settings.update'));
+ await page.evaluate(()=>window.amplifier.dispatch('view.update',{patch:{panel:'settings',settingsExpanded:['chat-input']}}));
+ await expect(page.getByRole('combobox',{name:'Enter / Return key'})).toBeVisible();
+ await expect(page.getByLabel('Show suggested messages',{exact:true})).toHaveCount(0);
+ await page.evaluate(()=>window.amplifier.dispatch('view.update',{patch:{panel:'settings',settingsExpanded:['advanced']}}));
+ await expect(page.getByRole('button',{name:/provider configuration/i})).toBeVisible();
+ await expect(page.getByRole('button',{name:/suggested messages: host setup/i})).toHaveCount(0);
+ await page.evaluate(()=>window.amplifier.dispatch('view.update',{patch:{panel:null,settingsExpanded:[]}}));
+ assert.deepEqual(calls.filter(row=>suggestionCatalog.some(({name})=>name!=='settings.update'&&name===row.action)),[]);
+ supportsSuggestions=true;
+ await page.reload();
+ await expect(composer).toBeVisible();
  await expect.poll(()=>calls.filter(row=>row.action==='providers.suggestionModels').length).toBe(1);
  assert.equal(await page.evaluate(()=>window.amplifier.getState().selectedSessionId),null);
  assert.equal(await page.evaluate(()=>window.amplifier.getState().view?.panel??null),null,'Normal chat boot is not masked by a settings panel');
@@ -231,7 +252,28 @@ try{
  const beforeSetup=calls.filter(row=>row.action==='providers.configureSuggestions').length;
  await page.getByRole('button',{name:'Cancel setup',exact:true}).click();assert.equal(calls.filter(row=>row.action==='providers.configureSuggestions').length,beforeSetup);
  await personal.click();const compactSetup=page.getByRole('group',{name:'Set up suggested messages'});
- await compactSetup.getByLabel('Model',{exact:true}).selectOption('haiku-fixture');rejectSetup=true;
+ await compactSetup.getByLabel('Model',{exact:true}).selectOption('haiku-fixture');
+ async function verifyDraftOnTabReturn(field,value,saveButton){
+  const before=suggestionCalls().length;
+  holdCatalog=true;
+  await page.clock.fastForward(1100);
+  await page.evaluate(()=>{
+   Object.defineProperty(document,'hidden',{configurable:true,value:true});
+   document.dispatchEvent(new Event('visibilitychange'));
+   delete document.hidden;
+   document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await expect.poll(()=>!!heldCatalog).toBe(true);
+  await expect(saveButton).toBeDisabled();
+  await expect(field).toHaveValue(value);
+  assert.equal(suggestionCalls().length,before,'Verification cannot read or save suggestion settings or start model work');
+  holdCatalog=false;await heldCatalog.fulfill({json:catalogResponse()});heldCatalog=null;
+  await expect(saveButton).toBeEnabled();
+  await expect(field).toHaveValue(value);
+ }
+ await verifyDraftOnTabReturn(compactSetup.getByLabel('Model',{exact:true}),'haiku-fixture',
+  compactSetup.getByRole('button',{name:'Save setup and enable',exact:true}));
+ rejectSetup=true;
  await compactSetup.getByRole('button',{name:'Save setup and enable',exact:true}).click();await expect(page.getByRole('alert').filter({hasText:'Fixture setup rejected'})).toBeVisible();await expect(personal).not.toBeChecked();
  rejectSetup=false;await compactSetup.getByRole('button',{name:'Save setup and enable',exact:true}).click();await expect(personal).toBeChecked();await expect(compactSetup).toHaveCount(0);
  const setupArgs=calls.filter(row=>row.action==='providers.configureSuggestions').at(-1).args;
@@ -244,6 +286,7 @@ try{
  assert.equal(suggestionConfig.prompt,'Consumer custom instruction.','Restore default stages; it never silently saves');
  await page.getByRole('button',{name:'Discard instruction changes'}).click();await expect(instruction).toHaveValue('Consumer custom instruction.');
  await instruction.fill('Unsaved instruction remains private.');
+ await verifyDraftOnTabReturn(instruction,'Unsaved instruction remains private.',page.getByRole('button',{name:'Save instruction',exact:true}));
  await page.getByRole('button',{name:'Close panel',exact:true}).click();await expect(page.getByRole('alertdialog',{name:'Unsaved settings changes'})).toBeVisible();
  await page.getByRole('button',{name:'Review and save',exact:true}).click();await expect(instruction).toBeFocused();await expect(instruction).toHaveValue('Unsaved instruction remains private.');
  await page.getByRole('button',{name:'Discard instruction changes'}).click();
@@ -326,6 +369,25 @@ try{
   await headerToggle.focus();await headerToggle.press('Enter');await expect(page.locator('#workspace-canvas')).toBeHidden();await expect(headerToggle).toHaveAttribute('aria-expanded','false');
   assert.equal(await composer.evaluate(node=>node.textContent),'');assert.equal(state.canvas.content,'Fixed synthetic canvas document');
  }
+ await page.setViewportSize({width:1280,height:900});
+ await page.evaluate(()=>window.amplifier.dispatch('view.update',{patch:{panel:'settings',settingsExpanded:['suggestion-advanced']}}));
+ const disclosure=page.locator('[data-part="suggestion-prompt-settings"] details');
+ if(!await disclosure.evaluate(node=>node.open))await disclosure.locator('summary').click();
+ await instruction.fill('Private draft from the previous owner');
+ await page.evaluate(()=>window.amplifier.dispatch('view.update',{patch:{panel:'settings',settingsExpanded:['chat-input']}}));
+ await expect(page.locator('[data-part="suggestion-prompt-settings"] textarea')).toHaveValue('Private draft from the previous owner');
+ const beforeReplacement=suggestionCalls().length;
+ holdCatalog=true;supportsSuggestions=false;historyScope='c'.repeat(64);state.revision++;
+ await page.evaluate(next=>window.emitFixtureState(next),snapshot());
+ await expect.poll(()=>!!heldCatalog).toBe(true);
+ const suggestionEditors=page.locator('[data-part="suggestion-settings"], [data-part="suggestion-prompt-settings"], [data-part="suggestion-host-setup"]');
+ await expect(suggestionEditors).toHaveCount(0);
+ holdCatalog=false;await heldCatalog.fulfill({json:catalogResponse()});heldCatalog=null;
+ await page.waitForFunction(()=>window.amplifier.getActions().some(row=>row.name==='settings.update'));
+ await expect(page.getByLabel('Enter / Return key',{exact:true})).toBeVisible();
+ await expect(suggestionEditors).toHaveCount(0);
+ assert.equal(suggestionCalls().length,beforeReplacement,'Retained Settings pages cannot read optional actions for the replacement owner');
+ report.reconnect={initialSetupDraftPreserved:true,advancedInstructionDraftPreserved:true,replacementRetainedEditors:0,replacementSuggestionCalls:suggestionCalls().length-beforeReplacement};
  report.polish={desktopNarrowAnd200PercentFont:true,geometryNoHorizontalOverflowOrFieldOverlap:true,screenshotsCaptured:true,pixelsInspected:false,canvasInnerCloseAbsentHeaderKeyboardTogglePreserved:true};
  assert.equal(calls.filter(row=>['conversation.configure','conversation.send','session.create'].includes(row.action)).length,0);
  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);

@@ -51,7 +51,7 @@ function App(){
   if(action.endsWith('status')&&holdStatus.current)return new Promise(resolve=>held.current.push(()=>resolve(response())));
   return response();
  }).current;
- const suggestion=useTranscriptSuggestion({state:live.current,readState:()=>live.current,act,blocked:blocked||!connected,composing,connected,canUse:()=>!live.current.view.draft});
+ const suggestion=useTranscriptSuggestion({state:live.current,suggestionsSupported:true,readState:()=>live.current,act,blocked:blocked||!connected,composing,connected,canUse:()=>!live.current.view.draft});
  useLayoutEffect(()=>{
   window.suggestionFixture={
    setProps,setBlocked,setState,setConnected,setDraft,setPending:value=>{pending.current=value},select:id=>setState(current=>({...current,selectedSessionId:id})),failSave:value=>{failSave.current=value},

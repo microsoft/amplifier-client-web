@@ -20,7 +20,7 @@ test('hook mounts before client state and waits through unselected boot snapshot
   for(const initial of [undefined,null,{}, {sessions:[]},{selectedSessionId:undefined,sessions:[]},{selectedSessionId:null,sessions:[]}]){
    let state=initial,root,suggestion;const calls=[];
    const act=async(action,args)=>{calls.push({action,args});return {accepted:true,result:{...args,status:'pending',suggestion:null,configRevision:'boot-config',sourceKey:'boot-source'}}};
-   function Probe(){suggestion=useTranscriptSuggestion({state,readState:()=>state,act,blocked:false,canUse:()=>true});return null}
+   function Probe(){suggestion=useTranscriptSuggestion({state,suggestionsSupported:true,readState:()=>state,act,blocked:false,canUse:()=>true});return null}
    const render=()=>renderAct(async()=>{if(root)root.update(React.createElement(Probe));else root=create(React.createElement(Probe))});
    try{
     await render();assert.equal(suggestion.ghost,null);assert.deepEqual(calls,[]);
@@ -45,9 +45,19 @@ async function scenario({wrongReady=false,ready=false,response}={}){
  configure({});
  const calls=[];let recipient='one',blocked=false,root,suggestion;
  const act=async(action,args)=>{calls.push({action,args});return response?response(action,args):{accepted:true,result:{...args,requestId:wrongReady?'wrong':args.requestId,status:wrongReady||ready?'ready':'pending',suggestion:wrongReady||ready?'Try this':null,configRevision:'config',sourceKey:'source'}}};
- function Probe(){suggestion=useTranscriptSuggestion({state,readState:()=>state,act,recipient,blocked,canUse:()=>true});return null}
+ function Probe(){suggestion=useTranscriptSuggestion({state,suggestionsSupported:true,readState:()=>state,act,recipient,blocked,canUse:()=>true});return null}
  const render=()=>renderAct(async()=>{if(root)root.update(React.createElement(Probe));else root=create(React.createElement(Probe))});
  return {calls,state,get ghost(){return suggestion?.ghost},get owner(){return suggestion?.owner},get generateInterface(){return suggestion?.generate},get status(){return suggestion?.status},get canGenerate(){return suggestion?.canGenerate},render,edit:reason=>renderAct(async()=>suggestion.supersede(reason)),configure:patch=>renderAct(async()=>configure(patch)),recipient:next=>{recipient=next},block:()=>{blocked=true},async close(){await renderAct(async()=>root?.unmount());Object.assign(globalThis,originals)}};
+}
+for(const change of ['hostInstanceId','historyScope']){
+ test('changing '+change+' never sends the old request cancellation to its successor',async()=>{
+  const h=await scenario();try{
+   await h.render();const original=h.calls.find(row=>row.action==='session.suggestion.request').args;
+   h.state.client={...h.state.client,[change]:'different'};
+   await h.render();
+   assert.equal(h.calls.filter(row=>row.action==='session.suggestion.cancel'&&row.args.requestId===original.requestId).length,0);
+  }finally{await h.close()}
+ });
 }
 test('changing only recipient cancels the original pending attempt immediately',async()=>{
  const h=await scenario();try{

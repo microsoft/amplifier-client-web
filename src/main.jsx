@@ -17,7 +17,8 @@ import {hasEarlierWindow,conversationHistoryPending} from './history-window.js';
 import {ChatPages,chatPageTitles} from './chat-pages';
 import {MarkdownComposer} from './markdown-composer.jsx';
 import {useTranscriptSuggestion} from './use-transcript-suggestion.jsx';
-import {suggestionOutboxPending} from './transcript-suggestion.js';
+import {createActionCatalogReader} from './action-catalog.js';
+import {suggestionScope,suggestionOutboxPending,supportsTranscriptSuggestions} from './transcript-suggestion.js';
 import {clearSuggestionModels} from './suggestion-model-settings.jsx';
 import {ComposerReturnHelp} from './composer-return-preference.jsx';
 import {automaticReturnMode} from './composer-return.js';
@@ -151,8 +152,8 @@ function App(){
  const [destinationTrail,setDestinationTrail]=useState(null),destinationHistory=useRef(null);
  if(!destinationHistory.current)destinationHistory.current=createDestinationHistory({changed:setDestinationTrail});
  const deliveryAuthentication=useRef(0);
- useEffect(()=>onAuthenticationChange(scope=>{suggestionFence.current?.reset();clearSuggestionModels();deliveryAuthentication.current++;destinationHistory.current.invalidate(scope);clearAppearanceCatalogs();setBootAttempt(value=>value+1)}),[]);
- const [state,setState]=useState(null),[catalog,setCatalog]=useState([]),[error,setError]=useState(''),[connected,setConnected]=useState(false),[busy,setBusy]=useState(false),[bootAttempt,setBootAttempt]=useState(0),[draft,setDraft]=useState(''),[workerDraft,setWorkerDraft]=useState(''),[agentAction,setAgentAction]=useState('view.update'),[agentArgs,setAgentArgs]=useState('{"patch":{"mode":"chat"}}'),[voice,setVoice]=useState({status:'idle'}),[uploading,setUploading]=useState(false);
+ useEffect(()=>onAuthenticationChange(scope=>{suggestionFence.current?.reset();clearSuggestionModels();actionCatalog.clear();deliveryAuthentication.current++;destinationHistory.current.invalidate(scope);clearAppearanceCatalogs();setBootAttempt(value=>value+1)}),[]);
+ const [state,setState]=useState(null),[hostCatalog,setHostCatalog]=useState(null),[error,setError]=useState(''),[connected,setConnected]=useState(false),[busy,setBusy]=useState(false),[bootAttempt,setBootAttempt]=useState(0),[draft,setDraft]=useState(''),[workerDraft,setWorkerDraft]=useState(''),[agentAction,setAgentAction]=useState('view.update'),[agentArgs,setAgentArgs]=useState('{"patch":{"mode":"chat"}}'),[voice,setVoice]=useState({status:'idle'}),[uploading,setUploading]=useState(false);
  const [appearancePreferenceStatus,setAppearancePreferenceStatus]=useState({status:'idle'});
  // One client-document owner survives modal/Canvas Settings mount changes.
  const appearancePreviewOwner=useRef({});
@@ -672,6 +673,8 @@ function App(){
  const viewReporter=useRef(null);
  if(!viewReporter.current)viewReporter.current=createViewReporter(body=>request('/api/view',{method:'POST',body}));
  const publishView=useCallback(()=>{if(latest.current&&!document.hidden)viewReporter.current({...visibleView(root.current,clientId,{interfaceOnly:true}),sessionId:latest.current.selectedSessionId??null,voice:voiceClient.current?.state,notificationPermission:'Notification'in window?Notification.permission:'unsupported'});},[]);
+ const catalog=hostCatalog?.rows||[];
+ const actionCatalog=useMemo(()=>createActionCatalogReader(signal=>request('/api/actions',{signal}),setHostCatalog),[]);
  const streamRecovery=useRef({delay:2000,lastWake:-Infinity});
  useEffect(()=>{
   let alive=true,source,retryTimer,restarting=false,wasHidden=document.hidden;const controller=new AbortController();setError('');setStreamClient(null);
@@ -692,14 +695,14 @@ function App(){
    if(!alive)return;
    // The stream supplies the authoritative baseline. A separate state GET would
    // duplicate it and race it; explicit recovery still uses /api/state.
-   request('/api/actions',{signal:controller.signal}).then(actions=>{if(alive)setCatalog(Array.isArray(actions)?actions:actions.actions||[])}).catch(()=>{});
+   const bindCatalog=frame=>actionCatalog.select(frame.client?.id===clientId?suggestionScope(frame):null);
    let streamState,historyBaseline=true;
-   setFeedbackEventStream('connecting');source=createStateStream(clientUrl('/api/events?transport=delta-v1'),attachment.transports);source.addEventListener('state',e=>{if(!alive)return;try{if(e.decodeError)throw e.decodeError;const initial=!latest.current;streamState=e.data;acceptState(streamState,{baseline:historyBaseline});historyBaseline=false;setStreamClient(streamState.client?.id===clientId?streamState.client:null);streamRecovery.current.delay=2000;reconnected();if(initial)setError('');clearTimeout(timer)}catch{}});
-   source.addEventListener('state-delta',e=>{if(!alive)return;try{if(e.decodeError)throw e.decodeError;streamState=applyStateDelta(streamState,e.data);acceptState(streamState);setStreamClient(streamState.client?.id===clientId?streamState.client:null);reconnected()}catch{source.close();setFeedbackEventStream('closed');setConnected(false);setStreamClient(null);setBootAttempt(value=>value+1)}});
+   setFeedbackEventStream('connecting');source=createStateStream(clientUrl('/api/events?transport=delta-v1'),attachment.transports);source.addEventListener('state',e=>{if(!alive)return;try{if(e.decodeError)throw e.decodeError;const initial=!latest.current;streamState=e.data;bindCatalog(streamState);acceptState(streamState,{baseline:historyBaseline});historyBaseline=false;setStreamClient(streamState.client?.id===clientId?streamState.client:null);streamRecovery.current.delay=2000;reconnected();if(initial)setError('');clearTimeout(timer)}catch{}});
+   source.addEventListener('state-delta',e=>{if(!alive)return;try{if(e.decodeError)throw e.decodeError;streamState=applyStateDelta(streamState,e.data);bindCatalog(streamState);acceptState(streamState);setStreamClient(streamState.client?.id===clientId?streamState.client:null);reconnected()}catch{source.close();setFeedbackEventStream('closed');setConnected(false);setStreamClient(null);setBootAttempt(value=>value+1)}});
    source.addEventListener('shell',e=>{try{if(e.decodeError)throw e.decodeError;window.dispatchEvent(new CustomEvent('amplifier-shell',{detail:e.data}))}catch{}});
-   source.onopen=()=>{historyBaseline=true;streamState=undefined;setStreamClient(null);setFeedbackEventStream('open');reconnected();void capabilityStopFence.current.reconcile();viewReporter.current.invalidate();publishView();window.dispatchEvent(new Event('amplifier-reconnected'))};source.onerror=()=>{
+   source.onopen=()=>{actionCatalog.clear();historyBaseline=true;streamState=undefined;setStreamClient(null);setFeedbackEventStream('open');reconnected();void capabilityStopFence.current.reconcile();viewReporter.current.invalidate();publishView();window.dispatchEvent(new Event('amplifier-reconnected'))};source.onerror=()=>{
     if(!alive||restarting)return;
-    setFeedbackEventStream(source.readyState===2?'closed':'reconnecting');setConnected(false);setStreamClient(null);
+    actionCatalog.clear();setFeedbackEventStream(source.readyState===2?'closed':'reconnecting');setConnected(false);setStreamClient(null);
     // CONNECTING is owned by EventSource's native retry. CLOSED cannot recover
     // by itself; retry at a bounded rate after a previously loaded chat.
     if(source.readyState===2&&latest.current&&!document.hidden&&!retryTimer){
@@ -707,8 +710,8 @@ function App(){
     }
    };
   }).catch(e=>{clearTimeout(timer);if(alive&&e.name!=='AbortError')reportError(e)});
-  return()=>{alive=false;clearTimeout(timer);clearTimeout(retryTimer);controller.abort();source?.close();window.removeEventListener('online',wake);window.removeEventListener('pageshow',restored);document.removeEventListener('visibilitychange',visible);setFeedbackEventStream('closed')};
- },[acceptState,bootAttempt,reconnected,reportError]);
+  return()=>{alive=false;actionCatalog.clear();clearTimeout(timer);clearTimeout(retryTimer);controller.abort();source?.close();window.removeEventListener('online',wake);window.removeEventListener('pageshow',restored);document.removeEventListener('visibilitychange',visible);setFeedbackEventStream('closed')};
+ },[acceptState,actionCatalog,bootAttempt,reconnected,reportError]);
  useEffect(()=>{window.amplifier=Object.freeze({shellClientId:clientId,getShellState:()=>shell.data,getState:()=>({...pendingView.current.apply(latest.current),renderedView:visibleView(root.current,clientId)}),getActions:()=>catalog,dispatch,subscribe:fn=>{stateListeners.current.add(fn);return()=>stateListeners.current.delete(fn)}});return()=>{delete window.amplifier}},[catalog,dispatch,shell.data]);
  useEffect(()=>{const timer=setTimeout(publishView,300);return()=>clearTimeout(timer)},[state,draft,voice,publishView,shell.data]);
  useEffect(()=>{let timer;const schedule=()=>{clearTimeout(timer);timer=setTimeout(publishView,200)};document.addEventListener('visibilitychange',schedule);document.addEventListener('selectionchange',schedule);document.addEventListener('focusin',schedule);document.addEventListener('input',schedule);window.addEventListener('resize',schedule);return()=>{clearTimeout(timer);document.removeEventListener('visibilitychange',schedule);document.removeEventListener('selectionchange',schedule);document.removeEventListener('focusin',schedule);document.removeEventListener('input',schedule);window.removeEventListener('resize',schedule)}},[publishView]);
@@ -1094,13 +1097,15 @@ function App(){
  }});
  const settingsState={...state,view:{...state?.view,settingsCanvas:canvasSettingsVisible}};
  const settingsAct=(name,args={},meta={})=>act(name,name==='view.update'&&canvasSettingsVisible&&args.patch?.panel==='settings'?{...args,patch:{...args.patch,panel:null,settingsCanvas:true}}:args,meta);
- const settingsSurface=<SettingsExperience state={settingsState} session={settingsSession} act={settingsAct} dispatch={dispatch} open={open} close={()=>canvasSettingsVisible?act('canvas.tabClose',{id:state.canvas.id}):dismissPanel()} navigationRef={settingsNavigation} instanceAccent={instanceAccent.rendered} appearance={<AppearanceSettings state={state} appearance={appearance} act={dispatch} editor={appearanceEditor} previewOwner={appearancePreviewOwner} preferenceStatus={appearancePreferenceStatus} onPreferenceChange={updateAppearancePreference} onPreferenceSelect={selectAppearanceProfile}/>}/>;
+ const suggestionOwner=suggestionScope(state);
+ const suggestionsSupported=useMemo(()=>suggestionOwner&&suggestionOwner===hostCatalog?.scope?supportsTranscriptSuggestions(hostCatalog.rows):null,[hostCatalog,suggestionOwner]);
+ const settingsSurface=<SettingsExperience suggestionsSupported={suggestionsSupported} state={settingsState} session={settingsSession} act={settingsAct} dispatch={dispatch} open={open} close={()=>canvasSettingsVisible?act('canvas.tabClose',{id:state.canvas.id}):dismissPanel()} navigationRef={settingsNavigation} instanceAccent={instanceAccent.rendered} appearance={<AppearanceSettings state={state} appearance={appearance} act={dispatch} editor={appearanceEditor} previewOwner={appearancePreviewOwner} preferenceStatus={appearancePreferenceStatus} onPreferenceChange={updateAppearancePreference} onPreferenceSelect={selectAppearanceProfile}/>}/>;
  const browsing=workSurface(state)!=='chat';
  // Navigation/work-surface departure is handled by the suggestion owner so it
  // may retain READY privately. Actual history loading and safety blockers clear it.
  const suggestionBlocked=!!(!shell.ready||!hasAppearanceIdentity(state?.appearance)||state?.appearance?.availability==='failed'||busy||uploading||availableAttachments.length||referencingDraft||dictating||callActive||voiceStarting||conversationHistoryPending(session,false,messages)||executionUnavailable||detail.focused||!connected||
   suggestionOutboxPending(outbox.entries,outboxSource,session?.id));
- const suggestion=useTranscriptSuggestion({state,readState:()=>pendingView.current.apply(latest.current),act:dispatch,blocked:suggestionBlocked,connected,composing:suggestionComposing,
+ const suggestion=useTranscriptSuggestion({state,suggestionsSupported,readState:()=>pendingView.current.apply(latest.current),act:dispatch,blocked:suggestionBlocked,connected,composing:suggestionComposing,
   recipient:recipientAgentId,canUse:()=>!lastDraft.current&&!uploadCount.current&&!referenceDraftLock.current&&!dictationControl.current?.current&&!suggestionOutboxPending(outbox.current.current,deliveryScope(latest.current,session),session?.id)&&!pendingView.current.apply(latest.current)?.draftNavigationPending});
  suggestionFence.current=suggestion.owner;
  useLayoutEffect(()=>{

@@ -1,8 +1,38 @@
 import {test} from 'node:test';
+import {createActionCatalogReader} from '../src/action-catalog.js';
 import assert from 'node:assert/strict';
-import {suggestionText,suggestionScope,suggestionWitness,suggestionEligible,suggestionOutboxPending,plainSuggestionTab,createSuggestionController} from '../src/transcript-suggestion.js';
+import {supportsTranscriptSuggestions,suggestionText,suggestionScope,suggestionWitness,suggestionEligible,suggestionOutboxPending,plainSuggestionTab,createSuggestionController} from '../src/transcript-suggestion.js';
 import {composerState,insertComposerSuggestion,composerMarkdown,composerDocument} from '../src/markdown-composer.js';
 import {undo,redo} from 'prosemirror-history';
+
+test('suggestions require the host to advertise the complete flow',()=>{
+ const names=['settings.update','providers.suggestionModels','providers.configureSuggestions','session.suggestion.request','session.suggestion.status','session.suggestion.cancel'];
+ const catalog=names.map(name=>({name}));
+ assert.equal(supportsTranscriptSuggestions([]),false);
+ for(const name of names)assert.equal(supportsTranscriptSuggestions(catalog.filter(row=>row.name!==name)),false,name);
+ assert.equal(supportsTranscriptSuggestions(catalog),true);
+});
+
+test('late, malformed and failed catalog reads cannot grant actions to a replacement connection',async()=>{
+ const reads=[],records=[];
+ const reader=createActionCatalogReader(signal=>new Promise((resolve,reject)=>reads.push({signal,resolve,reject})),record=>records.push(record));
+ const flush=()=>new Promise(resolve=>setImmediate(resolve));
+ reader.select('host/principal');reader.select('host/principal');
+ assert.equal(reads.length,1);
+ reader.select('second/principal');
+ assert.equal(reads[0].signal.aborted,true);
+ reads[0].resolve([{name:'session.suggestion.request'}]);
+ await flush();assert.equal(records.at(-1),null);
+ reads[1].resolve({actions:[null,{}, {name:'view.update'}]});
+ await flush();assert.deepEqual(records.at(-1),{scope:'second/principal',rows:[{name:'view.update'}]});
+ reader.clear();reader.select('second/principal');
+ reads[2].reject(Error('unavailable'));await flush();assert.equal(records.at(-1),null);
+ reader.select('second/principal');assert.equal(reads.length,3);
+ reader.clear();reader.select('second/principal');reads[3].resolve({actions:{}});
+ await flush();assert.deepEqual(records.at(-1),{scope:'second/principal',rows:[]});
+ reader.clear();reader.select('second/principal');reads[4].resolve([{name:'session.suggestion.request'}]);
+ await flush();assert.deepEqual(records.at(-1),{scope:'second/principal',rows:[{name:'session.suggestion.request'}]});
+});
 
 const frame=()=>({client:{hostInstanceId:'host',historyScope:'principal'},selectedSessionId:'s',view:{},sessions:[{id:'s',status:'idle',messages:[{id:'a',role:'assistant',text:'Done.'}]}]});
 test('controller observes unselected pre-client boot states without allocating work',()=>{

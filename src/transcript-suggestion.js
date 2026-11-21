@@ -1,3 +1,12 @@
+const suggestionActions = [
+ 'providers.suggestionModels', 'providers.configureSuggestions', 'settings.update',
+ 'session.suggestion.request', 'session.suggestion.status', 'session.suggestion.cancel',
+];
+export function supportsTranscriptSuggestions(catalog){
+ const names=new Set(catalog.map(row=>row.name));
+ return suggestionActions.every(name=>names.has(name));
+}
+
 import {ownershipState} from './ownership.js';
 import {deliveryScope} from './pending-delivery-checks.js';
 // Suggestions are private assistance, not draft content or execution commands.
