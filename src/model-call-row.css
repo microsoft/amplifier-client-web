@@ -1,0 +1,10 @@
+#amp-one .a-execution-content .a-execution-action-line .a-model-call-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  overflow: visible;
+  font-variant-numeric: tabular-nums;
+}
+#amp-one .a-model-call-metrics > span {
+  white-space: nowrap;
+}

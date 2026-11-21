@@ -345,8 +345,10 @@ async function appearanceRegression({page,scenario,readState,emit,stopGuard}){
  }
  await complete.click();
  await expect(complete).toHaveAttribute('aria-expanded','true');
- await expect(page.locator('[data-node-id="appearance-completed"] .a-execution-body')).toContainText('Retained synthetic tool result.');
- await complete.click();await expect(complete).toHaveAttribute('aria-expanded','false');
+ const inspector=page.locator('#work-step-inspector');
+ await expect(inspector).toContainText('Retained synthetic tool result.');
+ await inspector.getByRole('button',{name:'Close step details'}).click();
+ await expect(complete).toHaveAttribute('aria-expanded','false');
  await capture('execution-rows');
 
  const strip=page.locator('.a-composer .a-attachments');

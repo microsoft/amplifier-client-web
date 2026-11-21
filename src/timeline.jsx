@@ -17,31 +17,39 @@ import {interimOpen} from './interim-replies.js';
 import {MetricSummary as Usage,MetricsExport} from './execution-observability.jsx';
 import {usageMetrics} from './usage-details.js';
 import {selectedMetrics,metricsVisible} from './execution-observability.js';
+import {useStepInspection} from './step-inspector.jsx';
+import {modelCallTitle,modelMeasures,stepTime} from './model-call-row.js';
+import './model-call-row.css';
 
 
 function Status({status}){return status==='stopped'?<Square aria-label="Stopped"/>:['error','failed','cancelled','interrupted'].includes(status)?<AlertCircle className="a-execution-warning" aria-label={status}/>:['complete','completed','success','done'].includes(status)?<Check className="a-execution-complete" aria-label="Completed"/>:isRunning({phase:status})?<span className="a-execution-dot" aria-label={status}/>:<Circle aria-label={status||'Recorded'}/>}
 const stamp=value=>Number.isFinite(value)?new Date(value*1000).toLocaleString():null;
 function ExecutionNode({node:sourceNode,depth=0,ancestors=[],tree,act,now,expanded,toggle,detail:level,actor,ownerId,flat=false}){
  const bodyId=useId();
- const savedDetail=useToolDetail(sourceNode,expanded.has(sourceNode.id)),node=savedDetail.node;
+ const preview=sourceNode.kind==='tool'?actionHeading(sourceNode):null;
+ const title=preview?[preview.title,preview.target||preview.preview].filter(Boolean).join(' '):
+  sourceNode.kind==='llm'?modelCallTitle(sourceNode):sourceNode.label;
+ const {inspect,selected}=useStepInspection({node:sourceNode,title,actor});
+ const savedDetail=useToolDetail(sourceNode,!inspect&&expanded.has(sourceNode.id)),node=savedDetail.node;
  const shell=useShellContext(),detail=level||shell?.composition?.presentation?.interfaceDetail||shell?.composition?.presentation?.executionDetail||'standard';
  const presentation=shell?.composition?.presentation||{},show=metricsVisible(presentation,'step'),fields=selectedMetrics(presentation);
  const tool=node.kind==='tool',worker=node.kind==='worker',children=flat?[]:tree.children.get(node.id)||[],summary=cleanSummary(node.summary||node.detail);
- const collapsible=tool||node.kind==='llm'||node.kind==='worker'||!!summary||children.length>15,open=!collapsible||expanded.has(node.id);
+ const collapsible=tool||node.kind==='llm'||node.kind==='worker'||!!summary||children.length>15,open=!inspect&&(!collapsible||expanded.has(node.id));
  const Header=collapsible?'button':'div';
  const input=useExecutionField(node,'input',open&&tool),output=useExecutionField(node,'output',open&&tool),error=useExecutionField(node,'error',open);
  if(depth>20||ancestors.includes(node.id))return null;
- const action=tool?actionContent(node,input.value,output.value):null;
- const heading=tool?actionHeading(node,input.value,output.value,error.value):null;
+ const action=tool&&open?actionContent(node,input.value,output.value):null;
+ const heading=tool&&open?actionHeading(node,input.value,output.value,error.value):preview;
  const Icon=node.kind==='worker'?GitBranch:node.kind==='llm'?MessageCircle:({command:Terminal,code:Terminal,read:FileText,write:FilePenLine,patch:FilePenLine,tasks:ListChecks,delegate:GitBranch}[heading?.kind]||Wrench);
- const phase=node.workerPhase||node.status||node.phase,elapsed=show&&fields.includes('elapsedSeconds')?elapsedLabel(node,now):null,usage=node.kind==='llm'?node.usage:node.kind==='worker'?node.aggregateUsage:null;
- const label=heading?(heading.title===heading.tool?heading.tool:`${heading.title} · ${heading.tool}`):node.label||node.model||node.kind,model=[node.provider,node.model].filter(Boolean).join(' · ');
+ const phase=node.workerPhase||node.status||node.phase,elapsed=show&&fields.includes('elapsedSeconds')?stepTime(node,now):null,usage=worker?node.aggregateUsage:null;
+ const llm=node.kind==='llm',measures=llm?modelMeasures(node,presentation):[];
+ const label=heading?(heading.title===heading.tool?heading.tool:`${heading.title} · ${heading.tool}`):llm?title:node.label||node.model||node.kind,model=[node.provider,node.model].filter(Boolean).join(' · ');
  const steps=children;
  const activity=steps.length>0&&<div className="a-execution-children">{steps.map(child=><ExecutionNode key={child.id} node={child} depth={depth+1} ancestors={[...ancestors,node.id]} tree={tree} act={act} now={now} expanded={expanded} toggle={toggle} detail={detail}/>)}</div>;
  return <div className="a-execution-node" data-kind={node.kind} data-node-id={node.id} data-work-entry={flat?node.id:undefined} data-owner-id={ownerId} data-action-kind={heading?.kind}>
-  <Header className="a-execution-line a-execution-action-line" {...(collapsible?{type:"button",'data-action':'view.update','data-view-label':[label,heading?.target,model,heading?.detail,phase].filter(Boolean).join(' · '),'aria-expanded':open,'aria-controls':bodyId,onClick:()=>toggle(node.id)}:{})}>
-   {collapsible?<ChevronRight className={`a-execution-chevron ${open?'open':''}`}/>:<span className="a-execution-chevron-space" aria-hidden="true"/>}<Icon/>
-   <span className="a-execution-label" title={[label,heading?.target,model,heading?.detail||heading?.preview||summary].filter(Boolean).join(' · ')}><span>{label}{heading?.target&&<> <code>{heading.target}</code></>}{['llm','worker'].includes(node.kind)&&model&&<> · {model}</>}{!heading?.target&&heading?.preview&&<> · {heading.preview}</>}{heading?.kind==='patch'&&(heading.added>0||heading.removed>0)&&<span className="a-execution-counts"><span>+{heading.added}</span><span>−{heading.removed}</span></span>}</span>{heading?.detail&&<small className={heading.failed?'a-execution-failure-hint':''}>{heading.detail}</small>}</span>
+  <Header className="a-execution-line a-execution-action-line" {...(collapsible?{type:"button",'data-action':'view.update','data-view-label':[label,heading?.target,model,heading?.detail,phase].filter(Boolean).join(' · '),'aria-expanded':inspect?selected:open,'aria-controls':inspect?'work-step-inspector':bodyId,onClick:inspect||(()=>toggle(node.id))}:{})}>
+   {collapsible?<ChevronRight className={`a-execution-chevron ${(inspect?selected:open)?'open':''}`}/>:<span className="a-execution-chevron-space" aria-hidden="true"/>}<Icon/>
+   <span className="a-execution-label" title={[label,heading?.target,model,heading?.detail||heading?.preview||summary].filter(Boolean).join(' · ')}><span>{label}{heading?.target&&<> <code>{heading.target}</code></>}{worker&&model&&<> · {model}</>}{!heading?.target&&heading?.preview&&<> · {heading.preview}</>}{heading?.kind==='patch'&&(heading.added>0||heading.removed>0)&&<span className="a-execution-counts"><span>+{heading.added}</span><span>−{heading.removed}</span></span>}</span>{llm&&model&&<small>{model}</small>}{measures.length>0&&<small className="a-model-call-metrics">{measures.map(value=><span key={value}>{value}</span>)}</small>}{heading?.detail&&<small className={heading.failed?'a-execution-failure-hint':''}>{heading.detail}</small>}</span>
    {actor&&<span className="a-work-actor">{actor}</span>}<span className="a-execution-accounting"><span className="a-execution-phase" title={[node.toolCallId&&`Call: ${node.toolCallId}`,stamp(node.startedAt),stamp(node.endedAt)].filter(Boolean).join(" · ")}>{isRunning(node)||['error','failed','cancelled','interrupted','stopped'].includes(phase)?`${phase}${elapsed?' · ':''}`:''}{elapsed}</span><Usage usage={usage} pending={['llm','worker'].includes(node.kind)&&isRunning(node)}/></span><Status status={phase}/>
   </Header>
   {open&&<div className="a-execution-body" id={bodyId}>
@@ -69,6 +77,7 @@ export function TurnTimeline({data,turnId,state,act,embedded=false,automatic=fal
  const tools=turn.nodeCounts?.tools??nodes.filter(node=>node.kind==='tool').length,models=turn.nodeCounts?.models??nodes.filter(node=>node.kind==='llm').length;
  const observation=turn.observationWindow===true,partial=observation||turn.partialWindow===true;
  const elapsed=show&&fields.includes('elapsedSeconds')?elapsedLabel(turn,now):null,label=observation?'Recent saved work':workLabel(turn.status||turn.phase,elapsed,isRunning(turn));
+ const stepTimes=metricsVisible(presentation,'step')&&fields.includes('elapsedSeconds');
  // The host already owns execution timing. Keep automatic interface reports
  // stable while the visible elapsed label ticks, retaining real outcome changes.
  const reportLabel=isRunning(turn)&&!observation?workLabel(turn.status||turn.phase,null,true):label;
@@ -81,8 +90,8 @@ export function TurnTimeline({data,turnId,state,act,embedded=false,automatic=fal
   {loaded.error&&<p role="alert">{loaded.error} <button className="a-link" onClick={loaded.reload}>Retry loading work</button></p>}
   {loaded.before&&<button className="a-link a-execution-earlier" disabled={loaded.busy} onClick={loaded.earlier}>Load earlier steps</button>}
   {entries.length>0&&<DelegateStreamSources entries={entries}><div className="a-execution-roots a-work-stream" data-part="work-stream">{entries.map(entry=>
-   entry.kind==='exchange'?<DelegateStreamMessage key={entry.id} entry={entry} expanded={expanded} toggle={toggle}/>:
-   entry.kind==='worker-status'?<DelegateStreamStatus key={entry.id} entry={entry} expanded={expanded} toggle={toggle} act={act}/>:
+   entry.kind==='exchange'?<DelegateStreamMessage key={entry.id} entry={entry} expanded={expanded} toggle={toggle} showTime={stepTimes}/>:
+   entry.kind==='worker-status'?<DelegateStreamStatus key={entry.id} entry={entry} expanded={expanded} toggle={toggle} act={act} now={now} showTime={stepTimes}/>:
    <ExecutionNode key={entry.id} node={entry.node} tree={tree} act={act} now={now} expanded={expanded} toggle={toggle} actor={entry.actor} ownerId={entry.owner?.ownerId||entry.owner?.id||entry.node.sessionId} flat/>
   )}</div></DelegateStreamSources>}
   </div>}
@@ -100,9 +109,15 @@ export function WorkTimeline({items,data,state,act,row,renderMessage}){
  const open=row?.interim?interimOpen(expanded,row):detailOpen(expanded,summaryId,detail),ticking=turns.some(isRunning);
  const [now,setNow]=useState(()=>hostNow());
  useEffect(()=>{if(!ticking)return;setNow(hostNow());const timer=setInterval(()=>setNow(hostNow()),1000);return()=>clearInterval(timer)},[ticking]);
- if(items.length===1&&!row?.interim&&!row?.voiceWork)return <TurnTimeline data={data} turnId={firstTurn} state={state} act={act}/>;
+ if(items.length===1&&!row?.interim&&!row?.voiceWork&&!row?.groupedLocal)return <TurnTimeline data={data} turnId={firstTurn} state={state} act={act}/>;
  const observation=turns.some(turn=>turn.observationWindow===true),partial=turns.some(turn=>turn.observationWindow||turn.partialWindow);
- const summary=turns.length?combinedWork(turns,now):{phase:'recorded',running:false,usage:{calls:0}},label=observation?'Saved work pages':workLabel(summary.phase,show&&fields.includes('elapsedSeconds')?summary.elapsed:null,summary.running);
+ const summary=turns.length?combinedWork(turns,now):{phase:'recorded',running:false,usage:{calls:0}};
+ const counts=row?.groupedLocal&&!partial&&show&&fields.includes('calls')?['tools','models'].flatMap(kind=>{
+  if(!turns.every(turn=>Number.isFinite(turn.nodeCounts?.[kind])))return [];
+  const n=turns.reduce((sum,turn)=>sum+turn.nodeCounts[kind],0);
+  return n?[`${n} ${kind==='tools'?'tool':'model'} ${n===1?'call':'calls'}`]:[];
+ }):[];
+ const label=row?.groupedLocal?counts.join(' · ')||'Local work':observation?'Saved work pages':workLabel(summary.phase,show&&fields.includes('elapsedSeconds')?summary.elapsed:null,summary.running);
  const reportLabel=summary.running&&!observation?workLabel(summary.phase,null,true):label;
  const updates=items.filter(item=>item.message).length;
  const toggle=()=>{
@@ -113,10 +128,15 @@ export function WorkTimeline({items,data,state,act,row,renderMessage}){
   }
   act('view.update',{patch:{executionExpanded:[...next]}});
  };
- return <section className="a-execution-turn a-execution-content a-work-group" data-part="execution-group" data-group-id={row?.voiceWork?firstTurn||row.id:undefined} data-voice-work-group={row?.voiceWork||undefined} data-work-input-id={row?.voiceInputIds?.length===1?row.voiceInputIds[0]:undefined} data-interim-group={row?.interim?row.id:undefined} aria-label="Work between messages">
+ const workTotals=open&&!partial&&show&&fields.length>0&&summary.usage.calls>0?<UsageDetails usage={summary.usage} scope="turn" record={{id:summaryId,sessionId:state.selectedSessionId,phase:summary.phase,elapsedSeconds:summary.elapsedSeconds,calls:summary.usage.calls}} observedAt={now} label="Work usage" costLabel="Work cost (USD)"/>:null;
+ return <section className="a-execution-turn a-execution-content a-work-group" data-part="execution-group" data-local-activity={row?.groupedLocal||undefined} data-group-id={row?.voiceWork?firstTurn||row.id:undefined} data-voice-work-group={row?.voiceWork||undefined} data-work-input-id={row?.voiceInputIds?.length===1?row.voiceInputIds[0]:undefined} data-interim-group={row?.interim?row.id:undefined} aria-label="Work between messages">
   <button type="button" className="a-execution-line a-execution-turn-line" data-action="view.update" data-view-label={`${reportLabel}${updates>0?` · ${updates} ${updates===1?'update':'updates'}`:''} · expand work details`} aria-expanded={open} aria-controls={bodyId} onClick={toggle}>
-   <ChevronRight className={`a-execution-chevron ${open?'open':''}`}/><span className="a-execution-label">{label}{updates>0&&` · ${updates} ${updates===1?'update':'updates'}`}</span>{!partial&&<Usage usage={summary.usage} scope="turn" pending={summary.running}/>}<Status status={summary.phase}/>
+   <ChevronRight className={`a-execution-chevron ${open?'open':''}`}/><span className="a-execution-label">{label}{updates>0&&` · ${updates} ${updates===1?'update':'updates'}`}</span>{row?.groupedLocal&&!partial&&show&&fields.includes('elapsedSeconds')&&summary.elapsed&&<span className="a-activity-duration">{summary.elapsed}</span>}{!partial&&!row?.groupedLocal&&<Usage usage={summary.usage} scope="turn" pending={summary.running}/>}<Status status={summary.phase}/>
   </button>
-  {open&&<div className="a-work-group-items a-work-group-body" id={bodyId}>{!partial&&summary.usage.calls>0&&<UsageDetails usage={summary.usage} scope="turn" record={{id:summaryId,sessionId:state.selectedSessionId,phase:summary.phase,elapsedSeconds:summary.elapsedSeconds,calls:summary.usage.calls}} observedAt={now} label="Work usage" costLabel="Work cost (USD)"/>}{items.map(item=>item.message?<React.Fragment key={item.message.id}>{renderMessage?.(item.message)}</React.Fragment>:<TurnTimeline key={item.turnId} data={data} turnId={item.turnId} state={state} act={act} embedded automatic={detail==='detailed'&&!expanded.has(summaryId)}/>)}</div>}
+  {open&&<div className="a-work-group-items a-work-group-body" id={bodyId}>
+   {!row?.groupedLocal&&workTotals}
+   {items.map(item=>item.message?<React.Fragment key={item.message.id}>{renderMessage?.(item.message)}</React.Fragment>:<TurnTimeline key={item.turnId} data={data} turnId={item.turnId} state={state} act={act} embedded automatic={detail==='detailed'&&!expanded.has(summaryId)}/>)}
+   {row?.groupedLocal&&workTotals&&<details className="a-activity-totals"><summary>Work totals</summary>{workTotals}</details>}
+  </div>}
  </section>;
 }

@@ -95,7 +95,7 @@ function harness(options={}){
  });
  for(const row of rows){row.pane=pane;row.children=[];append(pane,row)}
  const following=options.following||{current:true};
- const controller=createChatScroll(pane,following,value=>away.push(value));
+ const controller=createChatScroll(pane,following,value=>away.push(value),{loadAnchor:options.loadAnchor});
  return {pane,rows,geometry,following,controller,away,resizeObservers,mutationObservers,frames,view,document,storage,timers,effects,datasetWrites,
   settle(){controller.settleLayout()},
   flushFrames(){for(const [id,callback] of [...frames])if(frames.delete(id))callback()},
@@ -390,4 +390,20 @@ test('shared mask uses bounded fades, modality-aware focus suppression and an ad
  assert.match(maskCss,/Overlay scrollbars expose no layout gutter/);
  assert.doesNotMatch(maskCss,/animation|transition/i);
  assert.doesNotMatch(maskCss,/\.a-(?:conversation|conversation-rail|composer|history-window-controls)/);
+});
+test('jump waits for the exact grouped message to become visible before focusing it',async()=>{
+ const a=message('visible',0),b=message('requested',460),requests=[];
+ let hidden=true,focused=false;
+ b.closest=selector=>selector==='[hidden]'&&hidden?{}:null;
+ b.focus=()=>{assert.equal(hidden,false);focused=true};
+ const h=harness({messages:[a,b],loadAnchor:async(sessionId,id)=>{requests.push([sessionId,id]);return true}});
+ h.controller.select('alpha');h.settle();
+ h.controller.jump('requested');h.settle();
+ await new Promise(resolve=>setImmediate(resolve));
+ h.settle();
+ assert.deepEqual(requests,[['alpha','requested']]);
+ assert.equal(focused,false);
+ hidden=false;h.mutationObservers[0].callback();h.settle();
+ assert.equal(focused,true);assert.equal(h.pane.scrollTop,444);
+ h.controller.dispose();
 });

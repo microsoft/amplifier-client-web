@@ -136,7 +136,7 @@ test('trusted peer caption is always visible outside hover actions with a matchi
  const forwarded=render({id:'human-forward',role:'user',text:'Original',via:'peer',attribution:{caption:'From another chat'}});
  assert.match(forwarded,/aria-label="From another chat"/);assert.doesNotMatch(forwarded,/Sent by Amplifier/);
  const unknown=render({id:'legacy',role:'user',text:caption,via:'peer'});
- assert.match(unknown,/aria-label="Message"/);assert.match(unknown,/Message from another chat/);
+ assert.match(unknown,/aria-label="Message"/);assert.match(unknown,/>Chat update</);assert.doesNotMatch(unknown,/Message from another chat/);
  assert.doesNotMatch(unknown,/a-message-attribution/);
  const human=render({id:'human',role:'user',text:caption});
  assert.match(human,/aria-label="Your message"/);assert.doesNotMatch(human,/a-message-attribution/);

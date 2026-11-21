@@ -11,7 +11,7 @@ import {textValue,record,contentUnavailable,recordingExpiredAt} from './executio
 import {readablePayload} from './tool-input-preview.js';
 import {settingsPatch} from './settings-navigation';
 import {WorkNavigationContext} from './work-navigation';
-import {JsonPayload} from './json-payload.jsx';
+import {JsonDocument,JsonPayload} from './json-payload.jsx';
 
 export function useExecutionField(node,field,open){
  const reference=node[field+'Detail'],key=JSON.stringify([node.id,field,reference||node[field]]);
@@ -81,11 +81,11 @@ export function ModelContent({node,error,now,act}){
  const facts=[['Provider',node.provider],['Model',node.model],['Status',node.status||node.phase],['Recorded',node.observationWindow?formatTime(node.createdAt):null],['Started',formatTime(node.startedAt)],['Ended',formatTime(node.endedAt)],['Elapsed',showElapsed?elapsedLabel(node,now):null],...Object.entries(node.requestInfo||{}).map(([key,value])=>[requestLabels[key]||key,typeof value==='boolean'?(value?'Yes':'No'):value])].filter(([,value])=>value!=null&&value!=='');
 
  return <><dl className="a-execution-model-facts">{facts.map(([label,value])=><React.Fragment key={label}><dt>{label}</dt><dd>{String(value)}</dd></React.Fragment>)}</dl>
-  <UsageDetails usage={node.usage} scope="step" record={{...node,calls:1}} observedAt={now} label="Model call usage" costLabel="Call cost (USD)"/>
+  <UsageDetails usage={node.usage||(node.observation?node.observedUsage:null)} scope="step" record={{...node,calls:node.observation||node.observationWindow?undefined:1}} observedAt={now} label="Model call usage" costLabel="Call cost (USD)"/>
   <ExecutionBlock label="Error" text={error.value} loading={error.incomplete}/><FieldStatus label="Error" field={error}/>
-  <small>Provider recordings may contain summaries instead of full payloads.</small>
+  {(node.requestDetail||node.responseDetail)&&<p className="a-caption">{providerRecordMediaNote}</p>}
   {node.recordingsGroup&&navigation?.openRecordings&&['request','response'].some(field=>!node[field+'Detail']&&!recordingExpiredAt(node[field+'RecordingExpired']))&&<p className="a-caption">Saved recordings may be listed separately. <button type="button" className="a-link" data-action="view.update" onClick={()=>navigation.openRecordings(node.recordingsGroup)}>Show saved recordings</button></p>}
-  {['request','response'].map(field=><ModelPayload key={field+':'+(node[field+'Detail']?.digest||'')} node={node} field={field} act={act}/>)}
+  {['request','response'].map(field=><ModelPayload key={JSON.stringify([field,node[field+'Detail'],node[field+'Recording']?.sha256])} node={node} field={field} act={act}/>)}
  </>;
 }
 
@@ -95,21 +95,41 @@ function ModelPayload({node,field,act}){
  return <AvailableModelPayload node={node} field={field} act={act}/>;
 }
 
+function RetainedRecording({path,field,recording,reference}){
+ const [result,setResult]=useState(null),[attempt,setAttempt]=useState(0);
+ useEffect(()=>{
+  const controller=new AbortController();
+  setResult(null);
+  request(path,{signal:controller.signal,cache:'no-store'}).then(saved=>{
+   if(controller.signal.aborted)return;
+   if(saved.kind!==`provider.${field}`||saved.rootSessionId!==reference.sessionId||saved.callId!==reference.id||
+      saved.capture?.sha256!==recording.sha256||!Object.hasOwn(saved,'payload'))throw Error('The recording changed. Reopen this step.');
+   setResult({payload:saved.payload});
+  }).catch(error=>{if(!controller.signal.aborted)setResult({error:error.message})});
+  return()=>controller.abort();
+ },[path,attempt]);
+ if(!result)return <p className="a-caption" role="status">Loading recorded {field}…</p>;
+ if(result.error)return <p role="alert" className="a-execution-load-error">{result.error} <button type="button" className="a-link" onClick={()=>setAttempt(n=>n+1)}>Retry recorded {field}</button></p>;
+ return <JsonDocument value={result.payload} label={`Recorded ${field}`}/>;
+}
+
 function AvailableModelPayload({node,field,act}){
  // This local disclosure deliberately ignores persisted detail preferences:
  // even small payloads and restored expanded calls require an explicit click.
- const [open,setOpen]=useState(false),loaded=useExecutionField(node,field,open);
+ const [open,setOpen]=useState(false),[showRecording,setShowRecording]=useState(false),loaded=useExecutionField(node,field,open);
  const reference=node[field+'Detail'],capture=node[field+'Capture'],recording=node[field+'Recording'],label=field[0].toUpperCase()+field.slice(1);
  if(!reference)return <p className="a-caption">{isRunning(node)?`Waiting for a linked ${field} recording…`:node.observationWindow?`This event has no ${field} payload.`:`This call’s ${field} recording isn’t available here.`} {!isRunning(node)&&field==='request'&&!node.observationWindow&&<>Recording settings save automatically and apply when a supported runtime next prepares. They cannot create recordings for past calls. {act&&<button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:settingsPatch('diagnostics')})}>Open recording settings</button>}</>}</p>;
+ const path=recording?'/api/conversation/provider-recording?'+new URLSearchParams({sessionId:reference.sessionId,id:reference.id,field,digest:recording.sha256,...(reference.windowKey?{windowKey:reference.windowKey}:{})}):null;
  return <section className="a-model-payload" aria-label={`Recorded ${field}`}>
-  <p className="a-caption">{providerRecordMediaNote}</p>
-  {recording&&<><a className="a-link" download href={clientUrl('/api/conversation/provider-recording?'+new URLSearchParams({sessionId:reference.sessionId,id:reference.id,field,digest:recording.sha256,...(reference.windowKey?{windowKey:reference.windowKey}:{})}))}>Download {recording.truncated?'partial':'full'} recorded {field} (JSON)</a><small>Redacted provider event · {(recording.bytes/1024/1024).toFixed(1)} MB{recording.truncated?' · Capture limit reached; some content is omitted.':''}</small></>}
-  <button type="button" className="a-link a-execution-request-toggle" aria-expanded={open} onClick={()=>setOpen(!open)}>{open?'Hide':'View'} {field}{!open&&Number.isFinite(reference.length)&&` · ${reference.length.toLocaleString()} characters`}</button>
+  {recording&&<><a className="a-link" download href={clientUrl(path)}>Download {recording.truncated?'partial':'full'} recorded {field} (JSON)</a><small>Redacted provider event · {(recording.bytes/1024/1024).toFixed(1)} MB{recording.truncated?' · Capture limit reached; some content is omitted.':''}</small></>}
+  <button type="button" className="a-link a-execution-request-toggle" aria-expanded={open} onClick={()=>{setOpen(!open);setShowRecording(false)}}>{open?'Hide':'View'} {field}{!open&&Number.isFinite(reference.length)&&` · ${reference.length.toLocaleString()} characters`}</button>
   {open&&<>
    {capture?.redacted&&<small>Recognizable credentials redacted.</small>}
-   {capture?.truncated&&<small>{recording?'This is a bounded preview. Use the recorded download above for the larger payload.':`This record reached the capture limit; part of the ${field} is omitted.`}</small>}
+   {capture?.truncated&&<small>{recording?'This is a bounded preview. The larger recording is available below.':`This record reached the capture limit; part of the ${field} is omitted.`}</small>}
    <FieldStatus label={label} field={loaded}/>
-   {!loaded.incomplete&&loaded.value!=null&&<><button type="button" className="a-link" onClick={()=>{const record=providerRecordExport(node,field,loaded.value);download(record.filename,record.content)}}>Download recorded {field} (JSON)</button><ExecutionBlock label={`Raw ${field}`} text={loaded.value}><JsonPayload text={loaded.value} label={label}/></ExecutionBlock></>}
+   {!loaded.incomplete&&loaded.value!=null&&<><button type="button" className="a-link" onClick={()=>{const record=providerRecordExport(node,field,loaded.value);download(record.filename,record.content)}}>Download recorded {field} (JSON)</button><ExecutionBlock label={recording||capture?.truncated?`Saved ${field} preview`:`Saved ${field}`} text={loaded.value}><JsonPayload text={loaded.value} label={label}/></ExecutionBlock></>}
+   {recording&&<><button type="button" className="a-link" aria-expanded={showRecording} onClick={()=>setShowRecording(!showRecording)}>{showRecording?'Hide':'Show'} {recording.truncated?'partial':'full'} recorded {field}</button>
+    {showRecording&&<RetainedRecording path={path} field={field} recording={recording} reference={reference}/>}</>}
   </>}
  </section>;
 }

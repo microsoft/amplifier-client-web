@@ -119,15 +119,23 @@ export function MessageInteractions({message,sessionId,dispatch}){
  </div>{chosen.map(emoji=><button key={emoji} type="button" className="a-reaction-chip" aria-label={`Remove ${reactions.find(r=>r[0]===emoji)?.[1]||emoji} reaction`} aria-pressed="true" title={state.pending.includes(emoji)?'Reaction not yet confirmed':'Remove reaction'} data-pending={state.pending.includes(emoji)||undefined} data-action="message.reaction" onClick={()=>reaction.set(emoji,false)}>{emoji}</button>)}<span className="a-sr-only" role="status">{state.unknown?'Reaction not confirmed':state.pending.length?'Saving reaction':''}</span>{(error||state.error||state.unknown)&&<span className="a-message-interaction-error" role="alert">{error||state.error||'Reaction not confirmed.'}{state.unknown&&<button type="button" disabled={state.checking} onClick={()=>reaction.reconcile()}>Check saved reaction</button>}</span>}</>;
 }
 
-export function MessageFocus({session,focus,detail,ensureVisible}){
+const handledFocusKey='amplifier.chat.last-reveal.v1';
+export function MessageFocus({session,scope,focus,detail,ensureVisible}){
  const attempted=useRef(''),completed=useRef('');
  useEffect(()=>{
   if(!focus||focus.sessionId!==session?.id||detail.busy)return;
-  const request=`${focus.sessionId}:${focus.revision}`;
+  const request=JSON.stringify([scope,focus.sessionId,focus.messageId,focus.revision]);
   if(completed.current===request)return;
+  // A saved reveal is a one-time navigation action. Refreshing the page
+  // must respect a disclosure the reader deliberately closed afterwards.
+  try{if(scope&&sessionStorage.getItem(handledFocusKey)===request)return}catch{}
   const key=`${request}:${session.messageWindow?.offset??0}`;
-  const node=[...document.querySelectorAll('[data-message-id]')].find(row=>row.dataset.messageId===focus.messageId);
-  if(node){completed.current=request;node.tabIndex=-1;node.scrollIntoView({block:'center'});node.focus({preventScroll:true});return;}
+  const node=[...document.querySelectorAll('[data-message-id]')].find(row=>row.dataset.messageId===focus.messageId&&!row.closest('[hidden]'));
+  if(node){
+   completed.current=request;
+   try{if(scope)sessionStorage.setItem(handledFocusKey,request)}catch{}
+   node.tabIndex=-1;node.scrollIntoView({block:'center'});node.focus({preventScroll:true});return;
+  }
   let active=true;
   Promise.resolve(ensureVisible?.(focus.messageId)).then(opened=>{
    if(!active||opened||attempted.current===key)return;
@@ -136,6 +144,6 @@ export function MessageFocus({session,focus,detail,ensureVisible}){
    else if(session.messageWindow?.offset>0)detail.earlier('messages');
   }).catch(()=>{});
   return()=>{active=false};
- },[session?.id,session?.messages?.length,session?.messageWindow?.offset,focus?.revision,focus?.sessionId,detail.busy,ensureVisible]);
+ },[scope,session?.id,session?.messages?.length,session?.messageWindow?.offset,focus?.revision,focus?.sessionId,focus?.messageId,detail.busy,ensureVisible]);
  return null;
 }

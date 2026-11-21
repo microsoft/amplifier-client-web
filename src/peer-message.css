@@ -18,3 +18,19 @@
 #amp-one .a-peer-sources{font-size:.75rem;color:var(--a-muted);overflow-wrap:anywhere;padding:0 0 6px 25px}
 #amp-one .a-peer-attention{color:var(--a-danger);font-size:.8rem;padding:4px 0}
 @media(max-width:400px){#amp-one .a-peer-header .a-message-date{flex-basis:100%;margin:0}#amp-one .a-peer-run-summary{flex-wrap:wrap}#amp-one .a-peer-run-summary small{width:100%;padding-left:25px}}
+#amp-one .a-activity-group{align-self:stretch;min-width:0;margin-block:.25rem .7rem}
+#amp-one .a-activity-summary,#amp-one .a-activity-sections .a-peer-run-summary{color:var(--a-muted);text-align:start;min-height:32px}
+#amp-one .a-activity-sections{display:grid;gap:.15rem}
+#amp-one .a-activity-sections .a-peer-run,#amp-one .a-activity-sections .a-work-group{margin:0;padding:0;background:transparent;border:0}
+#amp-one .a-activity-sections .a-peer-run-summary svg,#amp-one .a-peer-leaf svg,#amp-one .a-peer-source svg{width:1rem;height:1rem;flex:none}
+#amp-one .a-activity-sections .a-peer-sources{margin:0;padding:0 0 .15rem 2.65rem}
+#amp-one .a-activity-sections .a-peer-run>div:not([hidden]),#amp-one .a-activity-sections .a-work-group-body{border-inline-start:1px solid var(--a-line);margin-inline-start:.6rem;padding-inline-start:.65rem;min-width:0}
+#amp-one .a-activity-sections .a-peer-message{border:0;padding:0}
+#amp-one .a-peer-leaf{display:inline-flex;gap:.5rem;align-items:center;padding:.3rem .15rem;border:0;background:transparent;color:var(--a-ink);font:inherit;font-size:.85rem;min-width:0;overflow-wrap:anywhere;text-align:start}
+#amp-one .a-peer-leaf[aria-expanded=true]{color:var(--a-accent)}
+#amp-one .a-peer-leaf:hover,#amp-one .a-activity-summary:hover{background:var(--a-soft)}
+#amp-one .a-peer-header:has(.a-peer-leaf) .a-peer-summary,#amp-one .a-peer-header:has(.a-peer-leaf) .a-peer-source{width:28px;min-width:28px;min-height:30px;padding:0;justify-content:center}
+#amp-one .a-activity-duration{margin-inline-start:auto;white-space:nowrap;color:var(--a-muted);font-variant-numeric:tabular-nums}
+@media(pointer:coarse){#amp-one .a-activity-summary,#amp-one .a-activity-sections .a-peer-run-summary,#amp-one .a-peer-leaf,#amp-one .a-peer-header:has(.a-peer-leaf) .a-peer-summary,#amp-one .a-peer-header:has(.a-peer-leaf) .a-peer-source{min-width:44px;min-height:44px}}
+#amp-one .a-activity-totals{font-size:.82rem;color:var(--a-muted);padding:.25rem .15rem}
+#amp-one .a-activity-totals>summary{cursor:pointer;width:fit-content}

@@ -66,7 +66,9 @@ import {MessageEntry,StreamingMessage,newestMessageIds,completedTurnEnds} from '
 import {PeerPresentation,PeerRun} from './peer-message';
 import {chatArtifacts} from './canvas-library';
 import {peerRuns} from './peer-groups.js';
+import {ActivityGroup,useActivityFocus} from './grouped-work';
 import {usePeerPreview,PeerPreviewCanvas} from './peer-preview';
+import {useStepInspector,StepInspector,StepInspectionContext} from './step-inspector';
 import {WorkspaceRail,AgentCanvas,SessionHistoryControls} from './shell-panels';
 import './app-toolbar.css';
 import {useNarrowScreen} from './responsive-navigation';
@@ -110,7 +112,7 @@ import {Questions,QuestionNotice} from './questions';
 import {NewChatHandoffs} from './new-chat-handoffs.jsx';
 import {createActionFeedback} from './action-feedback';
 import './action-feedback.css';
-import {createChatScroll} from './chat-scroll';
+import {createChatScroll,visibleMessage} from './chat-scroll';
 import {followEarlierHistory} from './history-scroll';
 import {isTopLevelChat} from './chat-navigation';
 import {SubagentHistory} from './subagent-history';
@@ -657,7 +659,10 @@ function App(){
   if(host)appearanceCatalogFor(host).refresh(dispatch).catch(()=>{});
  },[state?.client?.hostInstanceId,dispatch]);
  const peerPreview=usePeerPreview(state,dispatch),[peerOpen,setPeerOpen]=useState({});
- const peerPresentation=useMemo(()=>({open:peerOpen,setOpen:setPeerOpen,preview:peerPreview.open}),[peerOpen,peerPreview.open]);
+ const stepInspector=useStepInspector(state);
+ const previewPeer=useCallback(args=>{stepInspector.clear();return peerPreview.open(args)},[stepInspector.clear,peerPreview.open]);
+ const inspectStep=useCallback((step,trigger)=>{peerPreview.close(peerPreview.active);stepInspector.open(step,trigger)},[peerPreview.close,peerPreview.active,stepInspector.open]);
+ const peerPresentation=useMemo(()=>({open:peerOpen,setOpen:setPeerOpen,preview:previewPeer}),[peerOpen,previewPeer]);
  useEffect(()=>{
   if(!chatLinkReceiver.current)chatLinkReceiver.current=createChatLinkReceiver({location,history,
    launchQueue:window.launchQueue,onChange:setChatLink});
@@ -775,7 +780,9 @@ function App(){
   ...chatArtifacts(state||{}).flatMap(row=>(row.publications||[{messageId:row.messageId}]).map(link=>link.messageId)),
   ...(session?.execution?.imageGeneration||[]).map(job=>job.messageId),
  ]),[state?.canvasArtifacts,state?.selectedSessionId,state?.selectedWorkspaceId,session?.execution?.imageGeneration]);
- const conversationRows=useMemo(()=>peerRuns(interim.rows,artifactBoundaries),[interim.rows,artifactBoundaries]);
+ const conversationRows=useMemo(()=>peerRuns(interim.rows,artifactBoundaries,execution.turns),[interim.rows,artifactBoundaries,execution.turns]);
+ const groupedTurns=useMemo(()=>new Map(execution.turns.map(turn=>[turn.id,turn])),[execution.turns]);
+ const ensureMessageVisible=useActivityFocus(conversationRows,session?.id,state?.view,peerOpen,setPeerOpen,act,interim.ensureVisible);
  const [recordingTarget,setRecordingTarget]=useState(null);
  useLayoutEffect(()=>{
   if(!recordingTarget)return;
@@ -788,6 +795,7 @@ function App(){
   const candidates=conversationRows.filter(row=>row.kind==='work'&&row.items.some(item=>observations.has(item.turnId)));
   const row=candidates.find(row=>row.items.some(item=>item.turnId===requested))||candidates.at(-1);
   if(!row)return;
+  stepInspector.clear();
   const group=row.items.some(item=>item.turnId===requested)?requested:row.items.filter(item=>observations.has(item.turnId)).at(-1).turnId;
   const expanded=new Set(state.view?.executionExpanded||[]);
   for(const key of [row.summaryId||(row.interim?row.id:'work:'+row.items[0].turnId),'turn:'+group]){expanded.delete('closed:'+key);expanded.add(key)}
@@ -795,12 +803,19 @@ function App(){
   setRecordingTarget({sessionId:session?.id,group});
  };
 
- const readingWindowLoader=useRef(null),readingReference=useRef(null);
+ const readingWindowLoader=useRef(null),readingReference=useRef(null),revealLoadedMessage=useRef(null);
+ revealLoadedMessage.current=ensureMessageVisible;
  readingReference.current=(id,messageId)=>session?.id===id?messages.find(row=>row.id===messageId)?.sourceReference:null;
  readingWindowLoader.current=async(id,messageId,isCurrent,reference)=>{
   if(session?.id!==id)return false;
-  if(await interim.ensureVisible(messageId))return true;
-  return detail.around(messageId,{jump:false,isCurrent,reference});
+  if(await ensureMessageVisible(messageId))return true;
+  const found=await detail.around(messageId,{jump:false,isCurrent,reference});
+  if(!found)return false;
+  // A newly opened history page can itself contain a collapsed source.
+  await new Promise(resolve=>requestAnimationFrame(resolve));
+  if(!isCurrent())return false;
+  if(!visibleMessage(messagesPane.current,messageId))await revealLoadedMessage.current(messageId);
+  return true;
  };
  useLayoutEffect(()=>{if(!messagesPane.current)return;const scroll=createChatScroll(messagesPane.current,stickToBottom,setAwayFromBottom,{loadAnchor:(...args)=>readingWindowLoader.current?.(...args),readingReference:(...args)=>readingReference.current?.(...args)});chatScroll.current=scroll;return()=>{scroll.dispose();chatScroll.current=null}},[!!state,shell.ready]);
  useLayoutEffect(()=>{chatScroll.current?.select(session?.id??null,!historyPending&&!state?.navigationPending)},[session?.id,historyPending,state?.navigationPending,shell.ready]);
@@ -1127,14 +1142,15 @@ function App(){
   },
  });
  const archiveValue={...archiveFeedback,run:archiveAction.current.run,dismiss:archiveAction.current.dismiss,keep:archiveAction.current.keep,expire:archiveAction.current.expire};
+ const stepInspection={selectedId:stepInspector.active?.id,open:inspectStep,update:stepInspector.update,close:stepInspector.close};
  const workNavigation={browse,create:()=>setCreatingWorkspace(true),newChat,openRecordings,history:destinationTrail,visitHistory,visitRecent,
   sidebarView:view,updateSidebar:patch=>act('view.update',{patch}),
   home:(extra={})=>act('view.update',{patch:homePatch(presentation,extra,view)}),
   setPresentation:patch=>updatePresentation(patch).catch(reportError)};
- const previewVisible=!!peerPreview.active&&!browsing;
- const layoutState=browsing?{...settingsState,canvas:{...state?.canvas,open:false}}:previewVisible?{...settingsState,peerPreview:true,canvas:{...state?.canvas,open:true}}:settingsState;
+ const previewVisible=!!peerPreview.active&&!browsing,inspectorVisible=!!stepInspector.active&&!browsing;
+ const layoutState=browsing?{...settingsState,canvas:{...state?.canvas,open:false}}:previewVisible||inspectorVisible?{...settingsState,peerPreview:previewVisible,stepInspector:inspectorVisible,canvas:{...state?.canvas,open:true}}:settingsState;
  const renderMessage=(row,options={})=><MessageEntry key={row.id} message={row.message} session={session||{id:null}} state={state} connected={connected} statusCurrent={!detail.focused} act={act} stamp={nowLabel} working={working} forkTurn={turnEnds.get(row.id)} newest={newest.has(row.id)} retry={retryMessage} discard={discardMessage} dispatch={dispatch} {...options}/>;
- const renderRow=row=>row.kind==='model-change'?<ModelChange key={row.id} change={row.change}/>:row.kind==='artifacts'?<ArtifactLinks key={row.id} state={state} message={row.message} act={act} dispatch={dispatch}/>:row.kind==='work'?<ConversationWork key={row.id} row={row} data={execution} state={state} act={act} dispatch={dispatch} session={session} working={working} renderMessage={renderMessage}/>:row.kind==='peers'?<PeerRun key={row.id} row={row} session={session} state={state} renderMessage={renderMessage}/>:renderMessage(row);
+ const renderRow=row=>row.kind==='activity'?<ActivityGroup key={row.id} row={row} turns={groupedTurns} state={state} act={act} renderRow={renderRow}/>:row.kind==='model-change'?<ModelChange key={row.id} change={row.change}/>:row.kind==='artifacts'?<ArtifactLinks key={row.id} state={state} message={row.message} act={act} dispatch={dispatch}/>:row.kind==='work'?<ConversationWork key={row.id} row={row} data={execution} state={state} act={act} dispatch={dispatch} session={session} working={working} renderMessage={renderMessage}/>:row.kind==='peers'?<PeerRun key={row.id} row={row} session={session} state={state} renderMessage={renderMessage}/>:renderMessage(row);
  if(!state||!shell.ready)return <AppReloadContext.Provider value={appReload}><div className="boot"><AppReloadNotice/><img src={logo}/><h1>Amplifier</h1><p>{error||shell.error||'Connecting to your workspace…'}</p>{(error||shell.error)&&<><button onClick={()=>{setBootAttempt(value=>value+1);shell.refresh()}}>Retry connection</button><p><a href="?shell=recovery">Open recovery mode</a></p></>}</div></AppReloadContext.Provider>;
  if(!hasAppearanceIdentity(state.appearance)||state.appearance.availability==='failed')return <div className="boot" role="alert"><h1>Appearance unavailable</h1><p>{state.appearance?.error||'Appearance preferences could not be loaded. Your saved data was not replaced.'}</p><button type="button" onClick={()=>setBootAttempt(value=>value+1)}>Retry connection</button></div>;
  return <PeerPresentation.Provider value={peerPresentation}><ArchiveContext.Provider value={archiveValue}><WorkNavigationContext.Provider value={workNavigation}><ShellContext.Provider value={shell}><AppReloadContext.Provider value={appReload}><div id="amp-one" {...appAppearanceState(state,connected,streamClient!==null)} data-work-surface={workSurface(state)} ref={root} data-appearance-composition={composedAppearance.id||undefined} data-layout={presentation.layout||'balanced'} data-interface-detail={presentation.interfaceDetail||'standard'} data-execution-detail={presentation.executionDetail||presentation.interfaceDetail||'standard'} data-density={presentation.density||'comfortable'} style={{colorScheme:scheme,...(presentation.accent?{'--a-accent':presentation.accent}:{})}} data-theme-scheme={themeScheme} data-decorations={presentation.decorations===false?'off':'on'} data-part="app">
@@ -1151,7 +1167,7 @@ function App(){
   {!browsing&&<ConversationStatus session={session} act={act}/>} {!externalConversation&&!state.runtime?.available&&<div className="a-alert a-runtime"><span><strong>Connect Amplifier to get started.</strong> {state.runtime?.error||'The Amplifier runtime is not installed. Install this app with its runtime dependencies, then relaunch.'}</span><button className="a-link" onClick={()=>open('settings')} data-action="view.update">Setup details <ChevronRight/></button></div>}
   <LiveChatActivity voice={voice} callSession={state.sessions.find(row=>row.id===state.voice?.sessionId)} callActive={callActive} act={act}><SharingIndicator sessionId={session?.id} visual={computerVisual} client={computerClient} dispatch={dispatch} onError={reportError}/></LiveChatActivity>
   <WorkspaceLayout appearanceScheme={themeScheme} appearanceCss={activeCss} state={layoutState} act={act} presentation={presentation}><WorkspaceRail footer={<AppFooter state={state} act={act} connected={connected} open={open}/>} shell={shell} state={state} session={session} act={act} selectSession={id=>act('session.select',{id})} newSession={newChat}/><section className={`a-conversation ${messages.length||historyDisplayPending||session?.historyError||executionUnavailable?'has-messages':'is-empty'}`} data-part="conversation" aria-label="Shared conversation" {...chatDrop.handlers}>{chatDrop.active&&<div className="a-chat-file-overlay" data-part="chat-file-drop" role="status"><div><strong>Drop to attach to {session?.title||'this draft'}</strong><p>Files join this draft. Nothing is sent.</p></div></div>}<WorkSurface shell={shell} state={state} act={act} dispatch={dispatch} navigationRef={workspaceSettingsNavigation}/>
-   <MessageFocus session={session} focus={state.view?.messageFocus} detail={detail} ensureVisible={interim.ensureVisible}/><div className="a-messages" ref={messagesPane} data-part="messages" data-view-source={session?"conversation":undefined} data-session-id={session?.id??undefined} data-host-instance-id={state.client?.hostInstanceId} data-work-projection={workProjectionReceipt(session,state.client?.hostInstanceId)} role="log" aria-label="Conversation messages" aria-live="polite" aria-busy={historyDisplayPending||!!detail.busy}>{historyDisplayPending?<SessionHistoryControls session={{...session,historyLoading:!session?.historyError, messages:[],sharedHistoryOffset:0,historyActivity:null}} act={act}/>:<><div className="a-session-history">{detail.controls}</div><WorkProjectionStatus session={session} messages={messages}/><SessionHistoryControls session={session?.messageWindow?.offset>0?{...session,sharedHistoryOffset:0}:session} messages={messages} act={act} hideEarlier/>{session?.parentId&&<div className="a-chat-origin"><GitBranch/><span>{!isTopLevelChat(session)?'Subagent conversation':session.editOrigin?'Continued from an edited message':'Forked conversation'}</span><button type="button" className="a-link" data-action="session.select" disabled={!state.sessions.some(s=>s.id===session.parentId)} onClick={()=>act('session.select',{id:session.parentId})}>{!isTopLevelChat(session)?'Open parent chat':'Open original chat'}</button></div>}{!session&&conversationRows.length===0&&<NewChatSetup draft={draft} onChoose={value=>{if(lastDraft.current.trim())return;editDraft(value);composerRef.current?.focus()}}/>} {conversationRows.length===0&&!historyDisplayPending&&!session?.historyError&&!executionUnavailable?session&&<div className="a-empty"><img src={logo} alt=""/><h2>What shall we work on?</h2><p>{session.externalAgent?'Send a message to '+(session.externalAgent.label||session.externalAgent.id)+'.':'Bring an idea, a question, or a file.'}</p></div>:conversationRows.map(renderRow)}{!voiceStream&&<StreamingMessage session={session} state={state}/>}{presentation.planPlacement==='inline'&&<ChatPlan session={session} state={state} act={act} placement="inline"/>}<Questions key={`questions:${session?.id}`} session={session} state={state} dispatch={dispatch} reviewState={questionReviewState}/><NewChatHandoffs key={`handoffs:${session?.id}`} state={state} dispatch={dispatch}/></>}<div ref={messagesEnd}/></div>
+   <MessageFocus session={session} scope={state.client?.historyScope||state.client?.hostInstanceId} focus={state.view?.messageFocus} detail={detail} ensureVisible={ensureMessageVisible}/><div className="a-messages" ref={messagesPane} data-part="messages" data-view-source={session?"conversation":undefined} data-session-id={session?.id??undefined} data-host-instance-id={state.client?.hostInstanceId} data-work-projection={workProjectionReceipt(session,state.client?.hostInstanceId)} role="log" aria-label="Conversation messages" aria-live="polite" aria-busy={historyDisplayPending||!!detail.busy}><StepInspectionContext.Provider value={stepInspection}>{historyDisplayPending?<SessionHistoryControls session={{...session,historyLoading:!session?.historyError, messages:[],sharedHistoryOffset:0,historyActivity:null}} act={act}/>:<><div className="a-session-history">{detail.controls}</div><WorkProjectionStatus session={session} messages={messages}/><SessionHistoryControls session={session?.messageWindow?.offset>0?{...session,sharedHistoryOffset:0}:session} messages={messages} act={act} hideEarlier/>{session?.parentId&&<div className="a-chat-origin"><GitBranch/><span>{!isTopLevelChat(session)?'Subagent conversation':session.editOrigin?'Continued from an edited message':'Forked conversation'}</span><button type="button" className="a-link" data-action="session.select" disabled={!state.sessions.some(s=>s.id===session.parentId)} onClick={()=>act('session.select',{id:session.parentId})}>{!isTopLevelChat(session)?'Open parent chat':'Open original chat'}</button></div>}{!session&&conversationRows.length===0&&<NewChatSetup draft={draft} onChoose={value=>{if(lastDraft.current.trim())return;editDraft(value);composerRef.current?.focus()}}/>} {conversationRows.length===0&&!historyDisplayPending&&!session?.historyError&&!executionUnavailable?session&&<div className="a-empty"><img src={logo} alt=""/><h2>What shall we work on?</h2><p>{session.externalAgent?'Send a message to '+(session.externalAgent.label||session.externalAgent.id)+'.':'Bring an idea, a question, or a file.'}</p></div>:conversationRows.map(renderRow)}{!voiceStream&&<StreamingMessage session={session} state={state}/>}{presentation.planPlacement==='inline'&&<ChatPlan session={session} state={state} act={act} placement="inline"/>}<Questions key={`questions:${session?.id}`} session={session} state={state} dispatch={dispatch} reviewState={questionReviewState}/><NewChatHandoffs key={`handoffs:${session?.id}`} state={state} dispatch={dispatch}/></>}<div ref={messagesEnd}/></StepInspectionContext.Provider></div>
    {session&&!historyDisplayPending&&<ConversationRail paneRef={messagesPane} sessionId={session.id} messages={messages} onJump={id=>messages.some(row=>row.id===id)?chatScroll.current?.jump(id):detail.around(id)}/>}
    {(awayFromBottom||detail.focused)&&<div className="a-chat-jump"><button type="button" className="a-soft" aria-label="Jump to latest messages" onClick={()=>detail.focused?detail.latest():chatScroll.current?.reveal()}>↓ Latest messages</button></div>}
    <LiveActivity session={state.sessions.find(row=>row.id===session?.id)||session}/>
@@ -1176,11 +1192,14 @@ function App(){
      const sid=session?.id,owner=quoteApi.current;
      if(quote.sessionId!==sid)throw Error('This source is from another chat. Cross-chat quotation is not available.');
      const top=messagesPane.current?.scrollTop;
-     const find=()=>[...document.querySelectorAll('[data-message-id]')].find(row=>row.dataset.messageId===quote.messageId);
-     let node=find();if(!node){await interim.ensureVisible?.(quote.messageId);node=find();}
-     if(!node){const found=await detail.around(quote.messageId,{isCurrent:()=>latest.current?.selectedSessionId===sid&&quoteApi.current===owner});if(!found)throw Error('Original unavailable. The saved quotation remains.');}
-     if(latest.current?.selectedSessionId!==sid||quoteApi.current!==owner)return;
-     setQuoteReturn({sid,top,button});if(node){node.tabIndex=-1;node.scrollIntoView({block:'center'});node.focus({preventScroll:true});}
+     const sameSource=()=>latest.current?.selectedSessionId===sid&&quoteApi.current===owner;
+     if(!visibleMessage(messagesPane.current,quote.messageId)){
+      const found=await readingWindowLoader.current(sid,quote.messageId,sameSource);
+      if(!sameSource())return;
+      if(!found)throw Error('Original unavailable. The saved quotation remains.');
+     }
+     setQuoteReturn({sid,top,button});
+     chatScroll.current?.jump(quote.messageId);
      const source=session.messages?.find(row=>row.id===quote.messageId);
      if(!source||source.textDetail)return 'Saved quotation retained; source version could not be compared.';
      const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(source.text||''));
@@ -1201,10 +1220,11 @@ function App(){
     </div>
     </ComposerOwnership>
    </form>
-  </section><McpAppThemeProvider scheme={requestedScheme}><AgentCanvas suppressed={browsing||previewVisible} state={settingsState} act={act} dispatch={dispatch} settingsSurface={settingsSurface} permissionHistoryCurrent={key=>{
+  </section><McpAppThemeProvider scheme={requestedScheme}><AgentCanvas suppressed={browsing||previewVisible||inspectorVisible} state={settingsState} act={act} dispatch={dispatch} settingsSurface={settingsSurface} permissionHistoryCurrent={key=>{
    const intent=permissionHistoryFocus.current,current=latest.current;
    return intent?.key===key&&intent.revision===canvasInputRevision.current&&intent.sessionId===current?.selectedSessionId&&current?.canvas?.open&&current?.view?.canvasDraft?.library&&!current?.view?.settingsCanvas;
   }}/></McpAppThemeProvider>
+  {inspectorVisible&&<StepInspector step={stepInspector.active} state={layoutState} session={session} act={act} dispatch={dispatch} onClose={stepInspector.close}/>}
   {previewVisible&&<PeerPreviewCanvas key={peerPreview.active.source.sourceId} active={peerPreview.active} onClose={peerPreview.close} state={layoutState} dispatch={dispatch}/>}</WorkspaceLayout>
   {creatingWorkspace&&<WorkspaceCreation state={state} act={act} onClose={()=>setCreatingWorkspace(false)}/>}
   <FeedbackNotice state={state} act={act}/>
