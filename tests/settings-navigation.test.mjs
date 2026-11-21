@@ -28,6 +28,13 @@ test('one suggested-messages Advanced destination belongs to Chat & input and li
  const main=readFileSync(new URL('../src/main.jsx',import.meta.url),'utf8');
  assert.doesNotMatch(main,/ComposerReturnSettings/);
 });
+test('Privacy suggested-messages shortcut does not describe the synced choice as browser-local',()=>{
+ const source=readFileSync(new URL('../src/settings-everyday.jsx',import.meta.url),'utf8');
+ const shortcut=source.match(/<SettingsLink page="chat-input" title="Suggested messages & conversation text" description="([^"]+)"/);
+ assert.ok(shortcut,'Privacy keeps its suggested-messages shortcut to Chat & input.');
+ assert.doesNotMatch(shortcut[1],/\bbrowser\b/i);
+ assert.equal(shortcut[1],'Review suggested messages, text sharing, and provider charges in Chat & input.');
+});
 test('saved and agent navigation from the old hierarchy stays meaningful',()=>{
  assert.equal(settingsLocation({settingsSection:'maintenance',settingsExpanded:['notifications']}).section.id,'notifications');
  assert.equal(settingsPatch('loaded-modules').panel,'chat-models');
