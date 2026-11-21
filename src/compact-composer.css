@@ -71,3 +71,9 @@
  #amp-one .a-compact-composer .a-compose-surface{border-color:CanvasText}
  #amp-one .a-compact-composer .a-compose-surface:focus-within{outline-color:Highlight}
 }
+
+#amp-one .a-next-impact {display:flex;align-items:baseline;gap:8px;line-height:1.45;background:var(--a-tint);border-inline-start:3px solid var(--a-accent);padding:8px 10px;border-radius:4px;overflow-wrap:anywhere}
+#amp-one .a-next-impact svg {width:15px;height:15px;align-self:flex-start;margin-top:2px;flex:none}
+#amp-one .a-next-choice {max-width:38em;margin-block:6px;text-align:start}
+#amp-one .a-next-choice>.a-link {display:block;min-height:44px}
+#amp-one .a-picker-advanced>summary {cursor:pointer}

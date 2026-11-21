@@ -198,3 +198,21 @@ test('new nested worker-only page still reconstructs its ancestor',()=>{
  assert.equal(tree.roots.length,1);assert.equal(tree.roots[0].ownerId,'w1');
  assert.equal(tree.children.get(tree.roots[0].id)[0].ownerId,'w2');
 });
+
+test('a model marker belongs immediately before its admitted input, past preceding work and outputs',async()=>{
+ const {withModelChanges}=await import('../src/timeline-data.js');
+ const change={previous:{instance:'one',model:'Sol'},current:{instance:'one',model:'Astra'}};
+ const turns=[{id:'generation',inputId:'second',anchorMessageId:'first',modelChange:change}];
+ const rows=[
+  {id:'first',kind:'message',message:{id:'first',role:'user',inputId:'first'}},
+  {id:'work',kind:'work',items:[{turnId:'worker'}]},
+  {id:'output',kind:'artifacts',message:{id:'first'}},
+  {id:'request',kind:'message',message:{id:'request',role:'user',inputId:'second'}},
+  {id:'answer',kind:'message',message:{id:'answer',role:'assistant',inputId:'second'}},
+ ];
+ const expected=[...rows.slice(0,3),{kind:'model-change',id:'model-change:second',change},...rows.slice(3)];
+ assert.deepEqual(withModelChanges(rows,turns),expected);
+ assert.deepEqual(withModelChanges(rows,turns.concat(turns)),expected);
+ assert.deepEqual(withModelChanges(rows.slice(-1),turns),rows.slice(-1),'clipped windows do not invent anchors');
+ assert.deepEqual(withModelChanges(rows,[{...turns[0],modelChange:undefined}]),rows);
+});

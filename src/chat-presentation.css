@@ -111,3 +111,14 @@
    reader’s own messages. Their source is visible without hovering. */
 #amp-one .a-message.a-external-message{box-sizing:border-box;width:100%;max-width:880px;margin-left:auto;margin-right:auto;padding:0;background:none}
 #amp-one .a-external-message>.a-message-body{border-left:2px solid var(--a-line);padding:8px 14px;background:var(--a-surface)}
+
+#amp-one .a-model-change {color:var(--a-muted);font-size:var(--a-text-sm,13px);margin:8px 0}
+#amp-one .a-model-change :is(summary,.a-model-change-line) {display:flex;align-items:center;justify-content:center;gap:8px;text-align:center;min-height:44px;list-style:none}
+#amp-one .a-model-change summary {cursor:pointer}
+#amp-one .a-model-change summary::-webkit-details-marker {display:none}
+#amp-one .a-model-change :is(summary,.a-model-change-line)::before,
+#amp-one .a-model-change :is(summary,.a-model-change-line)::after {content:"";flex:1;min-width:6px;border-top:1px solid var(--a-line)}
+#amp-one .a-model-change svg {width:15px;height:15px;flex:none}
+#amp-one .a-model-change span {overflow-wrap:anywhere;text-wrap:balance}
+#amp-one .a-model-change summary:focus-visible {outline:2px solid var(--a-accent);outline-offset:2px;border-radius:4px}
+#amp-one .a-model-change p {width:fit-content;max-width:min(100%,38em);box-sizing:border-box;margin:0 auto;padding:6px 12px;border-radius:6px;color:var(--a-ink);background:var(--a-tint);text-align:center}

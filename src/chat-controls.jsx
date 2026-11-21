@@ -51,7 +51,7 @@ export function useNextMessageConfiguration(session,act,sharedControl=null){
  async function configure(patch,capturedRevision=revision){
   const request=owner.current;
   if(request.sessionId!==sessionId||request.pending)return false;
-  const ack=request.ack,expectedRevision=ack&&capturedRevision>=ack.from&&capturedRevision<=ack.to?ack.to:capturedRevision;
+  const ack=request.ack,expectedRevision=!patch.restorePreviousInputId&&ack&&capturedRevision>=ack.from&&capturedRevision<=ack.to?ack.to:capturedRevision;
   request.pending=true;setSaving(request);
   try{
    const receipt=await act('conversation.configure',{sessionId,expectedRevision,...patch});
@@ -113,7 +113,7 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
  const effectiveEffort=explicitEffort||(!effectiveChoices||effectiveChoices.includes(reportedEffort)?reportedEffort:'');
  const options=providerOptions(providers);
  const providerLabel=options.find(row=>row.id===provider)?.label||provider;
- const modelAndEffort=effectiveEffort?`${model} (${effectiveEffort})`:model;
+ const modelAndEffort=(compact?explicitEffort:effectiveEffort)?`${model} (${effectiveEffort})`:model;
  const usingChatGPTPlan=effectiveProvider?.info?.defaults?.auth_mode==='chatgpt_plan'||(isDraft&&effectiveProvider?.config?.auth_mode==='chatgpt_plan');
  const modelLabel=providerLabel?`${providerLabel} · ${modelAndEffort}`:modelAndEffort;
  const open=embedded||(draft.open&&(draft.sessionId??null)===sessionId),popover=useRef(null),{style:position,panelRef,renderPopover}=useComposerPopover(open&&!embedded,popover);
@@ -196,38 +196,82 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
  const selectedImpact=selectionImpact(impact,draft.instance,draft.model);
  const savedChoice=session?.pendingModelSelection;
  const savedModelImpact=selectionImpact(impact,savedChoice?.instance,savedChoice?.model);
- const savedImpact=savedModelImpact||(bundleToolsMayChange(session,pendingBundle?.bundle)?'tools':null);
+ const savedBundleImpact=bundleToolsMayChange(session,pendingBundle?.bundle)?'tools':null;
+ const savedImpact=savedModelImpact||savedBundleImpact;
+ const previous = session?.previousTurnSettings;
+ // Old chats may have an actual runtime selection but no per-turn settings receipt.
+ // Use it only for explanatory text. Restoring still needs the host's proof.
+ const hasHistory = !!lastCall || session?.messages?.some(message=>message.role==='assistant');
+ const priorChoice = previous?.selection || (hasHistory && (session.runtimeReport?.effective_selection ||
+  session.selection || (lastCall?.model && {model:lastCall.model})));
+ const pendingChoice = !!(savedChoice || pendingBundle);
+ const restoreOffered = pendingChoice && !!previous?.inputId && !!previous.generationId;
+ async function restorePrevious() {
+  if (!restoreOffered || blocked) return;
+  setError('');
+  touched.current=false;
+  effortPending.current=null;
+  try {
+   await nextMessage.configure({restorePreviousInputId:previous.inputId,restorePreviousGenerationId:previous.generationId},nextMessageRevision);
+  } catch (err) {setError(err.message)}
+ }
+ function settingsNotice(kind) {
+  const target = open ? draft : savedChoice;
+  const selectionChanged = priorChoice && target?.instance &&
+   ((priorChoice.instance && target.instance!==priorChoice.instance) || (target.model && priorChoice.model && target.model!==priorChoice.model));
+  const viewingUnsavedChoice = open && touched.current && (target?.instance!==savedChoice?.instance || target?.model!==savedChoice?.model);
+  const pendingLabel = nextMessage.pending ? 'Saving next message settings…' :
+   pendingChoice && !viewingUnsavedChoice ? 'Saved for your next message.' : working && open ? 'Changes apply to your next message.' : '';
+  const unmeasured = !kind && selectionChanged && !impact;
+  if (!kind && !unmeasured && !pendingLabel && !restoreOffered) return null;
+  return <div className="a-next-choice" data-part="next-message-settings" data-impact={kind||undefined}>
+   {pendingLabel&&<span className="a-caption" role="status">{pendingLabel}</span>}
+   <NextMessageImpact impact={impact} kind={kind}/>
+   {unmeasured&&<p className="a-caption" data-next-message-impact="unknown">Earlier messages may need preparing again. The time and cost are unknown.</p>}
+   {restoreOffered&&<button type="button" className="a-link" data-action="conversation.configure" disabled={blocked} onClick={restorePrevious}>Use previous settings</button>}
+  </div>;
+ }
+ const manageConnections=<div className="a-dialog-actions"><button type="button" className="a-link" disabled={!selected} onClick={()=>isDraft?act('providers.models',{id:draft.instance,workspace:setup.workspace,...location,refresh:true}):act('runtime.control',{sessionId,operation:'configuration.catalog',args:{refresh:true,instance:draft.instance}})}>Refresh this connection</button><button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{composerModel:{...draft,open:false},panel:'settings',settingsSection:'setup',settingsExpanded:['ai-connections'],aiConnectionEditor:{...(state.view?.aiConnectionEditor||{}),step:'list'}}})}>Manage connections</button></div>;
+ const needsConnectionHelp=noProviders||binding?.eligible===false||!!failure||delayed;
+ const renderModelOptions=optionsContent=><>
+  {settingsNotice(selectedImpact || savedBundleImpact || (!touched.current && savedModelImpact))}
+  <details className="a-picker-advanced"><summary>Advanced</summary>
+   <div data-composer-page="effort">
+   {choices.length>0?<><label htmlFor="chat-effort">Reasoning effort <strong>{effortLabel}</strong></label>{draft.effort&&!choices.includes(draft.effort)&&<small>Saved effort {effort} is not advertised for this model. Choose an available effort to replace it.</small>}<input id="chat-effort" type="range" min={defaultPosition?-1:0} max={choices.length-1} step="1" value={sliderPosition} aria-valuetext={draft.effort&&!choices.includes(draft.effort)?'Choose effort; saved value is not advertised':effortLabel} disabled={blocked||!draft.model||binding?.eligible===false} data-action={isDraft?'view.update':'conversation.configure'} onChange={previewEffort} onPointerUp={commitEffort} onKeyUp={commitEffort} onBlur={commitEffort}/><div className="a-effort-labels"><span>{defaultPosition?'Provider default':choices[0]}</span><span>{choices.at(-1)}</span></div></>:<small>{binding?.eligible===false?'Saved connection settings need review before changing reasoning effort.':entry?.metadata||selected?.configSchema||selected?.info?.config_fields?'Reasoning effort is not configurable for this model.':failure||delayed||entry?.phase==='error'?'Model capabilities unavailable.':'Loading model capabilities…'}{effort&&` Saved effort: ${effort}.`}</small>}
+   </div>
+   {optionsContent}
+   {!isDraft&&<p className="a-muted" data-part="delegation-routing">{delegationRoutingLabel(catalog?.delegationRouting||session?.runtimeReport?.delegationRouting)}</p>}
+   {children}
+   {usingChatGPTPlan&&<p className="a-caption">Using ChatGPT plan · <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener noreferrer">Manage usage</a></p>}
+   {!needsConnectionHelp&&manageConnections}
+   {!isDraft&&!embedded&&<button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{composerModel:{...draft,open:false},panel:'chat-models'}})}>Model &amp; tools settings</button>}
+  </details>
+  {needsConnectionHelp&&manageConnections}
+ </>;
  const renderPanel=embedded?content=>content:renderPopover;
  return <div className="a-model-control" ref={popover}>
   {!embedded&&<button type="button" className="a-model-trigger" aria-label="Model and reasoning settings" aria-haspopup={compact?'dialog':undefined} disabled={unavailable} aria-expanded={!!open} aria-busy={checkingDefaults||undefined} title={checkingDefaults?`${modelLabel} · Checking bundle settings…`:modelLabel} data-action="view.update" onClick={show}><span>{!effective.model&&(delayed||failure)?'Model settings unavailable':compact?modelAndEffort:modelLabel}</span>{(session?.pendingModelSelection||pendingBundle)&&<small>Next message</small>}<ChevronDown/></button>}
-  {!open&&<NextMessageImpact impact={impact} kind={savedImpact}/>}
+  {!open&&settingsNotice(savedImpact)}
+  {!open&&error&&<p className="a-danger" role="status">{error}</p>}
   {open&&renderPanel(<section ref={panelRef} className={embedded?"a-embedded-model":`a-model-popover a-compact-popover${compact?' a-composer-options-panel':''}`} style={embedded?undefined:position} role="dialog" aria-label="Model for this chat" aria-describedby={`${descriptionId}-heading`}>
    <div className="a-settings-row a-composer-options-heading"><strong id={`${descriptionId}-heading`}>Model for this chat</strong>{!embedded&&<button type="button" className="a-icon" aria-label={compact?'Close chat options':'Close model settings'} data-action="view.update" onClick={close}><X/></button>}</div>
-   <p className="a-caption">{session?.pendingModelSelection||pendingBundle?'Next message: ':'Selected: '}{modelLabel}</p>
-   {working&&<p className="a-caption" role="status">Your current turn stays unchanged. You can save settings for your next message.</p>}
    {binding?.eligible===false&&<p role="status">{binding.reason} The existing selection is preserved.</p>}
    <div data-composer-page="provider">
-   <label htmlFor="chat-provider">Connection{!isDraft&&catalog?.connectionScope&&<small> · {catalog.connectionScope} settings</small>}</label><select id="chat-provider" value={selected?draft.instance:''} data-action={isDraft?'view.update':'conversation.configure'} disabled={blocked} onChange={e=>chooseProvider(e.target.value)}>
+   <label htmlFor="chat-provider">Connection</label><select id="chat-provider" value={selected?draft.instance:''} data-action={isDraft?'view.update':'conversation.configure'} disabled={blocked} onChange={e=>chooseProvider(e.target.value)}>
     <option value="" disabled>{providers.length?'Choose a connection':noProviders?'No connections configured':failure||delayed?'Connections unavailable':'Loading connections…'}</option>{options.map(row=><option key={row.id} value={row.id} disabled={providers.find(p=>p.id===row.id)?.config?.chat_enabled===false}>{row.label}{selectionImpact(impact,row.id)&&' · May cost more'}</option>)}
    </select>
    {draft.instance&&!selected&&<small>Saved connection {draft.instance} is not available in this configuration scope.</small>}
    </div>
    <div data-composer-page="model">
-   <label htmlFor="chat-model">Model</label>{binding?.eligible===false?<><input id="chat-model" aria-label="Conversation model" value={draft.model||''} disabled readOnly/><p className="a-caption">The configured connection’s model list cannot be used for this chat until its saved connection settings match. This does not mean the model is unavailable. Choose a different connection above or review the saved configuration.</p></>:<ModelSelect key={draft.instance} id="chat-model" label="Conversation model" mayCostMore={id=>selectionImpact(impact,draft.instance,id)} value={draft.model||''} entry={entry} state={state} act={act} disabled={blocked||!selected} onChange={model=>{touched.current=true;edit({model,...(model!==draft.model?{effort:''}:{})})}} onCommit={model=>apply({model,effort:draft.model===model?draft.effort:''})}/>}
+   <label htmlFor="chat-model">Model</label>{binding?.eligible===false?<><input id="chat-model" aria-label="Conversation model" value={draft.model||''} disabled readOnly/><p className="a-caption">The configured connection’s model list cannot be used for this chat until its saved connection settings match. This does not mean the model is unavailable. Choose a different connection above or review the saved configuration.</p></>:<ModelSelect key={draft.instance} id="chat-model" label="Conversation model" mayCostMore={id=>selectionImpact(impact,draft.instance,id)} value={draft.model||''} entry={entry} state={state} act={act} disabled={blocked||!selected} onChange={model=>{touched.current=true;edit({model,...(model!==draft.model?{effort:''}:{})})}} onCommit={model=>apply({model,effort:draft.model===model?draft.effort:''})} renderOptions={renderModelOptions}/>}
    </div>
-   {selectedImpact&&<NextMessageImpact impact={impact} kind={selectedImpact}/>}
-   <div data-composer-page="effort">
-   {choices.length>0?<><label htmlFor="chat-effort">Reasoning effort <strong>{effortLabel}</strong></label>{draft.effort&&!choices.includes(draft.effort)&&<small>Saved effort {effort} is not advertised for this model. Choose an available effort to replace it.</small>}<input id="chat-effort" type="range" min={defaultPosition?-1:0} max={choices.length-1} step="1" value={sliderPosition} aria-valuetext={draft.effort&&!choices.includes(draft.effort)?'Choose effort; saved value is not advertised':effortLabel} disabled={blocked||!draft.model||binding?.eligible===false} data-action={isDraft?'view.update':'conversation.configure'} onChange={previewEffort} onPointerUp={commitEffort} onKeyUp={commitEffort} onBlur={commitEffort}/><div className="a-effort-labels"><span>{defaultPosition?'Provider default':choices[0]}</span><span>{choices.at(-1)}</span></div></>:<small>{binding?.eligible===false?'Saved connection settings need review before changing reasoning effort.':entry?.metadata||selected?.configSchema||selected?.info?.config_fields?'Reasoning effort is not configurable for this model.':failure||delayed||entry?.phase==='error'?'Model capabilities unavailable.':'Loading model capabilities…'}{effort&&` Saved effort: ${effort}.`}</small>}
-   </div>
+   {binding?.eligible===false&&renderModelOptions(null)}
    {embedded&&session?.failure?.code==='transition_intent_required'&&<button type="button" className="a-soft" disabled={blocked||!selected||!draft.model||binding?.eligible===false} onClick={()=>apply({model:draft.model})}>Use this model for my next message</button>}
-   <div className="a-dialog-actions"><button type="button" className="a-link" disabled={!selected} onClick={()=>isDraft?act('providers.models',{id:draft.instance,workspace:setup.workspace,...location,refresh:true}):act('runtime.control',{sessionId,operation:'configuration.catalog',args:{refresh:true,instance:draft.instance}})}>Refresh this connection</button><button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{composerModel:{...draft,open:false},panel:'settings',settingsSection:'setup',settingsExpanded:['ai-connections'],aiConnectionEditor:{...(state.view?.aiConnectionEditor||{}),step:'list'}}})}>Manage connections</button></div>
-   <details><summary>Advanced</summary>{!isDraft&&<p className="a-muted" data-part="delegation-routing">{delegationRoutingLabel(catalog?.delegationRouting||session?.runtimeReport?.delegationRouting)}</p>}{children}</details>
-   {usingChatGPTPlan&&<p className="a-caption">Using ChatGPT plan · <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener noreferrer">Manage usage</a></p>}
    {catalog?.selectionIssue&&<p role="status">{catalog.selectionIssue}</p>}
    {catalog?.defaultError&&<p role="status">{catalog.defaultError}</p>}
    {isDraft&&(failure||delayed)&&<div className="a-discovery-recovery" role="status">{delayed&&!failure&&<p>Model settings are taking longer than expected. You can retry without refreshing or losing your draft.</p>}<button type="button" className="a-soft" onClick={discovery.retry}>Retry model settings</button></div>}
    {failure&&<small className="a-danger" role="status">{failure}</small>}
-   <p className="a-caption" role="status">{nextMessage.pending?'Saving Next message settings…':!isDraft&&(session?.pendingModelSelection||pendingBundle)?'Next message · Saved; not applied yet.':'Next message · Changes apply when you send.'}</p>
+
   </section>)}
  </div>;
 }
