@@ -97,7 +97,8 @@ import './markdown-content.css';
 import {FeedbackPanel,FeedbackNotice} from './feedback';
 import {notificationEvents,takeNotifications,showBrowserNotification} from './notifications';
 import {ConversationWork,useInterimReplies} from './interim-replies.jsx';
-import {executionData,turnPlacements,splitWork,conversationWorkRows} from './timeline-data';
+import {executionData,turnPlacements,splitWork,conversationWorkRows,withModelChanges} from './timeline-data';
+import {ModelChange} from './model-change';
 import {LiveActivity} from './live-activity';
 import {resizeComposer,composerPrimaryAction,composerExpanded} from './composer';
 import {ComposerOwnership} from './composer-ownership';
@@ -745,7 +746,7 @@ function App(){
  const turnEnds=useMemo(()=>completedTurnEnds(session),[session?.messages,session?.sharedHistoryUserTurnOffset,session?.execution?.turns,session?.status]);
  const workPlacement=useMemo(()=>turnPlacements(messages,execution),[messages,execution]),newest=useMemo(()=>newestMessageIds(messages),[messages]);
  const voiceStream=useMemo(()=>voiceWorkStream(session),[session?.streaming,session?.streamingId,session?.streamingInputId]);
- const rawConversationRows=useMemo(()=>withArtifactRows(voiceWorkRows(conversationWorkRows(messages,workPlacement),execution,voiceStream)),[messages,workPlacement,execution,voiceStream]);
+ const rawConversationRows=useMemo(()=>withModelChanges(withArtifactRows(voiceWorkRows(conversationWorkRows(messages,workPlacement),execution,voiceStream)),session?.execution?.turns),[messages,workPlacement,execution,voiceStream,session?.execution?.turns]);
  const interim=useInterimReplies(rawConversationRows,execution,shell.composition?.presentation?.collapseInterimReplies===true,session?.id,messagesPane,state?.view?.executionExpanded,act);
  const artifactBoundaries=useMemo(()=>new Set([
   ...chatArtifacts(state||{}).flatMap(row=>(row.publications||[{messageId:row.messageId}]).map(link=>link.messageId)),
@@ -1093,7 +1094,7 @@ function App(){
  const previewVisible=!!peerPreview.active&&!browsing;
  const layoutState=browsing?{...settingsState,canvas:{...state?.canvas,open:false}}:previewVisible?{...settingsState,peerPreview:true,canvas:{...state?.canvas,open:true}}:settingsState;
  const renderMessage=(row,options={})=><MessageEntry key={row.id} message={row.message} session={session||{id:null}} state={state} connected={connected} statusCurrent={!detail.focused} act={act} stamp={nowLabel} working={working} forkTurn={turnEnds.get(row.id)} newest={newest.has(row.id)} retry={retryMessage} discard={discardMessage} dispatch={dispatch} {...options}/>;
- const renderRow=row=>row.kind==='artifacts'?<ArtifactLinks key={row.id} state={state} message={row.message} act={act} dispatch={dispatch}/>:row.kind==='work'?<ConversationWork key={row.id} row={row} data={execution} state={state} act={act} dispatch={dispatch} session={session} working={working} renderMessage={renderMessage}/>:row.kind==='peers'?<PeerRun key={row.id} row={row} session={session} state={state} renderMessage={renderMessage}/>:renderMessage(row);
+ const renderRow=row=>row.kind==='model-change'?<ModelChange key={row.id} change={row.change}/>:row.kind==='artifacts'?<ArtifactLinks key={row.id} state={state} message={row.message} act={act} dispatch={dispatch}/>:row.kind==='work'?<ConversationWork key={row.id} row={row} data={execution} state={state} act={act} dispatch={dispatch} session={session} working={working} renderMessage={renderMessage}/>:row.kind==='peers'?<PeerRun key={row.id} row={row} session={session} state={state} renderMessage={renderMessage}/>:renderMessage(row);
  if(!state||!shell.ready)return <AppReloadContext.Provider value={appReload}><div className="boot"><AppReloadNotice/><img src={logo}/><h1>Amplifier</h1><p>{error||shell.error||'Connecting to your workspace…'}</p>{(error||shell.error)&&<><button onClick={()=>{setBootAttempt(value=>value+1);shell.refresh()}}>Retry connection</button><p><a href="?shell=recovery">Open recovery mode</a></p></>}</div></AppReloadContext.Provider>;
  if(!hasAppearanceIdentity(state.appearance)||state.appearance.availability==='failed')return <div className="boot" role="alert"><h1>Appearance unavailable</h1><p>{state.appearance?.error||'Appearance preferences could not be loaded. Your saved data was not replaced.'}</p><button type="button" onClick={()=>setBootAttempt(value=>value+1)}>Retry connection</button></div>;
  return <PeerPresentation.Provider value={peerPresentation}><ArchiveContext.Provider value={archiveValue}><WorkNavigationContext.Provider value={workNavigation}><ShellContext.Provider value={shell}><AppReloadContext.Provider value={appReload}><div id="amp-one" {...appAppearanceState(state,connected,streamClient!==null)} data-work-surface={workSurface(state)} ref={root} data-appearance-composition={composedAppearance.id||undefined} data-layout={presentation.layout||'balanced'} data-interface-detail={presentation.interfaceDetail||'standard'} data-execution-detail={presentation.executionDetail||presentation.interfaceDetail||'standard'} data-density={presentation.density||'comfortable'} style={{colorScheme:scheme,...(presentation.accent?{'--a-accent':presentation.accent}:{})}} data-theme-scheme={themeScheme} data-decorations={presentation.decorations===false?'off':'on'} data-part="app">

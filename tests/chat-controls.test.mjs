@@ -39,11 +39,14 @@ test('one compact model panel embeds bundle choices under Advanced and shares it
   await renderAct(async()=>root=create(React.createElement(ComposerOptions,{state,session,act:record(calls)})));
   const dialog=root.root.findByProps({role:'dialog','aria-label':'Model for this chat'});
   assert.equal(root.root.findAllByProps({role:'dialog'}).length,1);
-  for(const name of ['model','provider','effort'])assert.notEqual(dialog.findByProps({'data-composer-page':name}).props.hidden,true);
+  for(const name of ['model','provider'])assert.notEqual(dialog.findByProps({'data-composer-page':name}).props.hidden,true);
   assert.equal(dialog.findAllByProps({'data-composer-page':'overview'}).length,0);
   assert.equal(dialog.findAllByProps({'aria-label':'Back to chat options'}).length,0);
-  const advanced=dialog.findByType('details');
-  assert.deepEqual(advanced.findByType('summary').children,['Advanced']);
+  const advanced=dialog.findByProps({className:'a-picker-advanced'});
+  assert.equal(advanced.findByProps({'data-composer-page':'effort'}).findByProps({id:'chat-effort'}).type,'input');
+  assert.ok(advanced.findByProps({'data-part':'model-pricing-announcement'}));
+  assert.ok(advanced.findAllByType('button').some(b=>b.children.includes('Enter an exact model ID')));
+  assert.deepEqual(advanced.findAllByType('summary')[0].children,['Advanced']);
   assert.notEqual(advanced.props.open,true);
   assert.equal(advanced.findByProps({id:'composer-options-bundle'}).props.value,'work');
   assert.equal(root.root.findAllByProps({'aria-label':'Conversation bundle'}).length,0,'Bundle has no second trigger/dialog');
@@ -470,6 +473,18 @@ const savedModelState=()=>({
   'configuration.catalog':{configurationRevision:0,providers:[{id:'one',sharedCatalogKey:'account-one',info:{defaults:{model:'first'}}}],effective:{instance:'one',model:'first'}}
  }}
 });
+test('a failed refresh leaves the exact model editor visible outside Advanced alongside last-good choices',async()=>{
+ const state=savedModelState(),session={id:'chat',pendingModelSelection:{instance:'one',model:'manual-deployment-id'}};
+ state.modelCatalogs['account-one']={...state.modelCatalogs['account-one'],phase:'error',stale:true};
+ let root;
+ try{
+  await renderAct(async()=>root=create(React.createElement(ModelControl,{state,session,act:record([])})));
+  const advanced=root.root.findByProps({className:'a-picker-advanced'});
+  assert.equal(advanced.findAllByProps({id:'chat-model'}).length,0);
+  assert.equal(field(root,'chat-model').props.value,'manual-deployment-id');
+  assert.deepEqual(optionValues(root,'chat-model-catalog'),['','first','second']);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
 test('a connection conflict explains withheld choices instead of claiming the model is undiscovered',async()=>{
  const calls=[],state=savedModelState(),session={id:'chat',status:'working'};
  state.runtimeControl.chat['configuration.catalog'].connectionBindings={
@@ -544,7 +559,7 @@ test('starting without accepted input keeps saved choices usable without runtime
    {sessionId:'chat',expectedRevision:3,selection:{instance:'one',model:'second'}},
    {sessionId:'chat',expectedRevision:4,selection:{instance:'one',model:'second',effort:'high'}}
   ]);
-  assert.match(JSON.stringify(root.toJSON()),/Next message/);
+  assert.match(JSON.stringify(root.toJSON()),/Changes apply to your next message/);
   assert.ok(!calls.some(c=>c.name==='conversation.send'||c.args?.operation==='provider.queueSelection'||c.name==='configuration.inspect'));
  }finally{await renderAct(async()=>root?.unmount())}
 });
@@ -583,7 +598,7 @@ for(const active of [
   assert.deepEqual(calls.filter(c=>c.name==='conversation.configure').map(c=>c.args.expectedRevision),[3,4,5]);
   assert.deepEqual(session,before,'Saving must not change running session props');
   assert.ok(!calls.some(c=>['conversation.send','bundle.switch','configuration.apply'].includes(c.name)||['provider.select','provider.queueSelection'].includes(c.args?.operation)));
-  assert.match(renderedText(root.toJSON()),/current turn.*unchanged/i);
+  assert.match(renderedText(root.toJSON()),/Changes apply to your next message/i);
  }finally{await renderAct(async()=>root?.unmount())}
 });
 test('saving locks only the choice controls and rejected receipts remain visible',async()=>{
@@ -595,7 +610,7 @@ test('saving locks only the choice controls and rejected receipts remain visible
   await renderAct(async()=>{field(root,'chat-model').props.onChange({target:{value:'second'}})});
   assert.equal(field(root,'chat-model').props.disabled,true);
   assert.equal(root.root.findByProps({'aria-label':'Model and reasoning settings'}).props.disabled,false);
-  assert.match(JSON.stringify(root.toJSON()),/Saving Next message/);
+  assert.match(JSON.stringify(root.toJSON()),/Saving next message/i);
   await renderAct(async()=>release({accepted:false,error:'Next message settings changed.'}));
   assert.equal(field(root,'chat-model').props.disabled,false);
   assert.match(JSON.stringify(root.toJSON()),/Next message settings changed/);
@@ -607,7 +622,7 @@ test('pending model choice and failed application are not reported as mounted be
  try{
   await renderAct(async()=>root=create(React.createElement(ModelControl,{state:savedModelState(),session,act:record([])})));
   assert.match(root.root.findByProps({'aria-label':'Model and reasoning settings'}).props.title,/second/);
-  assert.match(JSON.stringify(root.toJSON()),/Saved; not applied yet/);
+  assert.match(JSON.stringify(root.toJSON()),/Saved for your next message/);
   assert.match(JSON.stringify(root.toJSON()),/Could not apply the saved model/);
  }finally{await renderAct(async()=>root?.unmount())}
 });
@@ -821,5 +836,79 @@ test('known large native history is disclosed for a different provider even afte
   await renderAct(async()=>field(root,'chat-provider').props.onChange({target:{value:'one'}}));
   assert.equal(root.root.findAllByProps({'data-next-message-impact':'handoff'}).length,0);
   assert.ok(calls.every(call=>call.name==='view.update'));
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+
+test('pending unmeasured model change can restore only the previous admitted settings',async()=>{
+ const calls=[],selected={instance:'one',model:'second'},prior={inputId:'admitted-input',generationId:'prior-generation',selection:{instance:'one',model:'first'},bundle:'work'};
+ let session={id:'chat',nextMessageRevision:3,pendingModelSelection:selected,previousTurnSettings:prior};
+ let state=savedModelState();
+ state={...state,view:{composerModel:{sessionId:'chat',open:false}}};
+ const render=()=>React.createElement(ModelControl,{state,session,act:record(calls)});
+ let root;
+ try{
+  await renderAct(async()=>root=create(render()));
+  const hint=root.root.findByProps({'data-next-message-impact':'unknown'});
+  assert.match(renderedText(hint.children),/time and cost.*unknown/i);
+  const restore=()=>root.root.findAllByType('button').filter(n=>n.children.includes('Use previous settings'));
+  assert.equal(restore().length,1);
+  await renderAct(async()=>restore()[0].props.onClick());
+  assert.deepEqual(calls.filter(row=>row.name==='conversation.configure'),[{name:'conversation.configure',args:{
+   sessionId:'chat',expectedRevision:3,restorePreviousInputId:'admitted-input',restorePreviousGenerationId:'prior-generation'}}]);
+  session={...session,previousTurnSettings:{...prior,restorePending:true}};
+  await renderAct(async()=>root.update(render()));
+  assert.equal(restore().length,0,'A corrective pending restore is already staged');
+  session={...session,previousTurnSettings:{...prior,generationId:undefined}};
+  await renderAct(async()=>root.update(render()));
+  assert.equal(restore().length,0);
+  session={...session,pendingModelSelection:undefined,previousTurnSettings:undefined};
+  await renderAct(async()=>root.update(render()));
+  assert.equal(root.root.findAllByProps({'data-next-message-impact':'unknown'}).length,0);
+  assert.equal(restore().length,0);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+
+test('older chats use known prior settings for a cost-neutral hint, including before a changed provider is saved',async()=>{
+ const calls=[],prior={instance:'one',model:'first'},state=savedModelState();
+ state.runtimeControl.chat['configuration.catalog'].providers.push({id:'two',sharedCatalogKey:'second'});
+ let session={id:'chat',runtimeReport:{effective_selection:prior},messages:[{role:'assistant',content:'earlier'}]};
+ const render=()=>React.createElement(ModelControl,{state,session,act:record(calls)});
+ let root;
+ try{
+  await renderAct(async()=>root=create(render()));
+  const hint=()=>root.root.findAllByProps({'data-next-message-impact':'unknown'});
+  assert.equal(hint().length,0);
+  await renderAct(async()=>field(root,'chat-provider').props.onChange({target:{value:'two'}}));
+  assert.equal(hint().length,1);
+  assert.ok(calls.every(c=>c.name==='view.update'||c.name==='runtime.control'));
+  session={...session,selection:{instance:'one',model:'planned'},pendingModelSelection:{instance:'two',model:'next'},runtimeReport:undefined};
+  await renderAct(async()=>root.update(render()));
+  assert.equal(hint().length,0,'While a change is pending, the saved selection alone cannot identify the applied model');
+  session={...session,messages:[],runtimeReport:{effective_selection:prior}};
+  await renderAct(async()=>root.update(render()));
+  assert.equal(hint().length,0,'A new chat has no earlier context to prepare');
+  assert.equal(root.root.findAllByType('button').filter(n=>n.children.includes('Use previous settings')).length,0);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+
+test('a model marker has optional accessible secondary text only for a supported impact',async()=>{
+ const {ModelChange}=await server.ssrLoadModule('/src/model-change.jsx');
+ const old={instance:'one',model:'Sol'},next={instance:'one',model:'Astra'};
+ let root;
+ const row=(current,impact)=>React.createElement(ModelChange,{change:{previous:old,current,impact}});
+ try{
+  await renderAct(async()=>root=create(row(next,'cold-request')));
+  assert.match(renderedText(root.root.findByType('summary').children),/Model changed from Sol to Astra/);
+  assert.match(renderedText(root.root.findByType('p').children),/may need/);
+  await renderAct(async()=>root.update(row({...old,instance:'two'},'portable-history')));
+  assert.match(renderedText(root.root.findByType('summary').children),/Connection changed from one to two/);
+  assert.match(renderedText(root.root.findByType('p').children),/summarize/);
+  await renderAct(async()=>root.update(row(next)));
+  assert.equal(root.root.findAllByType('details').length,0);
+  assert.match(renderedText(root.toJSON()),/Sol to Astra/);
+  await renderAct(async()=>root.update(row({...old,effort:'high'})));
+  assert.match(renderedText(root.toJSON()),/provider default to high/);
+  await renderAct(async()=>root.update(row(old)));
+  assert.equal(root.toJSON(),null);
  }finally{await renderAct(async()=>root?.unmount())}
 });

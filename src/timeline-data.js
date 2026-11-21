@@ -223,6 +223,26 @@ export function conversationWorkRows(messages,placement){
  return rows;
 }
 
+// Use the admitted turn's original input. Execution segments can move as more
+// calls arrive, and an older page may contain only the tail of the turn.
+export function withModelChanges(rows, turns = []) {
+ const changes = new Map();
+ for (const turn of turns) {
+  const change = turn.modelChange;
+  if (turn.inputId && change?.previous?.instance && change.previous.model && change.current?.instance && change.current.model) {
+   changes.set(turn.inputId, change);
+  }
+ }
+ if (!changes.size) return rows;
+ return rows.flatMap(row => {
+  const input = row.kind === 'message' && row.message.role === 'user' && (row.message.inputId || row.message.voiceInputId);
+  const change = input && changes.get(input);
+  if (!change) return [row];
+  changes.delete(input);
+  return [{kind:'model-change', id:'model-change:' + input, change}, row];
+ });
+}
+
 export function combinedWork(turns,now){
  const running=turns.some(isRunning),failure=turns.find(turn=>['error','failed','cancelled','interrupted','stopped'].includes(turn.status||turn.phase));
  const intervals=turns.map(turn=>[turn.startedAt,Number.isFinite(turn.endedAt)?turn.endedAt:isRunning(turn)?now:null])

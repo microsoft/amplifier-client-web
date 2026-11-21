@@ -1,4 +1,5 @@
 import React from 'react';
+import {Clock3} from 'lucide-react';
 
 // The host supplies previously measured foreground or native-checkpoint input.
 // The picker can compare drafts against it without counting or preparing history.
@@ -26,8 +27,8 @@ export function bundleToolsMayChange(session, bundle) {
 export function NextMessageImpact({impact, kind}) {
   if (!kind || !impact) return null;
   if (kind === 'handoff' && measured(impact.portableHistoryTokens)) {
-    return <p className="a-caption" data-next-message-impact="handoff">
-      Earlier history was measured at {impact.portableHistoryTokens.toLocaleString()} tokens. Switching providers may need to read or summarize it again on your next message, which can cost more.
+    return <p className="a-next-impact" role="status" data-next-message-impact="handoff">
+      <Clock3 aria-hidden="true"/><span>Earlier history was measured at {impact.portableHistoryTokens.toLocaleString()} tokens. This connection may need to summarize it, increasing time and cost.</span>
     </p>;
   }
   if (!measured(impact.inputTokens)) return null;
@@ -37,7 +38,7 @@ export function NextMessageImpact({impact, kind}) {
     budget: 'This limit is smaller than the last request. Preparing the history to fit may take time and cost more.',
   }[kind];
   if (!explanation) return null;
-  return <p className="a-caption" data-next-message-impact={kind}>
-    {explanation} The last request used {impact.inputTokens.toLocaleString()} input tokens.
+  return <p className="a-next-impact" role="status" data-next-message-impact={kind}>
+    <Clock3 aria-hidden="true"/><span>{explanation} The last request used {impact.inputTokens.toLocaleString()} input tokens.</span>
   </p>;
 }
