@@ -22,6 +22,9 @@ function JsonValue({value,label}){
  </div>;
 }
 
+export function JsonDocument({value,label}){
+ return <div className="a-json-viewer" role="group" aria-label={`${label} payload`}><JsonValue label={label} value={value}/></div>;
+}
 export function JsonPayload({text,label}){
  const parsed=useMemo(()=>{try{return {value:JSON.parse(text)}}catch{return {invalid:true}}},[text]);
  return <div className="a-json-viewer" role="group" aria-label={`${label} payload`}>

@@ -4,6 +4,7 @@ import {DelegateMessage,RawExchange} from './delegate-exchange.jsx';
 import {useToolDetail,ToolDetailStatus} from './tool-detail.jsx';
 import {contentUnavailable} from './execution-content.js';
 import {isRunning} from './timeline-data.js';
+import {stepTime} from './model-call-row.js';
 import {delegationRoutingLabel} from './delegation-routing.js';
 import {UsageDetails} from './usage-details.jsx';
 
@@ -26,7 +27,7 @@ export function DelegateStreamSources({entries,children}){
  })},[keys]);
  return <SavedExchanges.Provider value={values}>{[...sources].map(([id,node])=><ExchangeSource key={id} id={id} node={node} publish={publish}/>)}{children}</SavedExchanges.Provider>;
 }
-export function DelegateStreamMessage({entry,expanded,toggle}){
+export function DelegateStreamMessage({entry,expanded,toggle,showTime}){
  // Opening Work admits bounded previews through the existing saved-tool reader;
  // full message bodies still require explicit expansion/copy.
  const detail=useContext(SavedExchanges)[sourceKey(entry.node)]?.detail||{node:entry.node},node=detail.node,exchange=node.exchange||node;
@@ -35,8 +36,9 @@ export function DelegateStreamMessage({entry,expanded,toggle}){
  const reply=entry.field==='delegateResponse';
  const missing=reply&&isRunning({phase})?'Waiting for reply…':contentUnavailable(exchange.contentAvailability?exchange:node,reply?'Reply':'Request');
  const receiptId=`exchange:${exchange.id}:receipt`,receiptOpen=expanded.has(receiptId);
+ const at=showTime&&Number.isFinite(entry.at)?new Date(entry.at*1000):null;
  return <div className="a-work-exchange-entry" data-work-entry={entry.id} data-owner-id={entry.owner?.ownerId||entry.owner?.id}>
-  {entry.owner?.label&&<p className="a-caption a-work-exchange-owner">{entry.owner.label.replace(/^Delegate · /,'')}</p>}
+  {(entry.owner?.label||at)&&<p className="a-caption a-work-exchange-owner">{entry.owner?.label?.replace(/^Delegate · /,'')}{at&&<> {entry.owner?.label&&'· '}<time>{at.toLocaleTimeString()}</time></>}</p>}
   {present?<DelegateMessage node={exchange} field={entry.field} label={entry.label} direction={entry.direction} expanded={expanded} toggle={toggle} partial={exchange.partial}/>:<section className="a-delegate-missing" aria-label={entry.label}><header>{entry.label} · {entry.direction}</header><p className="a-caption" role="status">{failures.has(phase)?`Delegate ${phase}. ${missing}`:missing}</p></section>}
   {!reply&&<ToolDetailStatus detail={detail}/>}
   {entry.followup&&<p className="a-caption">{failures.has(phase)?`Follow-up ${phase}; delivery was not confirmed.`:['completed','complete','success'].includes(phase)?'Follow-up recorded; application is not confirmed by its receipt.':'Follow-up attempted; awaiting receipt.'}</p>}
@@ -46,15 +48,16 @@ export function DelegateStreamMessage({entry,expanded,toggle}){
  </div>;
 }
 
-export function DelegateStreamStatus({entry,expanded,toggle,act}){
+export function DelegateStreamStatus({entry,expanded,toggle,act,now,showTime}){
  const node=entry.node,shared=useContext(SavedExchanges)[sourceKey(node)]?.detail;
  const key=`exchange:${node.id}:details`,open=expanded.has(key);
  const contextDetail=useToolDetail(node,open&&!shared),loaded=shared?.node||contextDetail.node;
  const exchange=loaded.exchange||node.exchange||{id:node.ownerId||node.id},phase=node.workerPhase||node.status||node.phase;
  const running=isRunning({phase});
  const name=(node.label||'Delegate').replace(/^Delegate · /,'');
+ const elapsed=showTime?stepTime(node,now):null;
  return <aside className="a-work-delegate-status" aria-label={`${name} status`}>
-  <span className="a-caption">{name}</span>
+  <span className="a-caption">{name}{elapsed&&' · '+elapsed}</span>
   {failures.has(phase)&&<p className="a-caption" role="status">Worker {phase}. Earlier replies remain available; they do not establish completion.</p>}
   {running&&<><span className="a-caption">{phase==='idle'?'Delegate is available for follow-up.':'Delegate is working.'}</span>{(node.workerId||node.sessionId)&&<button type="button" className="a-link a-danger" data-action="worker.stop" onClick={()=>act('worker.stop',{id:node.workerId||node.sessionId})}><Square/>Stop worker</button>}</>}
   <button type="button" className="a-link" aria-label={`${name} delegation details`} aria-expanded={open} onClick={()=>toggle(key)}>Delegation details</button>

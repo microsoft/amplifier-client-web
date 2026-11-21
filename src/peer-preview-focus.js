@@ -1,4 +1,4 @@
-// Explicit Peer dismissal only. This is not a global modal teardown policy.
+// Return from a read-only conversation pane to the row that opened it.
 export function peerFocusScope(state){
  return JSON.stringify([state?.selectedSessionId,state?.selectedWorkspaceId,state?.canvas?.id,
   state?.canvas?.selectedVersion,state?.view?.workSurface,state?.view?.panel,
@@ -25,8 +25,16 @@ export function deferPeerFocus(origin,isCurrent){
   if(focused&&focused!==doc.body&&focused!==doc.documentElement&&focused!==trigger&&focused.isConnected)return;
   const usable=node=>node?.isConnected&&thread.contains(node)&&!node.disabled&&node.getAttribute('aria-disabled')!=='true'
    &&!node.closest('[inert],[hidden]')&&node.getClientRects().length&&win.getComputedStyle(node).visibility!=='hidden';
-  const message=[...thread.querySelectorAll('[data-message-id]')].find(node=>node.dataset.messageId===messageId);
-  const target=usable(trigger)?trigger:message?.querySelector('.a-peer-summary');
+  let target=trigger;
+  if(!usable(target)){
+   if(origin.nodeId){
+    const rows=[...thread.querySelectorAll('[data-node-id]')].filter(node=>node.dataset.nodeId===origin.nodeId);
+    target=rows.length===1?rows[0].querySelector(':scope > .a-execution-action-line'):null;
+   }else if(messageId){
+    const message=[...thread.querySelectorAll('[data-message-id]')].find(node=>node.dataset.messageId===messageId);
+    target=message?.querySelector(origin.leaf?'.a-peer-leaf':'.a-peer-summary');
+   }
+  }
   if(usable(target)){target.focus({preventScroll:true});return}
   if(!usable(thread))return;
   // A missing/hidden original may still return to its verified current thread,
