@@ -11,6 +11,8 @@ const output=process.env.AMPLIFIER_TEST_ARTIFACTS||'/tmp/transcript-suggestion-b
 const artifact=process.argv[2]?await readClientArtifact(process.argv[2],process.argv[3]):null;
 let state={revision:1,settings:{workspace:'/fixture',suggestedMessages:true,suggestedMessagesRevision:0},runtime:{available:true},view:{setupJourney:'done',scheme:'system',navPinned:true},sessions:[],workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:null,selectedWorkspaceId:'project',setup:{providers:[{id:'fixture',module:'provider-fixture',enabled:true,config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false},attention:{items:[],sessions:{}}};
 const catalogMetadata={info:{config_fields:[]},configSchema:{fields:[{id:'reasoning_effort',choices:['low','medium','high'],requires_model:true}]}};
+const suggestionCatalog=['settings.update','providers.suggestionModels','providers.configureSuggestions','session.suggestion.request','session.suggestion.status','session.suggestion.cancel'].map(name=>({name}));
+let supportsSuggestions=false;
 let suggestionConfig={enabled:true,provider:'fixture',model:'fixture-model',effort:'low',transcriptMode:'last_n',humanTurns:6,revision:'boot-config',prompt:'Default fixture instruction.',defaultPrompt:'Default fixture instruction.'},rejectSetup=false;
 state.modelCatalogs={'global-fixture-key':{phase:'ready',supported:true,provenance:'provider-api',modelsDeferred:true,loadedAt:100,metadata:{info:{},configSchema:{fields:[]}}}};
 state.setup.providerCatalogs={fixture:{phase:'ready',supported:true,provenance:'provider-api',sharedCatalogKey:'global-fixture-key',loadedAt:100,models:['fixture-model','haiku-fixture','sonnet-fixture','fourth-model'],metadata:catalogMetadata}};
@@ -53,7 +55,7 @@ try{
   }
   const result=ownerShell.response(route.request());if(result!==undefined)return route.fulfill({json:result});
   if(url.pathname==='/api/state')return route.fulfill({json:snapshot(owner)});
-  if(url.pathname==='/api/actions'&&route.request().method()==='GET')return route.fulfill({json:[]});
+  if(url.pathname==='/api/actions'&&route.request().method()==='GET')return route.fulfill({json:supportsSuggestions?suggestionCatalog:[{name:'settings.update'}]});
   if(url.pathname!=='/api/actions')return route.fulfill({json:{ok:true}});
   const body=route.request().postDataJSON();calls.push(body);
   if(body.action==='settings.update'){
@@ -102,6 +104,20 @@ try{
  await expect(composer).not.toBeFocused();
  await page.waitForFunction(()=>window.amplifier.getState().client?.historyScope==='b'.repeat(64));
  if(artifact)assert.equal(await page.evaluate(()=>window.amplifier.getState().client.build.frontend.id),artifact.built.id);
+ // A host may retain suggested-message preferences after downgrading. Only its
+ // advertised actions authorize the optional controls and the background read.
+ await page.waitForFunction(()=>window.amplifier.getActions().some(row=>row.name==='settings.update'));
+ await page.evaluate(()=>window.amplifier.dispatch('view.update',{patch:{panel:'settings',settingsExpanded:['chat-input']}}));
+ await expect(page.getByRole('combobox',{name:'Enter / Return key'})).toBeVisible();
+ await expect(page.getByLabel('Show suggested messages',{exact:true})).toHaveCount(0);
+ await page.evaluate(()=>window.amplifier.dispatch('view.update',{patch:{panel:'settings',settingsExpanded:['advanced']}}));
+ await expect(page.getByRole('button',{name:/provider configuration/i})).toBeVisible();
+ await expect(page.getByRole('button',{name:/suggested messages: host setup/i})).toHaveCount(0);
+ await page.evaluate(()=>window.amplifier.dispatch('view.update',{patch:{panel:null,settingsExpanded:[]}}));
+ assert.deepEqual(calls.filter(row=>suggestionCatalog.some(({name})=>name!=='settings.update'&&name===row.action)),[]);
+ supportsSuggestions=true;
+ await page.reload();
+ await expect(composer).toBeVisible();
  await expect.poll(()=>calls.filter(row=>row.action==='providers.suggestionModels').length).toBe(1);
  assert.equal(await page.evaluate(()=>window.amplifier.getState().selectedSessionId),null);
  assert.equal(await page.evaluate(()=>window.amplifier.getState().view?.panel??null),null,'Normal chat boot is not masked by a settings panel');

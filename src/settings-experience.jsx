@@ -36,11 +36,12 @@ import {SettingsDraftProvider,useSettingsDrafts} from './settings-drafts';
 import {InstanceBrandingSettings} from './instance-branding.jsx';
 
 const icons={ai:Network,'external-agents':Plug,privacy:Archive,workspaces:Layers,overview:SlidersHorizontal,appearance:Palette,voice:AudioLines,notifications:Bell,models:Network,bundles:Layers,'smart-tools':Plug,updates:Download,diagnostics:Activity,history:Archive,advanced:Settings};
-export function SettingsExperience({state,session,act,dispatch,open,close=()=>act('view.update',{patch:{panel:null}}),navigationRef,appearance,instanceAccent}){
+export function SettingsExperience({state,suggestionsSupported,session,act,dispatch,open,close=()=>act('view.update',{patch:{panel:null}}),navigationRef,appearance,instanceAccent}){
  useEffect(()=>{const legacy=state.view?.settingsExpanded?.find(page=>['conversation','runtime','outputs','publishing','loaded-modules','share-bundle','recall'].includes(page));if(legacy)act('view.update',{patch:{panel:'settings',settingsExpanded:[legacy]}})},[]);
  const shell=useShellContext();
  const extensions=(shell?.data?.resolvedInstances||[]).filter(item=>item.slot==='settings.section');
- const sections=settingsSections.map(section=>section.id==='advanced'?{...section,pages:[...section.pages,...extensions.map(item=>['shell:'+item.id,shell.data.packages[item.package]?.manifest?.label||item.id])]}:section);
+ const availableSections=suggestionsSupported?settingsSections:settingsSections.map(section=>section.id==='chat-input'?{...section,pages:section.pages.filter(([id])=>id!=='suggestion-advanced')}:section);
+ const sections=availableSections.map(section=>section.id==='advanced'?{...section,pages:[...section.pages,...extensions.map(item=>['shell:'+item.id,shell.data.packages[item.package]?.manifest?.label||item.id])]}:section);
  const {page,section}=settingsLocation(state.view,sections),heading=useRef(null),body=useRef(null),root=useRef(null),[footer,setFooter]=useState(null),[headerTarget,setHeaderTarget]=useState(null);
  useLayoutEffect(()=>{setHeaderTarget(root.current?.closest('.a-dialog')?.querySelector('[data-settings-help]')||null)},[]);
  const compact=useSettingsCompact(root),trail=settingsTrail(state.view,state,sections),route=trail.at(-1),index=compact&&route.key==='index',detail=compact&&trail.length>(settingsParent(page,sections)?3:2);
@@ -74,12 +75,12 @@ export function SettingsExperience({state,session,act,dispatch,open,close=()=>ac
  else if(page==='storage')content=active==='storage'?<StorageSettings state={state} act={dispatch||act} onPrivacy={()=>navigate('privacy')} navigate={navigate}/>:null;
  else if(page==='testing')content=<TestingSettings act={dispatch||act} navigate={navigate}/>;
  else if(page==='access-approvals')content=<AccessMode globalOnly act={dispatch||act}/>;
- else if(page==='privacy')content=<PrivacySettings state={state} navigate={navigate}/>;
- else if(page==='chat-input')content=<><SuggestionSettings state={state} act={dispatch||act} navigate={navigate}/><ComposerReturnSettings/></>;
+ else if(page==='privacy')content=<PrivacySettings suggestionsSupported={suggestionsSupported} state={state} navigate={navigate}/>;
+ else if(page==='chat-input')content=<>{suggestionsSupported&&<SuggestionSettings state={state} act={dispatch||act} navigate={navigate}/>}<ComposerReturnSettings/></>;
  else if(page==='suggestion-advanced')content=<SuggestionAdvancedSettings state={state} act={dispatch||act} navigate={navigate}/>;
  else if(page==='model-capacity')content=<ModelCapacitySettings act={dispatch||act} navigate={navigate}/>;
  else if(page==='external-agents')content=<ExternalAgentSettings act={dispatch||act} navigate={navigate}/>;
- else if(page==='advanced')content=<AdvancedSettings {...props} sections={sections} navigate={navigate}/>;
+ else if(page==='advanced')content=<AdvancedSettings suggestionsSupported={suggestionsSupported} {...props} sections={sections} navigate={navigate}/>;
  else if(page==='appearance')content=<ShellSlot name="settings.appearance">{appearance}</ShellSlot>;
  else if(page==='instance-branding')content=<InstanceBrandingSettings {...props} act={dispatch||act} instanceAccent={instanceAccent}/>;
  else if(page.startsWith('shell:'))content=<ShellSlot name="settings.section" instanceId={page.slice(6)}/>;
