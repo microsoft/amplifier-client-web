@@ -1,11 +1,11 @@
 import {useEffect,useRef,useState} from 'react';
 import {createSuggestionController,suggestionEligible,suggestionScope,suggestionWitness} from './transcript-suggestion.js';
-import {suggestionPreference,useSuggestionPreference} from './suggestion-preference.jsx';
+import {suggestionPreference} from './suggestion-preference.jsx';
 import {useSuggestionModels} from './suggestion-model-settings.jsx';
 
 // Status reads reconcile one exact attempt; they never trigger model work.
 export function useTranscriptSuggestion({state,readState,act,blocked,canUse,recipient,connected=true,composing=false}){
- const scope=suggestionScope(state),[enabled]=useSuggestionPreference(scope),data=useSuggestionModels(state,act),config=data.suggestionModels;
+ const scope=suggestionScope(state),enabled=suggestionPreference(state),data=useSuggestionModels(state,act),config=data.suggestionModels;
  const [visible,setVisible]=useState(()=>!document.hidden),[focused,setFocused]=useState(()=>document.hasFocus()),[editing,setEditing]=useState(false),[,refresh]=useState(0),live=useRef(null),controller=useRef(null),previousRecipient=useRef(recipient),inputPending=useRef(false);
  live.current={readState,canUse,enabled,scope,blocked,config,act,connected,recipient,composing};
  if(!controller.current)controller.current=createSuggestionController({readState:()=>live.current.readState(),readStatus:async(args,current)=>{
@@ -13,7 +13,7 @@ export function useTranscriptSuggestion({state,readState,act,blocked,canUse,reci
   return receipt?.accepted===true?receipt.result:null;
  },canUse:()=>{
   const current=live.current;
-  return !document.hidden&&document.hasFocus()&&current.connected&&current.enabled&&suggestionPreference(current.scope)&&current.config?.enabled===true&&!current.blocked&&!current.composing&&!inputPending.current&&current.canUse();
+  return !document.hidden&&document.hasFocus()&&current.connected&&current.enabled&&suggestionPreference(current.readState())&&current.config?.enabled===true&&!current.blocked&&!current.composing&&!inputPending.current&&current.canUse();
  }});
  const owner=controller.current,witness=suggestionWitness(state),eligible=enabled&&visible&&focused&&connected&&config?.enabled===true&&!blocked&&!composing&&!editing&&suggestionEligible(state);
  const editorScope=JSON.stringify([scope,state?.selectedSessionId]),previousEditorScope=useRef(editorScope);

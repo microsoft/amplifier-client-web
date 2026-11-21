@@ -8,16 +8,17 @@ import {createShellHttpFixture,installFixtureEvents} from './shell-http-fixture.
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const output=process.env.AMPLIFIER_TEST_ARTIFACTS||'/tmp/transcript-suggestion-boot';
-let state={revision:1,settings:{workspace:'/fixture'},runtime:{available:true},view:{setupJourney:'done',scheme:'system',navPinned:true},sessions:[],workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:null,selectedWorkspaceId:'project',setup:{providers:[{id:'fixture',module:'provider-fixture',enabled:true,config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false},attention:{items:[],sessions:{}}};
+let state={revision:1,settings:{workspace:'/fixture',suggestedMessages:true,suggestedMessagesRevision:0},runtime:{available:true},view:{setupJourney:'done',scheme:'system',navPinned:true},sessions:[],workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:null,selectedWorkspaceId:'project',setup:{providers:[{id:'fixture',module:'provider-fixture',enabled:true,config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false},attention:{items:[],sessions:{}}};
 const catalogMetadata={info:{config_fields:[]},configSchema:{fields:[{id:'reasoning_effort',choices:['low','medium','high'],requires_model:true}]}};
 let suggestionConfig={enabled:true,provider:'fixture',model:'fixture-model',effort:'low',transcriptMode:'last_n',humanTurns:6,revision:'boot-config',prompt:'Default fixture instruction.',defaultPrompt:'Default fixture instruction.'},rejectSetup=false;
 state.modelCatalogs={'global-fixture-key':{phase:'ready',supported:true,provenance:'provider-api',modelsDeferred:true,loadedAt:100,metadata:{info:{},configSchema:{fields:[]}}}};
 state.setup.providerCatalogs={fixture:{phase:'ready',supported:true,provenance:'provider-api',sharedCatalogKey:'global-fixture-key',loadedAt:100,models:['fixture-model','haiku-fixture','sonnet-fixture','fourth-model'],metadata:catalogMetadata}};
 const shell=createShellHttpFixture(()=>state),calls=[],errors=[],external=[],reads=[];
-const snapshot=()=>{const next=shell.state();return {...next,client:{...next.client,historyScope:'b'.repeat(64)}}};
+const shells=new Map();
+const snapshot=(target=page)=>{const next=(shells.get(target)||shell).state();return {...next,client:{...next.client,historyScope:'b'.repeat(64)}}};
 const suggestionActions=()=>calls.filter(row=>row.action.startsWith('session.suggestion.'));
 const writes=()=>calls.filter(row=>['conversation.send','session.create','session.draft','providers.configureSuggestions','conversation.configure'].includes(row.action));
-let browser,vite,page,heldAttach,attempt,holdSelection=false,attached=false,modelCalls=0;
+let browser,vite,page,heldAttach,attempt,holdSelection=false,attached=false,modelCalls=0,rejectPreference=false;
 // Host-side durable-result adapter lives outside browser documents. This does
 // not persist candidates in drafts or browser storage and is not a DB test.
 const cachedResults=new Map(),attemptResults=new Map(),responseEvidence=[];
@@ -30,24 +31,33 @@ try{
  vite=await createServer({configFile:false,root,server:{host:'127.0.0.1',port:0,hmr:false},optimizeDeps:{include:['react','react-dom/client','react/jsx-dev-runtime']}});await vite.listen();
  const origin=new URL(vite.resolvedUrls.local[0]).origin;
  browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}:{})});
- const context=await browser.newContext({viewport:{width:1280,height:900}});page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));
+ const context=await browser.newContext({viewport:{width:1280,height:900}});page=await context.newPage();shells.set(page,shell);page.on('pageerror',error=>errors.push(error.message));
  await page.clock.install();
- await page.addInitScript(installFixtureEvents);
- await page.addInitScript(()=>sessionStorage.setItem('amplifier.transcript-suggestions.v1:'+JSON.stringify(['fixture-shell-host','b'.repeat(64)]),'true'));
- await page.route('**/*',async route=>{
+ await context.addInitScript(installFixtureEvents);
+ // Old local ON may exist, but must never set the synced feature preference.
+ await context.addInitScript(()=>localStorage.setItem('amplifier.transcript-suggestions.v2:'+'b'.repeat(64),'true'));
+ await context.route('**/*',async route=>{
   const url=new URL(route.request().url());
   if(url.origin!==origin){external.push(url.href);return route.abort('blockedbyclient')}
   if(!url.pathname.startsWith('/api/'))return route.continue();
+  const owner=route.request().frame().page();if(!shells.has(owner))shells.set(owner,createShellHttpFixture(()=>state));const ownerShell=shells.get(owner);
   reads.push({path:url.pathname,method:route.request().method()});
   if(url.pathname==='/api/clients/attach'){
    if(!attached){heldAttach=route;attached=true;return}
-   return route.fulfill({json:shell.response(route.request())});
+   return route.fulfill({json:ownerShell.response(route.request())});
   }
-  const result=shell.response(route.request());if(result!==undefined)return route.fulfill({json:result});
-  if(url.pathname==='/api/state')return route.fulfill({json:snapshot()});
+  const result=ownerShell.response(route.request());if(result!==undefined)return route.fulfill({json:result});
+  if(url.pathname==='/api/state')return route.fulfill({json:snapshot(owner)});
   if(url.pathname==='/api/actions'&&route.request().method()==='GET')return route.fulfill({json:[]});
   if(url.pathname!=='/api/actions')return route.fulfill({json:{ok:true}});
   const body=route.request().postDataJSON();calls.push(body);
+  if(body.action==='settings.update'){
+   if(rejectPreference)return route.fulfill({json:{accepted:false,error:'Fixture synced save rejected',state:snapshot(owner)}});
+   if(body.args.expectedSuggestedMessagesRevision!==state.settings.suggestedMessagesRevision)return route.fulfill({status:409,json:{error:'Settings changed. Review the current setting.',state:snapshot(owner)}});
+   state.settings={...state.settings,...body.args.patch,suggestedMessagesRevision:state.settings.suggestedMessagesRevision+1};state.revision++;
+   await route.fulfill({json:{accepted:true,result:{settings:{suggestedMessages:state.settings.suggestedMessages,suggestedMessagesRevision:state.settings.suggestedMessagesRevision},scope:'installation-owner'},state:snapshot(owner)}});
+   await Promise.all(context.pages().map(p=>p.evaluate(next=>window.emitFixtureState?.(next),snapshot(p)).catch(()=>{})));return;
+  }
   if(body.action==='providers.suggestionModels')return route.fulfill({json:{accepted:true,result:{suggestionModels:suggestionConfig,providers:[{id:'fixture',displayName:'Fixture account',module:'provider-fixture',sharedCatalogKey:'global-fixture-key'}]}}});
   if(body.action==='providers.configureSuggestions'){
    if(rejectSetup)return route.fulfill({json:{accepted:false,error:'Fixture setup rejected'}});
@@ -70,11 +80,12 @@ try{
    if(Object.hasOwn(body.args.patch||{},'draft')){const row=state.sessions.find(row=>row.id===(body.args.sessionId??state.selectedSessionId));if(row)row.draft=body.args.patch.draft}
    state.revision++;
   }
+  if(body.action==='canvas.visibility'){state.canvas={...state.canvas,open:body.args.open};state.revision++}
   if(body.action==='session.select'){
    if(holdSelection){heldSelections.push({route,body});return}
    selectChat(body.args.id);
   }
-  return route.fulfill({json:{accepted:true,state:snapshot()}});
+  return route.fulfill({json:{accepted:true,state:snapshot(owner)}});
  });
  await page.goto(origin);await expect.poll(()=>!!heldAttach).toBe(true);
  await expect(page.locator('.boot')).toBeVisible();await page.waitForFunction(()=>typeof window.amplifier?.getState==='function');
@@ -98,25 +109,26 @@ try{
  await expect(page.getByLabel('Show suggested messages',{exact:true})).toHaveCount(0);
  await page.getByRole('button',{name:'Suggested messages & conversation text'}).click();
  await expect(page.getByLabel('Show suggested messages',{exact:true})).toBeVisible();
- await expect(page.getByLabel('Return key',{exact:true})).toBeVisible();
- await expect(page.getByLabel('Suggestion model',{exact:true})).toHaveCount(0);
+ await expect(page.getByLabel('Enter / Return key',{exact:true})).toBeVisible();
+ await expect(page.getByLabel('Model',{exact:true})).toHaveCount(0);
  const configWrites=calls.filter(row=>row.action==='providers.configureSuggestions').length;
- await page.getByLabel('Show suggested messages',{exact:true}).uncheck();await page.getByLabel('Show suggested messages',{exact:true}).check();
+ await page.getByLabel('Show suggested messages',{exact:true}).click();await expect(page.getByLabel('Show suggested messages',{exact:true})).not.toBeChecked();
+ await page.getByLabel('Show suggested messages',{exact:true}).click();await expect(page.getByLabel('Show suggested messages',{exact:true})).toBeChecked();
  assert.equal(calls.filter(row=>row.action==='providers.configureSuggestions').length,configWrites,'Configured everyday switch never saves host setup');
- const storagePage=await page.context().newPage();
- await storagePage.route('**/consumer-storage',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><title>Storage peer</title>'}));
- await storagePage.goto(origin+'/consumer-storage');
- await storagePage.evaluate(()=>localStorage.setItem('amplifier.transcript-suggestions.v2:'+'b'.repeat(64),'false'));
+ const peerPage=await context.newPage();await peerPage.goto(origin);
+ await expect(peerPage.getByLabel('Show suggested messages',{exact:true})).toBeChecked();
+ await peerPage.getByLabel('Show suggested messages',{exact:true}).click();
  await expect(page.getByLabel('Show suggested messages',{exact:true})).not.toBeChecked();
- await storagePage.evaluate(()=>localStorage.setItem('amplifier.transcript-suggestions.v2:'+'c'.repeat(64),'true'));
- await expect(page.getByLabel('Show suggested messages',{exact:true})).not.toBeChecked();
- await storagePage.evaluate(()=>localStorage.setItem('amplifier.transcript-suggestions.v2:'+'b'.repeat(64),'true'));
- await expect(page.getByLabel('Show suggested messages',{exact:true})).toBeChecked();await storagePage.close();await page.bringToFront();
- await page.getByRole('button',{name:'Advanced settings for suggested messages'}).click();
- const model=page.getByRole('combobox',{name:'Suggestion model',exact:true});
+ await peerPage.reload();await expect(peerPage.getByLabel('Show suggested messages',{exact:true})).not.toBeChecked();
+ assert.equal(await peerPage.evaluate(()=>localStorage.getItem('amplifier.transcript-suggestions.v2:'+'b'.repeat(64))),'true','Old local ON never promotes to synced ON');
+ rejectPreference=true;await peerPage.getByLabel('Show suggested messages',{exact:true}).click();await expect(peerPage.getByRole('alert').filter({hasText:'Fixture synced save rejected'})).toBeVisible();await expect(peerPage.getByLabel('Show suggested messages',{exact:true})).not.toBeChecked();
+ rejectPreference=false;await peerPage.getByLabel('Show suggested messages',{exact:true}).click();
+ await expect(page.getByLabel('Show suggested messages',{exact:true})).toBeChecked();await peerPage.close();await page.bringToFront();
+ await page.getByRole('button',{name:'Advanced settings',exact:true}).click();
+ const model=page.getByRole('combobox',{name:'Model',exact:true});
  await expect(model).toBeVisible();await expect(model.locator('option[value="haiku-fixture"]')).toHaveCount(1);
  assert.equal((await model.locator('option').allTextContents()).length,5,'Four host-catalog options plus placeholder');
- await page.getByText('Fine-tuning & conversation sharing',{exact:true}).click();
+ await page.getByText('More options',{exact:true}).click();
  await expect(page.getByLabel('Suggestion reasoning effort')).toHaveValue('low');
  await expect(page.getByRole('textbox',{name:'Instruction for suggested messages'})).not.toBeVisible();
  assert.equal(calls.filter(row=>row.action==='providers.models').length,0,'Matching complete host projection needs no redundant discovery');
@@ -187,23 +199,23 @@ try{
  assert.ok(suggestionActions().filter(row=>row.action==='session.suggestion.request').every(row=>Object.keys(row.args).sort().join(',')==='expectedLastMessageId,requestId,sessionId'));
  // Consumer configuration outcomes use the real retained Settings owner.
  await page.evaluate(()=>window.amplifier.dispatch('view.update',{patch:{panel:'settings',settingsSection:'setup',settingsExpanded:['chat-input']}}));
- const personal=page.getByLabel('Show suggested messages',{exact:true});await personal.uncheck();
+ const personal=page.getByLabel('Show suggested messages',{exact:true});await personal.click();await expect(personal).not.toBeChecked();
  suggestionConfig={...suggestionConfig,enabled:false};state.configurationRevision=(state.configurationRevision||0)+1;state.revision++;
- await page.evaluate(next=>window.emitFixtureState(next),snapshot());await expect(page.getByText('Host setup is needed before this browser can show suggestions.',{exact:true})).toBeVisible();
+ await page.evaluate(next=>window.emitFixtureState(next),snapshot());await expect(personal).not.toBeChecked();
  await personal.click();await expect(personal).not.toBeChecked();await expect(page.getByRole('group',{name:'Set up suggested messages'})).toBeVisible();
  const beforeSetup=calls.filter(row=>row.action==='providers.configureSuggestions').length;
  await page.getByRole('button',{name:'Cancel setup',exact:true}).click();assert.equal(calls.filter(row=>row.action==='providers.configureSuggestions').length,beforeSetup);
  await personal.click();const compactSetup=page.getByRole('group',{name:'Set up suggested messages'});
- await compactSetup.getByLabel('Suggestion model',{exact:true}).selectOption('haiku-fixture');rejectSetup=true;
+ await compactSetup.getByLabel('Model',{exact:true}).selectOption('haiku-fixture');rejectSetup=true;
  await compactSetup.getByRole('button',{name:'Save setup and enable',exact:true}).click();await expect(page.getByRole('alert').filter({hasText:'Fixture setup rejected'})).toBeVisible();await expect(personal).not.toBeChecked();
  rejectSetup=false;await compactSetup.getByRole('button',{name:'Save setup and enable',exact:true}).click();await expect(personal).toBeChecked();await expect(compactSetup).toHaveCount(0);
  const setupArgs=calls.filter(row=>row.action==='providers.configureSuggestions').at(-1).args;
  assert.equal(setupArgs.enabled,true);assert.equal(setupArgs.model,'haiku-fixture');assert.equal(setupArgs.effort,null);assert.equal(setupArgs.transcriptMode,undefined);assert.equal(setupArgs.prompt,undefined);assert.deepEqual(setupArgs.configurationTarget,{kind:'global'});
- await page.getByRole('button',{name:'Advanced settings for suggested messages'}).click();
+ await page.getByRole('button',{name:'Advanced settings',exact:true}).click();
  await page.getByText('Custom instruction',{exact:true}).click();
  const instruction=page.getByRole('textbox',{name:'Instruction for suggested messages'});await instruction.fill('Consumer custom instruction.');
- await page.getByRole('button',{name:'Save instruction',exact:true}).click();await expect(page.getByText('Custom instruction active',{exact:true})).toBeVisible();
- await page.getByRole('button',{name:'Stage default instruction'}).click();await expect(instruction).toHaveValue('Default fixture instruction.');
+ await page.getByRole('button',{name:'Save instruction',exact:true}).click();await expect(page.getByText('Custom active',{exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Restore default',exact:true}).click();await expect(instruction).toHaveValue('Default fixture instruction.');
  assert.equal(suggestionConfig.prompt,'Consumer custom instruction.','Restore default stages; it never silently saves');
  await page.getByRole('button',{name:'Discard instruction changes'}).click();await expect(instruction).toHaveValue('Consumer custom instruction.');
  await instruction.fill('Unsaved instruction remains private.');
@@ -215,11 +227,48 @@ try{
  await expect(personal).toBeVisible();assert.ok(await page.locator('[data-part="settings-experience"]').evaluate(node=>node.scrollWidth<=node.clientWidth+1));
  await page.evaluate(()=>window.amplifier.dispatch('view.update',{patch:{panel:'settings',settingsSection:'setup',settingsExpanded:['advanced']}}));
  await expect(page.getByRole('textbox',{name:'Instruction for suggested messages'})).not.toBeVisible();
- await page.getByRole('button',{name:'AI configuration',exact:false}).click();await expect(page.getByRole('combobox',{name:'Suggestion model',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'AI configuration',exact:false}).click();await expect(page.getByRole('combobox',{name:'Model',exact:true})).toBeVisible();
  assert.equal(await page.locator('[data-part="suggestion-host-setup"]').count(),1,'Both entry links share one retained host setup editor');
+ report.settingsGeometry=[];
+ for(const sample of [{name:'desktop',width:1280,font:14},{name:'narrow',width:390,font:14},{name:'narrow-200pct',width:390,font:28}]){
+  await page.setViewportSize({width:sample.width,height:900});
+  for(const destination of ['chat-input','suggestion-advanced']){
+   await page.evaluate(destination=>window.amplifier.dispatch('view.update',{patch:{panel:'settings',settingsExpanded:[destination]}}),destination);
+   const content=page.locator('.a-settings-page-content:visible');await expect(content).toBeVisible();
+   await content.evaluate(node=>{for(const details of node.querySelectorAll('details'))details.open=false});
+   if(sample.font===28)await content.evaluate(node=>{for(const el of [node,...node.querySelectorAll('p,label,select,summary,button,input,textarea,h4')]){el.dataset.syntheticFontStyle=el.getAttribute('style')||'';el.style.setProperty('font-size','28px','important')}});
+   if(destination==='suggestion-advanced'){
+    await expect(content.getByRole('searchbox')).toHaveCount(0);
+    await expect(content.getByRole('button',{name:'Enter an exact model ID',exact:true})).not.toBeVisible();
+   }
+   await page.screenshot({path:output+'/'+sample.name+'-'+destination+'.png'});
+   if(destination==='suggestion-advanced')await content.getByText('More options',{exact:true}).click();
+   const geometry=await content.evaluate(node=>{
+    const rect=el=>{const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom}};
+    return {content:rect(node),client:node.clientWidth,scroll:node.scrollWidth,fields:[...node.querySelectorAll('.a-suggestion-field')].filter(el=>el.getClientRects().length).map(field=>({field:rect(field),label:rect(field.querySelector('label')),control:rect(field.querySelector('select,input,.a-model-select')),gap:getComputedStyle(field).rowGap})),selectFonts:[...node.querySelectorAll('select')].filter(el=>el.getClientRects().length).map(el=>parseFloat(getComputedStyle(el).fontSize))};
+   });
+   assert.ok(geometry.scroll<=geometry.client+2,JSON.stringify({sample:sample.name,destination,geometry}));
+   for(const row of geometry.fields){const {label,control}=row;assert.ok(label.bottom<=control.y+1||label.right<=control.x+1,'Labels and controls do not overlap');assert.ok(control.right<=geometry.content.right+2)}
+   if(sample.font===28)assert.ok(geometry.selectFonts.every(size=>size>=28),'Controls respect enlarged font');
+   if(destination==='suggestion-advanced')await page.screenshot({path:output+'/'+sample.name+'-'+destination+'-expanded.png'});
+   report.settingsGeometry.push({sample:sample.name,destination,...geometry});
+   if(sample.font===28)await content.evaluate(node=>{for(const el of [node,...node.querySelectorAll('[data-synthetic-font-style]')]){el.setAttribute('style',el.dataset.syntheticFontStyle||'');delete el.dataset.syntheticFontStyle}});
+  }
+ }
+ await page.evaluate(()=>window.amplifier.dispatch('view.update',{patch:{panel:null}}));
+ for(const width of [1280,390]){
+  await page.setViewportSize({width,height:844});
+  state.canvas={...state.canvas,open:false,kind:'text',content:'Fixed synthetic canvas document',title:'Fixture canvas'};state.revision++;await page.evaluate(next=>window.emitFixtureState(next),snapshot());
+  const headerToggle=page.locator('#canvas-toggle');await expect(headerToggle).toHaveAttribute('aria-expanded','false');await headerToggle.focus();await headerToggle.press('Enter');
+  await expect(page.locator('#workspace-canvas')).toBeVisible();await expect(headerToggle).toHaveAttribute('aria-expanded','true');
+  await expect(page.getByRole('button',{name:'Close canvas panel',exact:true})).toHaveCount(0);
+  await headerToggle.focus();await headerToggle.press('Enter');await expect(page.locator('#workspace-canvas')).toBeHidden();await expect(headerToggle).toHaveAttribute('aria-expanded','false');
+  assert.equal(await composer.evaluate(node=>node.textContent),'');assert.equal(state.canvas.content,'Fixed synthetic canvas document');
+ }
+ report.polish={desktopNarrowAnd200PercentFont:true,geometryNoHorizontalOverflowOrFieldOverlap:true,screenshotsCaptured:true,pixelsInspected:false,canvasInnerCloseAbsentHeaderKeyboardTogglePreserved:true};
  assert.equal(calls.filter(row=>['conversation.configure','conversation.send','session.create'].includes(row.action)).length,0);
  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
- report.status='PASS';report.checks={preClientBoot:true,clientApiExposed:true,authenticatedUnselectedAppRendered:true,undefinedAndNullSelection:true,enabledOptedInNoSourceNoSuggestion:true,noSendsOrChatModelMutation:true,deferredProjectionWithMatchingFullSetup:true,hostCatalogOptionsAndEffort:true,typeAndPasteClearSameAttempt:true,acceptedUndoRestores:true,explicitChatSwitchFocus:true,immediateTabAcceptance:true,userMovedFocusProtected:true,touchEnvironmentNoAutoFocus:true,sourceBoundBeyond61seconds:true,automaticOnlyNoCreationControls:true,reloadUsesHostCachedReady:true,reloadPopulatedDraftAlwaysWins:true,reloadUsesHostCachedEmpty:true,knownEmptyNoAutoLoop:true,ChatInputConsumerToggle:true,configuredToggleZeroHostWrites:true,crossTabAndOtherAccountScope:true,missingSetupCancelFailureSuccess:true,partialGlobalSetup:true,customInstructionStagedResetAndDraftReview:true,oneAdvancedEditorAndNarrowLayout:true};report.cacheAdapter={modelCalls,responses:responseEvidence};
+ report.status='PASS';report.checks={preClientBoot:true,clientApiExposed:true,authenticatedUnselectedAppRendered:true,undefinedAndNullSelection:true,enabledOptedInNoSourceNoSuggestion:true,noSendsOrChatModelMutation:true,deferredProjectionWithMatchingFullSetup:true,hostCatalogOptionsAndEffort:true,typeAndPasteClearSameAttempt:true,acceptedUndoRestores:true,explicitChatSwitchFocus:true,immediateTabAcceptance:true,userMovedFocusProtected:true,touchEnvironmentNoAutoFocus:true,sourceBoundBeyond61seconds:true,automaticOnlyNoCreationControls:true,reloadUsesHostCachedReady:true,reloadPopulatedDraftAlwaysWins:true,reloadUsesHostCachedEmpty:true,knownEmptyNoAutoLoop:true,ChatInputConsumerToggle:true,configuredToggleZeroModelSetupWrites:true,syncedTwoClientReloadAndFailure:true,oldBrowserOnNotPromoted:true,missingSetupCancelFailureSuccess:true,partialGlobalSetup:true,customInstructionStagedResetAndDraftReview:true,oneAdvancedEditorAndNarrowLayout:true};report.cacheAdapter={modelCalls,responses:responseEvidence};
  console.log('PASS: actual App boot/catalog plus synthetic READY type/paste-clear and accepted-Undo status-only restoration; zero provider calls or sends.');
 }catch(error){report.status='FAIL';report.error=error.stack;throw error}
 finally{report.calls=calls;report.errors=errors;report.external=external;report.reads=reads;await writeFile(output+'/result.json',JSON.stringify(report,null,2)+'\n');await browser?.close();await vite?.close()}

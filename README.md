@@ -38,16 +38,20 @@ the development host. This client does not install or start the agent backend.
 ## Suggested messages
 
 On a host that supports app-level suggestions, Settings → Chat & input has one
-everyday **Show suggested messages** switch and the Return-key preference.
-Suggestions are off by default. Your choice is remembered in this browser for
-this sign-in, across service restarts; another sign-in starts off.
+everyday **Show suggested messages** switch and the Enter / Return preference.
+Suggestions are off by default. The choice is synced in this authenticated
+installation owner's saved settings across clients, reloads and sign-ins.
+It is not a cloud or cross-host account preference. Old browser choices are
+not migrated or promoted into the synced setting.
 The suggestion provider/account and model are shown separately from the chat model.
 The same feature's **Advanced settings** holds explicit host setup across workspaces,
 model/effort choices, expert recent/full text sharing and a deeper custom instruction.
 Global Advanced and Privacy link to this one feature destination rather than owning
 duplicate editors. If host setup is missing, enabling opens a compact **Save setup
 and enable** flow; opening it alone changes neither host settings nor your choice.
-Host-save success and failed browser-preference persistence are reported separately.
+Host-setup success and a failed synced-preference save are reported separately.
+Preference saves use a setting-specific revision so another client's newer Off
+choice wins over a delayed setup-and-enable operation.
 There is no automatic model selection or fallback; a configured connection is
 not a claim that every provider or model supports this feature.
 
@@ -68,6 +72,15 @@ storage; ghosts are never stored as drafts or in a second persistent browser cac
 Starting a new chat before it has a response makes no request. In suggested-message
 Advanced settings, restoring the default instruction stages an edit requiring Save;
 the actual sharing modes remain recent conversation or full visible conversation.
+Advanced model details (pricing, catalog origin and refresh time) stay in a
+secondary disclosure; ordinary connection/model controls remain readable.
+
+Writing offers Automatic with its actual platform outcome, explicit **Send
+message**, or **Start a new line**. Existing Automatic/newline preferences and
+the conservative touch default are preserved. Explicit Send uses the same
+guarded Enter handler; Shift+Enter continues writing and IME confirmation does
+not send. The keyboard preference remains browser-local, separate from the
+synced suggestion setting and from appearance profiles.
 
 The private preview is not part of the editor document. Tab in the focused empty
 editor, or **Use suggestion**, adds literal, editable, undoable text; sending is

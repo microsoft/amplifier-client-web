@@ -24,7 +24,7 @@ test('hook mounts before client state and waits through unselected boot snapshot
    const render=()=>renderAct(async()=>{if(root)root.update(React.createElement(Probe));else root=create(React.createElement(Probe))});
    try{
     await render();assert.equal(suggestion.ghost,null);assert.deepEqual(calls,[]);
-    state={client:{hostInstanceId:crypto.randomUUID(),historyScope:'b'.repeat(64)},selectedSessionId:null,view:{},sessions:[]};
+    state={settings:{suggestedMessages:true},client:{hostInstanceId:crypto.randomUUID(),historyScope:'b'.repeat(64)},selectedSessionId:null,view:{},sessions:[]};
     publishSuggestionModels(suggestionScope(state),{suggestionModels:{enabled:true,revision:'boot-config'},providers:[]},0);
     await render();assert.equal(suggestion.ghost,null);assert.deepEqual(calls,[]);
     state.sessions=[{id:'s',status:'working',messages:[{id:'a',role:'assistant',text:'Interim',streaming:true}]}];state.selectedSessionId='s';
@@ -39,7 +39,7 @@ test('hook mounts before client state and waits through unselected boot snapshot
 async function scenario({wrongReady=false,ready=false,response}={}){
  const originals={window:globalThis.window,document:globalThis.document,sessionStorage:globalThis.sessionStorage};
  globalThis.window=new EventTarget();globalThis.document=Object.assign(new EventTarget(),{hidden:false,hasFocus:()=>true});globalThis.sessionStorage={getItem:()=> 'true'};globalThis.localStorage={getItem:()=> 'true'};
- const state={client:{hostInstanceId:crypto.randomUUID(),historyScope:'b'.repeat(64)},selectedSessionId:'s',view:{},sessions:[{id:'s',status:'idle',messages:[{id:'a',role:'assistant',text:'Done'}]}]};
+ const state={settings:{suggestedMessages:true},client:{hostInstanceId:crypto.randomUUID(),historyScope:'b'.repeat(64)},selectedSessionId:'s',view:{},sessions:[{id:'s',status:'idle',messages:[{id:'a',role:'assistant',text:'Done'}]}]};
  let config={enabled:true,revision:'config'};
  const configure=patch=>{config={...config,...patch};publishSuggestionModels(suggestionScope(state),{suggestionModels:config,providers:[]},0)};
  configure({});

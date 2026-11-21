@@ -31,6 +31,7 @@ test('Automatic sends only with affirmative desktop-only evidence',()=>{
  assert.equal(returnKeyMode('newline','desktop-send'),'newline');
  assert.equal(returnKeyMode('automatic','desktop-send'),'desktop-send');
  assert.equal(returnKeyMode('automatic','newline'),'newline');
+ assert.equal(returnKeyMode('send','newline'),'desktop-send','Explicit preference overrides conservative touch default, not default policy');
  assert.equal(returnKeyMode('invalid','desktop-send'),'newline');
  assert.match(returnKeyHelp('newline'),/Use Send/);
  assert.match(returnKeyHelp('desktop-send'),/Ctrl\+Enter/);
@@ -50,6 +51,12 @@ test('desktop plain Enter sends exactly once; repeated Enter cannot submit anoth
  view.dispatch(view.state.tr.insertText(' newer draft'));
  composerReturnKeyDown(view,event({repeat:true}),{mode:'desktop-send',onSend:()=>sends++});
  assert.equal(sends,1);assert.equal(composerMarkdown(view.state.doc),'First newer draft');
+});
+test('explicit send on touch-capable hardware reuses composing and modified-key safety',()=>{
+ const mode=returnKeyMode('send',automaticReturnMode(desktop({maxTouchPoints:5}))),view=editor();let sends=0;
+ composerReturnKeyDown(view,event({isComposing:true}),{mode,onSend:()=>sends++});assert.equal(sends,0);
+ composerReturnKeyDown(view,event({shiftKey:true}),{mode,onSend:()=>sends++});assert.equal(sends,0);assert.equal(view.state.doc.childCount,2);
+ view.dispatch(view.state.tr.insertText('Second'));composerReturnKeyDown(view,event(),{mode,onSend:()=>sends++});assert.equal(sends,1);
 });
 for(const [label,options] of [['safe default',{}],['safe mode',{mode:'newline'}],['Shift continuation',{mode:'desktop-send',shiftKey:true}],['Ctrl continuation',{mode:'desktop-send',ctrlKey:true}]])test(label+' continues prose without sending',()=>{
  const view=editor(),input=event(options);let sends=0;
@@ -259,7 +266,7 @@ test('browser preference persists independently, validates values and notifies a
  store.set('newline');assert.equal(data.get(RETURN_KEY_STORAGE),'newline');assert.equal(store.getSnapshot().value,'newline');assert.equal(notices,1);
  const reloaded=createReturnKeyPreference({storage:()=>storage,eventTarget:events});assert.equal(reloaded.getSnapshot().value,'newline');
  const otherBrowser=createReturnKeyPreference({storage:()=>storageFixture().storage});assert.equal(otherBrowser.getSnapshot().value,'automatic');
- store.set('send');assert.equal(notices,1);
+ store.set('invalid');assert.equal(notices,1);
  data.set(RETURN_KEY_STORAGE,'automatic');const changed=new Event('storage');changed.key=RETURN_KEY_STORAGE;events.dispatchEvent(changed);
  assert.equal(store.getSnapshot().value,'automatic');assert.equal(notices,2);
  stop();events.dispatchEvent(changed);assert.equal(notices,2);
@@ -270,6 +277,7 @@ test('unavailable or unconfirmed browser storage remains explicit; chosen safe m
   if(!readable)assert.match(store.getSnapshot().error,/could not read/);
   store.set('newline');assert.equal(store.getSnapshot().value,'newline');assert.match(store.getSnapshot().error,/tab only/);
  }
- const corrupt=createReturnKeyPreference({storage:()=>({getItem:()=>'send'})});
+ const explicit=createReturnKeyPreference({storage:()=>({getItem:()=>'send'})});assert.equal(explicit.getSnapshot().value,'send');
+ const corrupt=createReturnKeyPreference({storage:()=>({getItem:()=>'invalid'})});
  assert.equal(corrupt.getSnapshot().value,'automatic');assert.match(corrupt.getSnapshot().error,/invalid/);
 });

@@ -11,7 +11,7 @@ import '../../src/transcript-suggestion.css';
 const config={enabled:true,provider:'cheap',model:'cheap-model',effort:'low',prompt:'Default fixture prompt.',defaultPrompt:'Default fixture prompt.',transcriptMode:'last_n',humanTurns:6,revision:'config1'};
 const fixtureMetadata={info:{config_fields:[]},configSchema:{fields:[{id:'reasoning_effort',choices:['low','medium','high'],requires_model:true}]}};
 const fixtureCatalog={phase:'ready',supported:true,provenance:'provider-api',sharedCatalogKey:'cheap-key',loadedAt:100,models:['cheap-model','haiku-fixture','other-model','fourth-model'],metadata:fixtureMetadata};
-const initial={client:{hostInstanceId:'fixture',historyScope:'a'.repeat(64)},selectedSessionId:'one',view:{},modelCatalogs:{'cheap-key':{phase:'ready',supported:true,provenance:'provider-api',loadedAt:100,modelsDeferred:true,metadata:{info:{},configSchema:{fields:[]}}}},setup:{providerCatalogs:{cheap:fixtureCatalog}},sessions:[{id:'one',status:'idle',messages:[{id:'user1',role:'user',text:'An earlier request.'},{id:'answer1',role:'assistant',text:'A visible answer.'}]},{id:'two',status:'idle',messages:[{id:'answer-B',role:'assistant',text:'A second visible answer.'}]}]};
+const initial={settings:{suggestedMessages:false,suggestedMessagesRevision:0},client:{hostInstanceId:'fixture',historyScope:'a'.repeat(64)},selectedSessionId:'one',view:{},modelCatalogs:{'cheap-key':{phase:'ready',supported:true,provenance:'provider-api',loadedAt:100,modelsDeferred:true,metadata:{info:{},configSchema:{fields:[]}}}},setup:{providerCatalogs:{cheap:fixtureCatalog}},sessions:[{id:'one',status:'idle',messages:[{id:'user1',role:'user',text:'An earlier request.'},{id:'answer1',role:'assistant',text:'A visible answer.'}]},{id:'two',status:'idle',messages:[{id:'answer-B',role:'assistant',text:'A second visible answer.'}]}]};
 function App(){
  const [state,setState]=useState(initial),[draft,setDraft]=useState(''),[props,setProps]=useState({}),[blocked,setBlocked]=useState(false),[composing,setComposing]=useState(false),[connected,setConnected]=useState(true),[advanced,setAdvanced]=useState(false);
  const live=useRef(null),editorRef=useRef(null),quoteApi=useRef(null),sends=useRef([]),calls=useRef([]),selection=useRef({...config}),pending=useRef(false),sequence=useRef(1);
@@ -23,6 +23,10 @@ function App(){
  const act=useRef(async(action,args,meta={})=>{
   if(meta.suggestionIsCurrent&&!meta.suggestionIsCurrent())return {accepted:false};
   calls.current.push({action,args});
+  if(action==='settings.update'){
+   const settings={...live.current.settings,...args.patch,suggestedMessagesRevision:live.current.settings.suggestedMessagesRevision+1};setState(current=>({...current,settings}));
+   return {accepted:true,result:{settings,scope:'installation-owner'}};
+  }
   if(action==='providers.suggestionModels'){
    const result=()=>({accepted:true,result:{suggestionModels:selection.current,providers:[{id:'cheap',displayName:'Fixture display name',module:'provider-fixture',sharedCatalogKey:'cheap-key'}]}});
    if(holdModels.current)return new Promise(resolve=>modelReads.current.push(()=>resolve(result())));

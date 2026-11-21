@@ -1,48 +1,25 @@
-import {useEffect,useState} from 'react';
+import {useEffect,useRef,useState} from 'react';
+import {suggestionScope} from './transcript-suggestion.js';
 
-const changed='amplifier:transcript-suggestions',legacyKey=scope=>'amplifier.transcript-suggestions.v1:'+scope;
-// The host authenticates this opaque sign-in scope. Unlike hostInstanceId, it
-// survives a service restart but changes with account/login/data-root identity.
-function key(scope){
- try{const [host,history]=JSON.parse(scope);return typeof host==='string'&&host&&typeof history==='string'&&/^[a-f0-9]{64}$/.test(history)?'amplifier.transcript-suggestions.v2:'+history:null}catch{return null}
-}
-// Only a failed OFF write needs an in-memory override. Successful writes and
-// cross-tab events read durable storage as the single browser preference owner.
-const offOverrides=new Set();
-const migrationClosed=new Set(),revisions=new Map();
-export const suggestionPreferenceRevision=scope=>revisions.get(key(scope))||0;
-const revise=name=>revisions.set(name,(revisions.get(name)||0)+1);
-const retireLegacy=scope=>{try{sessionStorage.removeItem?.(legacyKey(scope))}catch{}};
-export function suggestionPreference(scope){
- const name=key(scope);if(!name||offOverrides.has(name))return false;
- try{
-  const saved=localStorage.getItem(name);
-  if(saved!==null){migrationClosed.add(name);retireLegacy(scope);return saved==='true'}
-  if(migrationClosed.has(name))return false;
-  // Migrate only an explicit choice in this exact host/account tab namespace.
-  const legacy=sessionStorage.getItem(legacyKey(scope));
-  if(legacy!=='true'&&legacy!=='false')return false;
-  localStorage.setItem(name,legacy);
-  if(localStorage.getItem(name)!==legacy)return false;
-  migrationClosed.add(name);retireLegacy(scope);return legacy==='true';
- }catch{return false}
-}
-export function useSuggestionPreference(scope){
- const [saved,setSaved]=useState(()=>({scope,enabled:suggestionPreference(scope)})),[error,setError]=useState('');
- useEffect(()=>{
-  const sync=()=>setSaved({scope,enabled:suggestionPreference(scope)});
-  const storage=event=>{if(event.storageArea&&event.storageArea!==localStorage)return;if(event.key===key(scope)||event.key===null){const name=key(scope);migrationClosed.add(name);revise(name);offOverrides.delete(name);retireLegacy(scope);sync()}};
-  sync();setError('');window.addEventListener(changed,sync);window.addEventListener('storage',storage);
-  return()=>{window.removeEventListener(changed,sync);window.removeEventListener('storage',storage)};
- },[scope]);
- return [saved.scope===scope&&saved.enabled,next=>{
-  const name=key(scope);if(!name)return false;
-  revise(name);migrationClosed.add(name);
-  try{localStorage.setItem(name,String(next));if(localStorage.getItem(name)!==String(next))throw Error('Unconfirmed preference');offOverrides.delete(name);setError('')}
-  catch{
-   setError(next?'This browser could not remember your choice. Suggestions remain off.':'Suggestions are off here, but this browser could not remember the change.');
-   offOverrides.add(name);setSaved({scope,enabled:false});window.dispatchEvent(new Event(changed));return !next;
-  }
-  setSaved({scope,enabled:next});window.dispatchEvent(new Event(changed));return true;
- },error];
+// Published owner settings are the only authority. Never migrate a private
+// browser choice into a synced preference or substitute a delayed local ACK.
+export const suggestionPreference=state=>state?.settings?.suggestedMessages===true;
+export function useSuggestionPreference(state,act){
+ const scope=suggestionScope(state),current=useRef({scope,epoch:0}),pending=useRef(false),alive=useRef(true);
+ if(current.current.scope!==scope)current.current={scope,epoch:current.current.epoch+1};
+ const [busy,setBusy]=useState(false),[error,setError]=useState('');
+ useEffect(()=>{alive.current=true;return()=>{alive.current=false}},[]);
+ useEffect(()=>setError(''),[scope]);
+ return [suggestionPreference(state),async(next,expectedRevision=state?.settings?.suggestedMessagesRevision??0)=>{
+  if(!scope||pending.current)return false;
+  const epoch=current.current.epoch;pending.current=true;setBusy(true);setError('');
+  try{
+   const isCurrent=()=>alive.current&&current.current.scope===scope&&current.current.epoch===epoch;
+   const receipt=await act('settings.update',{patch:{suggestedMessages:next},expectedSuggestedMessagesRevision:expectedRevision},{suggestionIsCurrent:isCurrent});
+   if(!alive.current||current.current.scope!==scope||current.current.epoch!==epoch)return false;
+   if(receipt?.accepted!==true||receipt.result?.scope!=='installation-owner'||receipt.result?.settings?.suggestedMessages!==next||!Number.isInteger(receipt.result?.settings?.suggestedMessagesRevision)||receipt.result.settings.suggestedMessagesRevision<=expectedRevision)throw Error('The change could not be confirmed. Your saved setting is shown.');
+   return true;
+  }catch(error){if(alive.current&&current.current.scope===scope&&current.current.epoch===epoch)setError(error.message||'Could not save. Your saved setting is shown.');return false}
+  finally{pending.current=false;if(alive.current)setBusy(false)}
+ },error,busy];
 }
