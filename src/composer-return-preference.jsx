@@ -30,6 +30,7 @@ export function ComposerReturnSettings(){
    <div className="a-appearance-control">
     <select id={id+'-return'} value={value} aria-describedby={id+'-help'} onChange={event=>set(event.target.value)}>
      <option value="automatic">Automatic (recommended)</option>
+     <option value="send">Return sends the message, Shift+Return inserts a new line</option>
      <option value="newline">Always insert a new line</option>
     </select>
    </div>

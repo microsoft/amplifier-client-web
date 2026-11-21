@@ -52,13 +52,21 @@ test('Writing preference is labeled, immediately shared with a mounted editor an
   assert.equal(label.props.htmlFor,select().props.id);assert.equal(text(label),'Return key');
   assert.equal(select().props['aria-describedby'],root.root.findByType('p').props.id);
   assert.match(text(root.root.findByType('p')),/This browser only.*Automatic: Enter to send/);
+  assert.deepEqual(select().props.children.map(option=>[option.props.value,option.props.children]),[
+   ['automatic','Automatic (recommended)'],
+   ['send','Return sends the message, Shift+Return inserts a new line'],
+   ['newline','Always insert a new line'],
+  ]);
   assert.equal(root.root.findAllByType('button').length,0,'No accidental composer-form submit control');
   await act(async()=>select().props.onChange({target:{value:'newline'}}));
   assert.equal(output().props['data-mode'],'newline');assert.equal(text(output()),'Unsent draft');assert.equal(mounts,1);
   assert.equal(text(help()),'Return adds a new line. Use Send to send.','Accessible editing description shares the actual effective preference');
   assert.equal(saved.get('amplifier.composer.returnKey.v1'),'newline');
+  await act(async()=>select().props.onChange({target:{value:'send'}}));
+  assert.equal(output().props['data-mode'],'desktop-send');assert.equal(saved.get('amplifier.composer.returnKey.v1'),'send');
+  assert.equal(text(help()),'Enter to send. Shift+Enter or Ctrl+Enter adds a new line.');
   await act(async()=>root.update(render()));
-  assert.equal(select().props.value,'newline');assert.equal(mounts,1);
+  assert.equal(select().props.value,'send');assert.equal(mounts,1);
   // Cross-tab storage updates use the same local setting, not host actions.
   saved.set('amplifier.composer.returnKey.v1','automatic');
   const changed=new Event('storage');changed.key='amplifier.composer.returnKey.v1';
