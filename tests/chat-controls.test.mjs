@@ -748,3 +748,56 @@ test('a draft inherits connection defaults and keeps generic choices for a model
   assert.deepEqual(saves,[selection,{...selection,effort:'none'}]);
  }finally{await renderAct(async()=>root?.unmount())}
 });
+
+test('known costly options are marked before saving and the notice clears on a switch back',async()=>{
+ const calls=[],source={instance:'one',model:'model'};
+ const impact={source,inputTokens:88000,coldModels:true,coldConnections:['two']};
+ let session={id:'chat',status:'idle',selection:source,nextMessageImpact:impact};
+ let state={view:{composerModel:{open:true,sessionId:'chat',...source}},modelCatalogs:{a:{phase:'ready',models:['model','other']},b:{phase:'ready',models:['foreign']},c:{phase:'ready',models:['model']}},
+  runtimeControl:{chat:{'configuration.catalog':{configurationRevision:0,
+   providers:[{id:'one',sharedCatalogKey:'a'},{id:'two',sharedCatalogKey:'b'},{id:'alias',sharedCatalogKey:'c'}],effective:source}}}};
+ const render=()=>React.createElement(ModelControl,{state,session,act:record(calls)});
+ let root;
+ const notice=()=>root.root.findAllByProps({'data-next-message-impact':'selection'});
+ try{
+  await renderAct(async()=>root=create(render()));
+  const option=(id,value)=>renderedText(field(root,id).findAllByType('option').find(node=>node.props.value===value).children);
+  assert.match(option('chat-model','other'),/May cost more/);
+  assert.match(option('chat-provider','two'),/May cost more/);
+  assert.doesNotMatch(option('chat-provider','alias'),/May cost more/);
+  assert.doesNotMatch(option('chat-model','model'),/May cost more/);
+  assert.equal(notice().length,0);
+  await renderAct(async()=>field(root,'chat-model').props.onChange({target:{value:'other'}}));
+  assert.match(renderedText(notice()[0].children),/88,000 input tokens/);
+  await renderAct(async()=>field(root,'chat-model').props.onChange({target:{value:'model'}}));
+  assert.equal(notice().length,0);
+  assert.deepEqual(calls.filter(c=>c.name!=='view.update').map(c=>c.name),['conversation.configure','conversation.configure']);
+
+  state={...state,view:{composerModel:{open:false,sessionId:'chat'}}};
+  session={...session,pendingModelSelection:{instance:'one',model:'other'}};
+  await renderAct(async()=>root.update(render()));
+  assert.equal(notice().length,1,'the saved choice is visible before Send');
+  session={...session,pendingModelSelection:{...source,effort:'high'}};
+  await renderAct(async()=>root.update(render()));
+  assert.equal(notice().length,0,'effort alone has no proven impact');
+  session={...session,nextMessageImpact:undefined,pendingModelSelection:{instance:'one',model:'other'}};
+  await renderAct(async()=>root.update(render()));
+  assert.equal(notice().length,0,'older hosts and unknown costs stay quiet');
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+
+test('lowering the context limit shows a passive notice before it is applied',async()=>{
+ const {RuntimeSettings}=await server.ssrLoadModule('/src/runtime-settings.jsx');
+ const source={instance:'one',model:'model'},session={id:'chat',nextMessageImpact:{source,inputTokens:88000}};
+ const state={view:{},runtimeControl:{chat:{'budget.get':{contextTokens:150000}}}};
+ let root;const calls=[];
+ const notice=()=>root.root.findAllByProps({'data-next-message-impact':'budget'});
+ try{
+  await renderAct(async()=>root=create(React.createElement(RuntimeSettings,{state,session,act:record(calls),group:'limits'})));
+  await renderAct(async()=>field(root,'runtime-context-tokens').props.onChange({target:{value:'12000'}}));
+  assert.equal(notice().length,1);
+  await renderAct(async()=>field(root,'runtime-context-tokens').props.onChange({target:{value:'140000'}}));
+  assert.equal(notice().length,0);
+  assert.ok(calls.every(({name})=>name==='view.update'));
+ }finally{await renderAct(async()=>root?.unmount())}
+});

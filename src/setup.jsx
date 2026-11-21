@@ -14,6 +14,7 @@ import {Collection,CollectionRow,OrderEditor} from './settings-collections';
 export {RoutingSettings} from './routing-settings';
 import {ActivityRegion} from './activity-region';
 import {ModelSelect} from './model-select';
+import {NextMessageImpact,selectionMayCostMore} from './next-message-impact';
 import {useListFilter} from './list-filter.jsx';
 import {ResultNotice,PathField} from './settings-ui';
 import React,{useState,useEffect,useRef} from 'react';
@@ -130,7 +131,7 @@ export function ProviderSettings({state,session,act,navigate=()=>{}}){
 
  </details>
  <button className="a-link" aria-expanded={draft.advanced} data-action="view.update" onClick={()=>editDraft({advanced:!draft.advanced})}>{draft.advanced?'Hide':'Show'} advanced configuration</button>{draft.advanced&&<><label htmlFor={configId('provider-source')}>Module source (optional)</label><PathField id={configId('provider-source')} value={draft.source} onChange={source=>edit({source})} state={state} act={act} placeholder="git+https://… or a local module folder"/><label htmlFor={configId('provider-config')}>Provider configuration (JSON)</label><textarea id={configId('provider-config')} className="a-json-editor" value={configText} spellCheck={false} data-private="true" data-action="providers.save" onChange={e=>{const text=e.target.value;setConfigText(text);try{providerConfig(text);edit({config:text})}catch{}}}/></>}{error&&<p className="a-danger">{error}</p>}{['providers.save','providers.remove'].map(action=>{const op=operation(action);return op&&<p className={op.error?'a-danger':'a-caption'} role="status" key={action}>{op.error||(busy(op)?'Saving provider settings…':action==='providers.save'?'Provider saved. New conversations will use these settings.':'Provider removed.')}</p>})}<SettingsActions active={!!draft.detailOpen}><button className="a-primary" disabled={!draft.module.trim()||!!error||pending||(usesKey&&keyMode==='environment'&&!/^[A-Za-z_][A-Za-z0-9_]*$/.test(envVar))} data-operation-pending={busy(saveOp)||undefined} aria-busy={busy(saveOp)||undefined} data-action="providers.save" onClick={save}><Check/>Save provider</button><button className="a-soft a-danger" disabled={!selected||pending} data-operation-pending={busy(operation('providers.remove'))||undefined} aria-busy={busy(operation('providers.remove'))||undefined} data-action="providers.remove" onClick={()=>run('providers.remove',{id:draft.id,scope})}><Trash2/>Remove</button></SettingsActions>
- {session&&selected&&<div className="a-provider-session"><button className="a-soft" disabled={!draft.model||selectionBlocked||pending} data-action="conversation.configure" onClick={async()=>{
+ {session&&selected&&<div className="a-provider-session">{selectionMayCostMore(session.nextMessageImpact,draft.id,draft.model)&&<NextMessageImpact impact={session.nextMessageImpact} kind="selection"/>}<button className="a-soft" disabled={!draft.model||selectionBlocked||pending} data-action="conversation.configure" onClick={async()=>{
   setSelectionNotice(null);
   try{if(await nextMessage.configure({selection:{instance:draft.id,model:draft.model,...(config?.reasoning_effort?{effort:config.reasoning_effort}:{})}}))setSelectionNotice({phase:'ready',message:'Saved for your next message. Work already running keeps its current model.'})}
   catch(error){setSelectionNotice({phase:'error',message:error.message})}
