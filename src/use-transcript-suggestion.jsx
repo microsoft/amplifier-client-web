@@ -6,7 +6,7 @@ import {useSuggestionModels} from './suggestion-model-settings.jsx';
 // Status reads reconcile one exact attempt; they never trigger model work.
 export function useTranscriptSuggestion({state,readState,act,blocked,canUse,recipient,connected=true,composing=false}){
  const scope=suggestionScope(state),[enabled]=useSuggestionPreference(scope),data=useSuggestionModels(state,act),config=data.suggestionModels;
- const [visible,setVisible]=useState(()=>!document.hidden),[focused,setFocused]=useState(()=>document.hasFocus()),[editing,setEditing]=useState(false),[,refresh]=useState(0),live=useRef(null),controller=useRef(null),previousRecipient=useRef(recipient),inputPending=useRef(false),manual=useRef(null);
+ const [visible,setVisible]=useState(()=>!document.hidden),[focused,setFocused]=useState(()=>document.hasFocus()),[editing,setEditing]=useState(false),[,refresh]=useState(0),live=useRef(null),controller=useRef(null),previousRecipient=useRef(recipient),inputPending=useRef(false);
  live.current={readState,canUse,enabled,scope,blocked,config,act,connected,recipient,composing};
  if(!controller.current)controller.current=createSuggestionController({readState:()=>live.current.readState(),readStatus:async(args,current)=>{
   const receipt=await live.current.act('session.suggestion.status',args,{feedback:false,suggestionIsCurrent:current,signal:AbortSignal.timeout(5000)});
@@ -51,12 +51,11 @@ export function useTranscriptSuggestion({state,readState,act,blocked,canUse,reci
     if(!received){owner.unavailable(args);refresh(value=>value+1);return}
     if(result.status==='pending'){
      if(Date.now()<deadline)timer=setTimeout(()=>poll('session.suggestion.status',{sessionId:args.sessionId,requestId:args.requestId}),350);
-     else{owner.unavailable(args,'timeout');refresh(value=>value+1);void act('session.suggestion.cancel',{sessionId:args.sessionId,requestId:args.requestId},{feedback:false}).catch(()=>{})}
+     else{owner.unavailable(args);refresh(value=>value+1);void act('session.suggestion.cancel',{sessionId:args.sessionId,requestId:args.requestId},{feedback:false}).catch(()=>{})}
     }
    }catch{owner.unavailable(args);refresh(value=>value+1)/* No automatic retry of an uncertain request. */}
   };
-  if(manual.current){args=manual.current;manual.current=null;void poll('session.suggestion.request',args)}
-  else if(owner.attempted()){
+  if(owner.attempted()){
    void owner.restore().then(()=>{if(active)refresh(value=>value+1)});
   }else{
    args=owner.nextRequest();
@@ -66,11 +65,7 @@ export function useTranscriptSuggestion({state,readState,act,blocked,canUse,reci
  },[owner,trigger,eligible,config?.revision,act,generation]);
  const ghost=owner.candidate();
  useEffect(()=>{if(!ghost||ghost.expiresAt===null)return;const timer=setTimeout(()=>refresh(value=>value+1),Math.max(0,ghost.expiresAt-Date.now()+1));return()=>clearTimeout(timer)},[ghost?.expiresAt]);
- const status=owner.status();
- return {ghost,owner,status,canGenerate:!!(eligible&&witness&&status!=='pending'),generate:()=>{
-  if(!live.current.enabled||!suggestionEligible(live.current.readState()))return;
-  const args=owner.nextRequest({regenerate:true});if(!args)return;manual.current=args;refresh(value=>value+1);
- },supersede:reason=>{
+ return {ghost,owner,supersede:reason=>{
   if(reason==='editor-input'){inputPending.current=true;setEditing(true);owner.suspend()}
   else if(reason==='editor-input-end'){if(!inputPending.current)return;inputPending.current=false;setEditing(false)}
   else if(reason==='editor-change'){inputPending.current=false;setEditing(false);owner.suspend()}

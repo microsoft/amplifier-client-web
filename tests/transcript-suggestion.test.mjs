@@ -37,17 +37,26 @@ test('source-bound READY survives beyond61seconds only with exact retention mark
  const x=harness(),a=x.request();x.controller.receive(a,{...x.result(a),retention:'source',expiresAt:null});x.controller.suspend();x.status({expiresAt:100000});
  assert.equal(await x.controller.restore(),false,'Source mode may not silently turn into a finite lease');
 });
-test('explicit regeneration alone allocates a fresh UUID and flag after a spent failure',()=>{
- const h=harness(),first=h.request();h.controller.receive(first,{...h.result(first),status:'empty',suggestion:null});
- assert.equal(h.controller.status(),'empty');assert.equal(h.request(),null);
- const second=h.controller.nextRequest({regenerate:true});assert.ok(second.regenerate);assert.notEqual(second.requestId,first.requestId);
- assert.equal(h.controller.nextRequest({regenerate:true}),null,'Repeated click while pending cannot allocate another');
- h.controller.receive(second,{...h.result(second),retention:'source',expiresAt:null});
- assert.equal(h.controller.candidate().text,'Try this');
+test('automatic-only request allocation has no manual bypass for a spent source',()=>{
+ const h=harness(),args=h.request();h.controller.receive(args,{...h.result(args),status:'empty',suggestion:null});
+ assert.equal(h.controller.nextRequest(),null);
+ assert.equal(h.controller.nextRequest({regenerate:true}),null);
+ assert.equal(h.controller.status,undefined,'No creation-caption workflow retained');
 });
-test('restore distinguishes prior attempt unavailable from verified model-empty',async()=>{
+test('a fresh controller admits a host-cached source-bound result only for its exact current tuple',()=>{
+ for(const stale of [false,true]){
+  const h=harness(),args=h.request();
+  assert.deepEqual(Object.keys(args).sort(),['expectedLastMessageId','requestId','sessionId']);
+  const cached={...h.result(args),retention:'source',expiresAt:null,reused:true};
+  if(stale){h.state.sessions[0].runtimeSessionId='replaced-source';h.observe()}
+  assert.equal(h.controller.receive(args,cached),!stale);
+  assert.equal(!!h.controller.candidate(),!stale);
+  assert.equal(h.state.view.draft,undefined,'Cache result never becomes a draft');
+ }
+});
+test('unavailable old attempt remains spent without caption workflow or replacement request',async()=>{
  const h=harness(),args=h.request();h.controller.receive(args,h.result(args));h.controller.suspend();h.status({status:'empty',reason:'prior_attempt_unavailable',suggestion:null});
- assert.equal(await h.controller.restore(),false);assert.equal(h.controller.status(),'prior_attempt_unavailable');assert.equal(h.request(),null);
+ assert.equal(await h.controller.restore(),false);assert.equal(h.request(),null);
 });
 test('source-bound READY LRU touches restored entries without inference on capacity eviction',async()=>{
  let state=frame(),sequence=0;

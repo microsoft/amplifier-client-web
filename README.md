@@ -52,8 +52,11 @@ existing chat. No other chat or background page requests work. A source-bound
 READY response can remain in bounded private memory while its source and settings
 are unchanged; revisits still validate the original attempt without model work.
 Finite responses obey their original expiry. Failed, empty, cancelled or missing
-attempts are not automatically retried. **Suggest next message** or **Generate
-another suggestion** explicitly requests a new paid attempt, with usage disclosure.
+attempts do not trigger a client retry loop. Suggestions are automatic; there is no
+creation or regeneration control. Reopening or reloading an eligible conversation
+can ask the host for its current source-bound result, including a cached empty
+outcome, without duplicate model work. The host owns durable private suggestion
+storage; ghosts are never stored as drafts or in a second persistent browser cache.
 Starting a new chat before it has a response makes no request. In Settings →
 Advanced, the suggestion prompt can be edited and reset to the host default.
 

@@ -56,13 +56,12 @@ export function suggestionWitness(state){
 // Transport is deliberately injected: this controller never sends a draft.
 export function createSuggestionController({readState,canUse=()=>true,readStatus,now=Date.now,requestId=()=>crypto.randomUUID()}){
  let scope=null,current=null,epoch=0,candidate=null,request=null,restoring=null;
- const spent=new Set(),ready=new Map(),outcomes=new Map();
- const outcome=status=>{if(current?.attemptKey){outcomes.set(current.attemptKey,status);while(outcomes.size>128)outcomes.delete(outcomes.keys().next().value)}};
+ const spent=new Set(),ready=new Map();
  const alive=saved=>saved.expiresAt===null||saved.expiresAt>now();
  const retentionMatches=(saved,result)=>saved.retention===(result.retention??null)&&(saved.expiresAt===null?result.expiresAt===null:result.expiresAt!==null);
  const remember=key=>{spent.add(key);while(spent.size>128)spent.delete(spent.values().next().value)};
- function suspend(){epoch++;candidate=null;restoring=null;if(request){outcome('cancelled');remember(request.key);request=null}}
- function invalidate(){if(current?.key)ready.delete(current.key);outcome('dismissed');suspend()}
+ function suspend(){epoch++;candidate=null;restoring=null;if(request){remember(request.key);request=null}}
+ function invalidate(){if(current?.key)ready.delete(current.key);suspend()}
  function observe(state,configRevision,eligible,{retainReady=false,recipient}={}){
   const nextScope=suggestionScope(state),witness=suggestionWitness(state),key=witness&&JSON.stringify([witness.key,configRevision,recipient]);
   const session=state?.sessions?.find(row=>row.id===state.selectedSessionId);
@@ -70,7 +69,7 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
   // semantic witness still invalidates visible stale text; only a new response
   // or explicit configuration/source selection can allocate inference again.
   const attemptKey=witness&&JSON.stringify([nextScope,deliveryScope(state,session),session.id,witness.lastMessageId,configRevision,recipient,session.nextMessageRevision??0,session.interruptionRevision??0]);
-  if(nextScope!==scope){scope=nextScope;spent.clear();ready.clear();outcomes.clear();suspend()}
+  if(nextScope!==scope){scope=nextScope;spent.clear();ready.clear();suspend()}
   for(const [savedKey,saved]of ready)if(Object.hasOwn(state?.conversationOrganization?.archived||{},saved.args.sessionId)||state?.sessions?.some(row=>row.id===saved.args.sessionId&&row.archived))ready.delete(savedKey);
   if(current&&current.sessionId===state?.selectedSessionId&&(current.key!==key||!eligible&&!retainReady))ready.delete(current.key);
   if(current?.key!==key||current?.eligible!==eligible)suspend();
@@ -82,50 +81,48 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
  return {
   observe,
   generation:()=>epoch,
-  status:()=>request?'pending':candidate&&!alive(candidate)?'expired':outcomes.get(current?.attemptKey)==='ready'&&!ready.has(current?.key)?'prior_attempt_unavailable':outcomes.get(current?.attemptKey)||(spent.has(current?.attemptKey)?'prior_attempt_unavailable':'idle'),
   forgetSession(sessionId){for(const [key,saved]of ready)if(saved.args.sessionId===sessionId)ready.delete(key);if(current?.sessionId===sessionId)suspend()},
   attempted:()=>!current?.key||spent.has(current.attemptKey),
-  nextRequest({regenerate=false}={}){
-   if(!current?.eligible||!current.witness||!canUse()||request||!regenerate&&(spent.has(current.attemptKey)||candidate))return null;
-   if(regenerate){ready.delete(current.key);suspend()}
-   outcome('pending');remember(current.attemptKey);request={key:current.attemptKey,epoch,expiresAt:now()+60000,args:{sessionId:current.witness.sessionId,requestId:requestId(),expectedLastMessageId:current.witness.lastMessageId,...(regenerate?{regenerate:true}:{})}};
+  nextRequest(){
+   if(!current?.eligible||!current.witness||!canUse()||request||spent.has(current.attemptKey)||candidate)return null;
+   remember(current.attemptKey);request={key:current.attemptKey,epoch,expiresAt:now()+60000,args:{sessionId:current.witness.sessionId,requestId:requestId(),expectedLastMessageId:current.witness.lastMessageId}};
    return request.args;
   },
   requestCurrent(args){return !!request&&request.args===args&&request.epoch===epoch&&current.eligible&&canUse()&&suggestionEligible(readState())&&suggestionWitness(readState())?.key===current.witness.key},
-  unavailable(args,status='prior_attempt_unavailable'){if(request?.args===args||!request&&outcomes.get(current?.attemptKey)==='pending'){outcome(status);request=null}},
+  unavailable(args){if(request?.args===args)request=null},
   receive(args,result){
    if(!this.requestCurrent(args)||result?.requestId!==args.requestId||result?.sessionId!==args.sessionId)return false;
-   if(result.status!=='pending'&&result.status!=='ready'){outcome(result.reason==='prior_attempt_unavailable'?result.reason:result.status||'failed');request=null;return false}
-   if(result.retention!=null&&result.retention!=='source'){outcome('failed');request=null;return false}
+   if(result.status!=='pending'&&result.status!=='ready'){request=null;return false}
+   if(result.retention!=null&&result.retention!=='source'){request=null;return false}
    if(result.configRevision!==current.configRevision||typeof result.sourceKey!=='string'||!result.sourceKey||request.sourceKey&&request.sourceKey!==result.sourceKey){request=null;return false}
    request.sourceKey=result.sourceKey;
    const sourceBound=result.status==='ready'&&result.retention==='source'&&result.expiresAt===null;
-   if(result.retention==='source'&&!sourceBound||result.status==='ready'&&result.expiresAt===null&&!sourceBound){outcome('failed');request=null;return false}
-   if(result.status==='pending'&&result.expiresAt===null){outcome('failed');request=null;return false}
+   if(result.retention==='source'&&!sourceBound||result.status==='ready'&&result.expiresAt===null&&!sourceBound){request=null;return false}
+   if(result.status==='pending'&&result.expiresAt===null){request=null;return false}
    if(result.expiresAt!=null){
     if(!Number.isFinite(result.expiresAt)){request=null;return false}
     request.expiresAt=Math.min(request.expiresAt,result.expiresAt);
    }
-   if(!sourceBound&&request.expiresAt<=now()){outcome('expired');request=null;return false}
+   if(!sourceBound&&request.expiresAt<=now()){request=null;return false}
    if(result.status==='pending')return true;
-   if(!suggestionText(result.suggestion)){outcome('failed');request=null;return false}
-   outcome('ready');candidate={text:suggestionText(result.suggestion),epoch,retention:result.retention??null,expiresAt:sourceBound?null:request.expiresAt,args:{sessionId:args.sessionId,requestId:args.requestId},sourceKey:result.sourceKey,configRevision:result.configRevision,validating:false,api:null};request=null;
+   if(!suggestionText(result.suggestion)){request=null;return false}
+   candidate={text:suggestionText(result.suggestion),epoch,retention:result.retention??null,expiresAt:sourceBound?null:request.expiresAt,args:{sessionId:args.sessionId,requestId:args.requestId},sourceKey:result.sourceKey,configRevision:result.configRevision,validating:false,api:null};request=null;
    ready.delete(current.key);ready.set(current.key,candidate);while(ready.size>32)ready.delete(ready.keys().next().value);return true;
   },
   async restore(){
    const key=current?.key,saved=ready.get(key),captured=epoch;
    const fresh=()=>ready.get(key)===saved&&current?.key===key&&epoch===captured&&current.eligible&&canUse()&&suggestionEligible(readState())&&suggestionWitness(readState())?.key===current.witness.key;
-   if(!saved||!fresh()||!alive(saved)||!readStatus){if(saved&&!alive(saved)){ready.delete(key);outcome('expired')}return false}
+   if(!saved||!fresh()||!alive(saved)||!readStatus){if(saved&&!alive(saved))ready.delete(key);return false}
    if(restoring?.saved===saved&&restoring.epoch===captured)return false;
    const operation={saved,epoch:captured};restoring=operation;
    // An explicit visit may inspect a prior ready attempt, never infer again.
    try{
     const result=await readStatus(saved.args,fresh);
     if(!fresh())return false;
-    if(result?.status!=='ready'||!retentionMatches(saved,result)||result.requestId!==saved.args.requestId||result.sessionId!==saved.args.sessionId||result.sourceKey!==saved.sourceKey||result.configRevision!==saved.configRevision||result.suggestion!==saved.text||result.expiresAt!=null&&!Number.isFinite(result.expiresAt)){ready.delete(key);outcome(result?.reason==='prior_attempt_unavailable'?result.reason:result?.status==='ready'?'stale':result?.status||'failed');return false}
+    if(result?.status!=='ready'||!retentionMatches(saved,result)||result.requestId!==saved.args.requestId||result.sessionId!==saved.args.sessionId||result.sourceKey!==saved.sourceKey||result.configRevision!==saved.configRevision||result.suggestion!==saved.text||result.expiresAt!=null&&!Number.isFinite(result.expiresAt)){ready.delete(key);return false}
     const expiresAt=saved.expiresAt===null?null:Math.min(saved.expiresAt,result.expiresAt??saved.expiresAt);
-    if(expiresAt!==null&&expiresAt<=now()){ready.delete(key);outcome('expired');return false}
-    candidate={...saved,epoch,expiresAt,api:null,validating:false};ready.delete(key);ready.set(key,candidate);outcome('ready');return true;
+    if(expiresAt!==null&&expiresAt<=now()){ready.delete(key);return false}
+    candidate={...saved,epoch,expiresAt,api:null,validating:false};ready.delete(key);ready.set(key,candidate);return true;
    }catch{return false}finally{if(restoring===operation)restoring=null}
   },
   candidate(){
@@ -160,6 +157,6 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
   },
   invalidate,
   suspend,
-  reset(){invalidate();scope=null;current=null;spent.clear();ready.clear();outcomes.clear()},
+  reset(){invalidate();scope=null;current=null;spent.clear();ready.clear()},
  };
 }
