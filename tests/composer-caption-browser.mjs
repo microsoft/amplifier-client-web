@@ -106,6 +106,10 @@ async function run(){
   if(url.pathname==='/api/view')return route.fulfill({json:{accepted:true}});
   if(url.pathname!=='/api/actions'){blocked.push(url.pathname);return route.abort()}
   const envelope=request.postDataJSON(),body=envelope.action==='shell.command'?(envelope.args.command||envelope.args):envelope;calls.push(body);
+  if(body.action==='theme.list'){
+   assert.deepEqual(body.args,{});
+   return route.fulfill({json:{accepted:true,result:{items:[],errors:[]}}});
+  }
   if(body.action==='conversation.send'){held.push({route,body});return}
   if(body.action==='conversation.delivery')return route.fulfill({json:{accepted:true,result:{
    delivery:'not_saved',message:'Fixture: no saved copy. Nothing was resent.'},state:shell.state()}});

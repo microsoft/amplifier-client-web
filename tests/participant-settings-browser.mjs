@@ -55,6 +55,25 @@ try{
   await expect(dialog).toHaveCount(0);
   await page.evaluate(()=>window.setParticipants(window.originalParticipants));
   await expect(trigger).toHaveAttribute('aria-expanded','false');
+  // With only a busy participant, the dialog itself is the focus destination;
+  // polling its options later must not unexpectedly refocus a control.
+  await page.evaluate(()=>window.setParticipants([{...window.originalParticipants[0],status:'working'}]));
+  await trigger.focus();await page.keyboard.press('Enter');await expect(dialog).toBeFocused();
+  await expect(dialog.getByRole('combobox',{name:'Effort',exact:true})).toBeDisabled();
+  await page.evaluate(()=>window.setParticipants([window.originalParticipants[0]]));
+  await expect(dialog.getByRole('combobox',{name:'Effort',exact:true})).toBeEnabled();
+  await expect(dialog).toBeFocused();
+  await page.keyboard.press('Escape');await expect(trigger).toBeFocused();
+  // A newer focus choice during portal placement is not an invitation to steal
+  // focus back into the menu when its ResizeObserver/effect settles.
+  await trigger.evaluate(node=>{
+   node.click();
+   document.querySelector('textarea[aria-label="Private draft"]').focus();
+  });
+  await expect(dialog).toBeVisible();
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  await expect(draft).toBeFocused();
+  await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);
   await expect(draft).toHaveValue('Keep this draft');assert.equal(await page.evaluate(()=>window.calls.length),1);
   await page.screenshot({path:out+'/participant-'+width+'.png'});await page.close();page=null;
  }

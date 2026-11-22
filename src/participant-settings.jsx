@@ -11,10 +11,21 @@ export function ParticipantSettings({session,act}){
  useEffect(()=>{
   if(open&&!selectedAgent)setOpen(false);
  },[open,selectedAgent]);
- const anchor=useRef(null);
+ const anchor=useRef(null),focusRequest=useRef(null);
  const {style,panelRef,renderPopover}=useComposerPopover(visible,anchor);
- function close(reason){setOpen(false);if(reason!=='outside')anchor.current?.querySelector('button')?.focus()}
+ function close(reason){focusRequest.current=null;setOpen(false);if(reason!=='outside')anchor.current?.querySelector('button')?.focus()}
  useOutsideDismiss(visible,anchor,close,panelRef);
+ useEffect(()=>{
+  if(!visible){focusRequest.current=null;return}
+  if(style.visibility!=='visible'||!panelRef.current||!focusRequest.current)return;
+  const request=focusRequest.current;focusRequest.current=null;
+  const document=request.trigger.ownerDocument;
+  // Only the explicit opening gesture owns focus. A newer focus choice made
+  // while the portal was being positioned wins over this deferred entry.
+  if(document.hidden||document.activeElement!==request.active)return;
+  const target=panelRef.current.querySelector('select:not(:disabled),button:not(:disabled)')||panelRef.current;
+  target.focus({preventScroll:true});
+ },[visible,style.visibility]);
  const agent=selectedAgent||agents[0];
  if(!agent)return null;
  const opts=agent.configOptions;
@@ -28,8 +39,8 @@ export function ParticipantSettings({session,act}){
   catch(e){setError(e.message)}finally{setPending(false)}
  }
  return <div className="a-model-control" ref={anchor}>
-  <button className="a-model-trigger" type="button" aria-label="Agent settings" aria-haspopup="dialog" aria-expanded={visible} onClick={()=>{if(visible){close();return}setSelected(agent.id);setError('');setOpen(true)}}><span>{label}</span></button>
-  {visible&&renderPopover(<section ref={panelRef} style={style} className="a-model-popover a-compact-popover a-composer-options-panel" role="dialog" aria-label="Agent settings">
+  <button className="a-model-trigger" type="button" aria-label="Agent settings" aria-haspopup="dialog" aria-expanded={visible} onClick={event=>{if(visible){close();return}const trigger=event?.currentTarget;focusRequest.current=trigger?{trigger,active:trigger.ownerDocument.activeElement}:null;setSelected(agent.id);setError('');setOpen(true)}}><span>{label}</span></button>
+  {visible&&renderPopover(<section ref={panelRef} style={style} className="a-model-popover a-compact-popover a-composer-options-panel" role="dialog" aria-label="Agent settings" tabIndex={-1}>
    {agents.length>1&&<label>Agent<select aria-label="Agent" value={agent.id} disabled={pending} onChange={e=>{setSelected(e.target.value);setError('')}}>{agents.map(a=><option key={a.id} value={a.id}>{a.label||a.id}</option>)}</select></label>}
    {opts.map(option=>option.id==='history-reuse'&&option.options.some(c=>c.value==='restore')?
     <button key={option.id} type="button" className="a-link" disabled={blocked} onClick={()=>change(option,'restore')}>{option.options.find(c=>c.value==='restore').name}</button>:
