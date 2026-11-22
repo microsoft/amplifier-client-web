@@ -26,12 +26,20 @@ const edit=(root,label,value)=>act(async()=>control(root,label).props.onChange({
 const click=(root,label)=>act(async()=>button(root,label).props.onClick());
 const submit=(root,copy=false)=>act(async()=>root.root.findByType('form').props.onSubmit({preventDefault(){},nativeEvent:{submitter:{value:copy?'copy':''}}}));
 
-async function fixture({selected='builtin',items=[builtin,custom],save,compact=false,failReload=false}={}){
+async function fixture({selected='builtin',items=[builtin,custom],save,remove,list,compact=false,failReload=false}={}){
  let root,guard,listReads=0,updateState,catalog={items:structuredClone(items),bundles:[{value:'work',label:'Work'},{value:'other',label:'Other'}]};
  const calls=[],routes=[],focus=[];
  const dispatch=async(action,args,meta)=>{
-  if(action==='workspace.starters.list'){if(failReload&&listReads++)throw Error('List unavailable');return ok(catalog)}
+  if(action==='workspace.starters.list'){
+   listReads++;if(failReload&&listReads>1)throw Error('List unavailable');
+   return list?list(catalog,listReads):ok(catalog);
+  }
   calls.push(structuredClone({action,args,meta}));
+  if(action==='workspace.starters.remove'&&remove){
+   const response=await remove(args,meta);
+   if(response?.accepted)catalog={...catalog,items:catalog.items.filter(row=>row.id!==args.id)};
+   return response;
+  }
   assert.equal(action,'workspace.starters.save','Copy must save the edited draft, not duplicate or remove the stored definition');
   const response=save?await save(args,meta,calls.length):ok({...args.starter,id:args.id||'saved-copy',revision:args.id?args.expectedRevision+1:1,builtIn:false});
   if(response?.accepted&&response.result?.id){
@@ -288,5 +296,45 @@ test('compact actions target the editor form and retain accessible field labels'
   for(const label of ['Starter name','Description','Workspace bundle default','Agent instructions']){
    const input=control(f.root,label);assert.ok(input.props.id);
   }
+ }finally{await f.clean()}
+});
+
+test('starter row selection remains explicitly disabled through delete and its catalog refresh',async()=>{
+ let finishDelete,finishList;
+ const f=await fixture({selected:'custom',
+  remove:()=>new Promise(resolve=>{finishDelete=()=>resolve(ok({removed:true}))}),
+  list:(catalog,count)=>count===2?new Promise(resolve=>{finishList=()=>resolve(ok(catalog))}):ok(catalog)});
+ const row=()=>f.root.root.findByProps({'data-collection-id':'builtin'}).findByType('button');
+ try{
+  await click(f.root,'Delete this starter');await click(f.root,'Delete starter');
+  assert.equal(row().props['aria-disabled'],true,'A row must not appear available while its handler refuses selection');
+  const before=f.routes.length;
+  await act(async()=>row().props.onClick({preventDefault(){}}));
+  assert.equal(f.routes.length,before,'No selection intent is queued while deleting');
+  await act(async()=>finishDelete());
+  assert.equal(row().props['aria-disabled'],true,'The confirmed delete does not unlock selection before catalog refresh');
+  assert.equal(f.root.root.findByProps({'data-part':'workspace-starters'}).props['aria-busy'],true);
+  await act(async()=>row().props.onClick({preventDefault(){}}));
+  const routesBeforeRefresh=f.routes.length;
+  await act(async()=>finishList());
+  assert.equal(f.routes.length,routesBeforeRefresh,'Refresh must not replay the attempted selection');
+  assert.notEqual(row().props['aria-disabled'],true);
+  await act(async()=>row().props.onClick());
+  assert.equal(f.routes.at(-1).workspaceStarterEditor.id,'builtin');
+  assert.deepEqual(f.calls.map(call=>call.action),['workspace.starters.remove']);
+ }finally{await f.clean()}
+});
+
+test('uncertain starter save visibly locks row selection without discarding draft or replaying',async()=>{
+ const f=await fixture({selected:'custom',save:async()=>{throw Error('Unconfirmed save')}});
+ try{
+  await edit(f.root,'Description','Keep my unsent edit');await submit(f.root);
+  const row=f.root.root.findByProps({'data-collection-id':'builtin'}).findByType('button');
+  assert.equal(row.props['aria-disabled'],true);
+  await act(async()=>row.props.onClick({preventDefault(){}}));
+  assert.equal(control(f.root,'Description').props.value,'Keep my unsent edit');
+  assert.equal(f.calls.length,1);
+  assert.ok(button(f.root,'Check the same save'));
+  assert.equal(f.guard.hasUnsaved(),true);
  }finally{await f.clean()}
 });
