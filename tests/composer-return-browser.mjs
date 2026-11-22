@@ -48,7 +48,9 @@ async function compactHelpLayout(page,composer,expectedHelp,scenario){
   const rect=node=>{const {x,y,width,height}=node.getBoundingClientRect();return {x,y,width,height};};
   const field=el.querySelector('[role="textbox"]'),form=el.closest('form'),help=form.querySelector('[data-part="composer-return-help"]');
   const layout=el.closest('[data-part="workspace"]'),navigation=layout.querySelector('#workspace-navigation');
+  const model=el.querySelector('.a-model-trigger'),modelBox=rect(model);
   return {surface:rect(el),editor:rect(field),help:rect(help),configuration:rect(form.querySelector('.a-compose-configuration')),
+   model:{...modelBox,hit:model.contains(document.elementFromPoint(modelBox.x+modelBox.width/2,modelBox.y+modelBox.height/2))},
    finePointer:matchMedia('(pointer:fine)').matches,
    narrowConversation:el.closest('.a-conversation').clientWidth<=360,
    actionButtons:[...el.querySelectorAll('.a-compose-add>button,.a-compose-end>button,.a-dictation>button')].filter(button=>button.getClientRects().length).map(rect),
@@ -85,11 +87,18 @@ async function compactHelpLayout(page,composer,expectedHelp,scenario){
   assert.equal(geometry.helpStyle.hidden,false);assert.notEqual(geometry.helpStyle.display,'none');assert.notEqual(geometry.helpStyle.visibility,'hidden');
   assert.ok(geometry.configuration.y>=geometry.editor.y+geometry.editor.height-1,'Model/configuration controls occupy the row below writing');
   assert.ok(geometry.configuration.y+geometry.configuration.height<=geometry.surface.y+geometry.surface.height,'Configuration is inside the shared surface');
+  assert.ok(geometry.model.width>=actionHeight&&geometry.model.height>=actionHeight,'Model settings minimum target follows the primary pointer');
+  assert.ok(Math.abs(geometry.model.width-actionHeight)<=1,'The short model label keeps the precise pointer minimum, not a wider fixed control');
+  assert.equal(geometry.model.hit,true,'Model settings remains an actual hit target');
+  const horizontalFrame=geometry.narrowConversation?12:14;
+  assert.ok(Math.abs(geometry.editor.width-(geometry.surface.width-horizontalFrame))<=1,'The writing row retains its full width');
+  assert.ok(geometry.model.x>=geometry.configuration.x&&geometry.model.x+geometry.model.width<=geometry.configuration.x+geometry.configuration.width,'Model stays inside its configuration cell');
   assert.ok(geometry.actionButtons.length>=2,'Frequent add/primary actions remain present');
   for(const box of geometry.actionButtons){
    assert.ok(box.width>=actionHeight&&box.height>=actionHeight,'Frequent actions retain 44px coarse-pointer or 32px fine-pointer targets');
    assert.ok(Math.abs(box.y+box.height/2-(geometry.configuration.y+geometry.configuration.height/2))<=1,'Action and model controls share one aligned row');
    assert.ok(box.x>=geometry.surface.x&&box.x+box.width<=geometry.surface.x+geometry.surface.width+1);
+   assert.ok(box.x+box.width<=geometry.model.x||box.x>=geometry.model.x+geometry.model.width,'Model never overlaps an adjacent action');
   }
  };
  const originalViewport=page.viewportSize();
@@ -99,6 +108,16 @@ async function compactHelpLayout(page,composer,expectedHelp,scenario){
   const geometry=await measure();compactGeometry.push({scenario,width,...geometry});
   check(geometry);
  }
+ // A short label must not be allowed to shrink below the pointer target.
+ const model=surface.locator('.a-model-trigger'),modelStyle=await model.getAttribute('style');
+ try{
+  await model.evaluate(node=>{node.style.minWidth='0';node.style.width='30px'});
+  const broken=await measure();
+  assert.ok(broken.model.width<32);
+  assert.throws(()=>check(broken),/Model settings minimum target/);
+  compactGeometry.push({scenario,negativeControl:'undersized model target',rejected:true,...broken});
+ }finally{await model.evaluate((node,value)=>value===null?node.removeAttribute('style'):node.setAttribute('style',value),modelStyle)}
+ check(await measure());
  // The former visible-help requirement was explicitly replaced by the user.
  // Restore that caption temporarily: the same no-visible-hint/no-spacer oracle
  // must reject it without changing the accepted two-row geometry checks.
@@ -124,7 +143,7 @@ try{
   try{
    const page=await context.newPage(),calls=[],errors=[];
    activePage=page;
-   const state={revision:1,settings:{workspace:'/fixture'},runtime:{available:true},view:{navPinned:true},sessions:[{id:'chat',title:'Return fixture',sessionKind:'root',workspace:'/fixture',workspaceId:'project',status:'idle',historyManaged:true,historyLoaded:true,messages:[],workers:[]}],workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:'chat',selectedWorkspaceId:'project',setup:{providers:[{id:'fixture',module:'provider-fixture',config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false}};
+   const state={revision:1,settings:{workspace:'/fixture'},runtime:{available:true},view:{navPinned:true},sessions:[{id:'chat',title:'Return fixture',sessionKind:'root',workspace:'/fixture',workspaceId:'project',status:'idle',selection:{instance:'fixture',model:'x'},historyManaged:true,historyLoaded:true,messages:[],workers:[]}],workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:'chat',selectedWorkspaceId:'project',setup:{providers:[{id:'fixture',module:'provider-fixture',config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false}};
    const shell=createShellHttpFixture(()=>state);
    page.on('pageerror',error=>errors.push(error.message));
    await page.addInitScript(installFixtureEvents);
