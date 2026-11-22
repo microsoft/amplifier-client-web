@@ -145,6 +145,7 @@ async function menuRegression({page,scenario,readState,emit}){
   await page.evaluate(()=>delete navigator.clipboard);
   readState().sessions[0]=original;await emit();await expect(notice).toBeEmpty();
   readState().selectedSessionId=null;await emit();await expect(trigger).toHaveCount(0);
+  await expect(page.getByRole('combobox',{name:'Agent for new chat',exact:true})).toBeEnabled();
   readState().selectedSessionId=original.id;await emit();await expect(trigger).toHaveCount(1);
   proof.syntheticClipboard=['pending','stale rejection','managed runtime ID','denied','failed','unavailable','new draft'];
  }
@@ -168,8 +169,11 @@ async function menuRegression({page,scenario,readState,emit}){
   });
  }
  // Entering New chat during the owner-reset probe reads the agent catalog.
- // Exempt only this exact passive read, not other external-agent operations.
- for(const call of calls.slice(start).filter(call=>call.action==='externalAgents.list'))assert.deepEqual(call.args,{});
+ // Exempt only one settled read from that phase, not reads during disclosures
+ // or other external-agent operations.
+ const catalogReads=proof.actionTrace.filter(row=>row.call.action==='externalAgents.list');
+ assert.equal(catalogReads.length,['desktop-320','mobile-390'].includes(scenario.name)?1:0);
+ for(const {phase,call} of catalogReads){assert.equal(phase,'clipboard-owner-reset');assert.deepEqual(call.args,{})}
  const interactive=rows=>rows.filter(call=>!['shell.report','externalAgents.list'].includes(call.action)).map(({action,args})=>({action,args}));
  assert.deepEqual(interactive(calls.slice(copyStart)),[],
   'Chat menu disclosure/copy never dispatches an interactive action or changes selection/model/draft: '+actionEvidence);

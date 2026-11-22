@@ -16,6 +16,7 @@ const calls=[],workers=[],folders=[],errors=[],handoffReads=[],handoffMutations=
 const shell=createShellHttpFixture(()=>state);
 const draftScope=JSON.stringify([shell.state().client.historyScope||shell.state().client.hostInstanceId,null,null]);
 const action=(name,args={})=>page.evaluate(([name,args])=>window.amplifier.dispatch(name,args),[name,args]);
+const normalizeAction=raw=>raw.action==='shell.command'?{...raw,action:raw.args.action,args:raw.args.args}:raw.action==='shell.view.update'?{...raw,action:'view.update'}:raw;
 const reply=(route,extra={})=>{state.revision++;return route.fulfill({json:{accepted:true,state:shell.state(),...extra}})};
 try{
  vite=await createServer({configFile:false,root:fileURLToPath(new URL('../',import.meta.url)),server:{host:'127.0.0.1',port:0,hmr:false},optimizeDeps:{include:['react','react-dom/client','react/jsx-dev-runtime']}});await vite.listen();
@@ -40,7 +41,7 @@ try{
   if(path==='/api/actions'&&route.request().method()==='GET')return route.fulfill({json:[]});
   if(path!=='/api/actions')return route.fulfill({json:{ok:true}});
   const original=route.request().postDataJSON();calls.push(original);
-  const body=original.action==='shell.command'?{...original,action:original.args.action,args:original.args.args}:original.action==='shell.view.update'?{...original,action:'view.update'}:original;
+  const body=normalizeAction(original);
   if(body.action==='externalAgents.list'){
    assert.deepEqual(body.args,{});
    return route.fulfill({json:{accepted:true,result:{agents:[]}}});
@@ -89,7 +90,7 @@ try{
  const closed=page.locator('details').filter({has:page.locator('summary').filter({hasText:'Closed delivery items (1)'})});
  await closed.locator('summary').click();await expect(closed.getByText('Hi!',{exact:true})).toBeVisible();
  await closed.locator('summary').click();
- assert.equal(calls.filter(row=>['conversation.send','conversation.retry','session.create'].includes(row.action)).length,0,'Closing and inspecting the retained original never sends it again');
+ assert.equal(calls.map(normalizeAction).filter(row=>['conversation.send','conversation.retry','session.create'].includes(row.action)).length,0,'Closing and inspecting the retained original never sends it again');
  await composer.fill('Start fresh');await page.getByRole('button',{name:'Send message',exact:true}).click();
  await expect(page.getByText('Workspace folder does not exist: /missing',{exact:true})).toBeVisible();
  await expect(page.getByRole('banner')).toContainText('New chat');
@@ -267,7 +268,7 @@ try{
  await handoffReads.shift().route.fulfill({json:{accepted:true,result:{...baseline,requestId:'unknown',revision:7}}});
  await expect(receipt('unknown')).toHaveCount(0);
  await expect(composer).toBeFocused();await expect(composer).toHaveDraft('Keep this source draft');
- const handoffActions=()=>calls.slice(startHandoffCalls).map(raw=>raw.action==='shell.command'?{...raw,action:raw.args.action,args:raw.args.args}:raw);
+ const handoffActions=()=>calls.slice(startHandoffCalls).map(normalizeAction);
  assert.deepEqual(handoffActions().filter(row=>row.action.startsWith('session.handoff.')).map(row=>row.action),
   ['session.handoff.read','session.handoff.read','session.handoff.read','session.handoff.read']);
  assert.equal(handoffActions().filter(row=>/^(conversation\.(send|retry)|session\.(create|select)|worker\.spawn)$/.test(row.action)).length,0);
