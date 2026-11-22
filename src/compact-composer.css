@@ -31,7 +31,7 @@
 #amp-one .a-compact-composer .a-compose-stop{min-height:44px;margin-right:auto;flex:none;padding:6px 10px;font-size:var(--a-text-sm,13px)}
 #amp-one .a-compact-composer .a-compose-configuration>.a-model-control{display:flex;align-items:center;min-width:0;max-width:100%}
 #amp-one.a-chat-shell .a-compact-composer .a-model-trigger{
- display:inline-flex;align-items:center;line-height:1.25;min-height:44px;max-width:100%;color:var(--a-muted);font-size:var(--a-text-sm,13px);padding:6px 8px;
+ display:inline-flex;align-items:center;line-height:1.25;min-width:44px;min-height:44px;max-width:100%;color:var(--a-muted);font-size:var(--a-text-sm,13px);padding:6px 8px;
 }
 #amp-one.a-chat-shell .a-compact-composer .a-model-trigger>span{max-width:100%;min-width:0}
 #amp-one.a-chat-shell .a-compact-composer .a-model-trigger>svg{flex:none}
@@ -78,6 +78,7 @@
 @media(pointer:fine){
  #amp-one.a-chat-shell .a-compact-composer :is(.a-compose-add>.a-icon,.a-compose-end>.a-send,.a-compose-end>.a-dictation>button){width:32px;min-width:32px;height:32px;min-height:32px;padding:6px}
  #amp-one.a-chat-shell .a-compact-composer :is(.a-model-trigger,.a-compose-stop){min-height:32px}
+ #amp-one.a-chat-shell .a-compact-composer .a-model-trigger{min-width:32px}
 }
 
 #amp-one .a-compact-composer .a-context-shortcut{display:inline-flex;align-items:center;gap:3px;flex:none}
