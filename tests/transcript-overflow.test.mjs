@@ -209,6 +209,43 @@ test('overflow reporting leaves submitted anchors, call following and reading in
  h.controller.dispose();
 });
 
+test('a temporarily unreachable reading offset survives a pane reflow round trip',()=>{
+ const row=message('reading',32,1200),h=harness({messages:[row],scrollHeight:1300});
+ h.controller.select('alpha');h.settle();h.scrollTo(0);
+ const offset=row.getBoundingClientRect().top;
+ // A narrow pane reduces top padding. The old offset would require negative
+ // scrollTop, so opening can only reach the boundary; closing can restore it.
+ row.contentTop=18;h.controller.update();h.settle();
+ assert.equal(h.pane.scrollTop,0);
+ assert.equal(row.getBoundingClientRect().top,18);
+ h.pane.dispatchEvent(new Event('scroll'));h.flushFrames();
+ row.contentTop=32;h.controller.update();h.settle();
+ assert.equal(row.getBoundingClientRect().top,offset,'A clamped intermediate layout is not a new reading choice');
+ assert.equal(h.pane.scrollTop,0);
+ assert.equal(h.following.current,false);
+ h.controller.dispose();
+});
+
+test('new reading movement supersedes an offset that was clamped by pane reflow',()=>{
+ for(const intent of ['wheel','touchmove','keydown','scrollbar']){
+  const row=message('reading',32,1200),h=harness({messages:[row],scrollHeight:1300});
+  h.controller.select('alpha');h.settle();h.scrollTo(0);
+  row.contentTop=18;h.controller.update();h.settle();
+  if(intent!=='scrollbar'){
+   const event=new Event(intent);
+   Object.assign(event,{deltaY:80,key:'PageDown'});
+   // The keyboard handler checks whether the target is an editor.
+   h.pane.closest=()=>null;h.pane.dispatchEvent(event);
+  }
+  h.scrollTo(80);const latest=row.getBoundingClientRect().top;
+  row.contentTop=32;h.controller.update();h.settle();
+  assert.equal(row.getBoundingClientRect().top,latest,intent+': latest reading choice wins over the opener');
+  assert.equal(h.pane.scrollTop,94);
+  assert.equal(h.following.current,false);
+  h.controller.dispose();
+ }
+});
+
 test('mounted inactive, external and disconnected iframe hosts do not suppress fades',()=>{
  const h=harness(),wrapper=append(h.pane,element('article')),iframe=append(wrapper,element('iframe'));
  h.controller.select('alpha');h.settle();h.flushFrames();
