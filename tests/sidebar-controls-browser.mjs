@@ -167,7 +167,10 @@ async function menuRegression({page,scenario,readState,emit}){
    'core.canvas.toolbar':'inactive','core.settings.appearance':'inactive',
   });
  }
- const interactive=rows=>rows.filter(call=>call.action!=='shell.report').map(({action,args})=>({action,args}));
+ // Entering New chat during the owner-reset probe reads the agent catalog.
+ // Exempt only this exact passive read, not other external-agent operations.
+ for(const call of calls.slice(start).filter(call=>call.action==='externalAgents.list'))assert.deepEqual(call.args,{});
+ const interactive=rows=>rows.filter(call=>!['shell.report','externalAgents.list'].includes(call.action)).map(({action,args})=>({action,args}));
  assert.deepEqual(interactive(calls.slice(copyStart)),[],
   'Chat menu disclosure/copy never dispatches an interactive action or changes selection/model/draft: '+actionEvidence);
  assert.deepEqual(interactive(calls.slice(start)),scenario.touch?[{action:'view.update',args:{patch:{navExpanded:false}}}]:[],
@@ -603,6 +606,10 @@ try{
    if(path==='/api/actions'){
     const envelope=request.postDataJSON(),body=envelope.action==='shell.command'?(envelope.args.command||envelope.args):envelope;calls.push(body);
     if(activeMenuProof)activeMenuProof.actionTrace.push({phase:menuPhase,callIndex:calls.length-1,call:body,envelope});
+    if(body.action==='externalAgents.list'){
+     assert.deepEqual(body.args,{});
+     return route.fulfill({json:{accepted:true,result:{agents:[]}}});
+    }
     if(body.action==='conversation.stop'){
      assert.ok(scenario.name==='desktop-320'&&stopGuard.armed&&explicitStops.length===0,'Only the explicit fixture Stop is allowed');
      assert.deepEqual(body.args,{sessionId:'chat'});stopGuard.armed=false;explicitStops.push(body);

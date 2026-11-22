@@ -41,6 +41,10 @@ try{
   if(path!=='/api/actions')return route.fulfill({json:{ok:true}});
   const original=route.request().postDataJSON();calls.push(original);
   const body=original.action==='shell.command'?{...original,action:original.args.action,args:original.args.args}:original.action==='shell.view.update'?{...original,action:'view.update'}:original;
+  if(body.action==='externalAgents.list'){
+   assert.deepEqual(body.args,{});
+   return route.fulfill({json:{accepted:true,result:{agents:[]}}});
+  }
   if(body.action==='session.handoff.read'){handoffReads.push({route,body});return}
   if(['session.handoff.confirm','session.handoff.cancel'].includes(body.action)){handoffMutations.push({route,body});return}
   if(body.action==='session.select'){
@@ -74,10 +78,18 @@ try{
  assert.equal(await page.evaluate(()=>window.amplifier.getState().selectedSessionId),null);
  assert.equal(await page.evaluate(()=>JSON.parse(sessionStorage.getItem('amplifier.messageOutbox.v1'))[0].scope),draftScope);
  await expect(page.getByText('Old workspace unavailable',{exact:true})).toBeVisible();
- await page.getByRole('button',{name:'Discard unsent message',exact:true}).click();
- await expect(page.getByText('Hi!',{exact:true})).toHaveCount(0);await page.reload();await composer.waitFor();
- await expect(page.getByText('Hi!',{exact:true})).toHaveCount(0);
- assert.equal(calls.filter(row=>['conversation.send','session.create'].includes(row.action)).length,0,'Discard is local only');
+ const outbox=()=>page.evaluate(()=>JSON.parse(sessionStorage.getItem('amplifier.messageOutbox.v1')));
+ const originalSubmission=(await outbox())[0];
+ await page.getByRole('button',{name:'Close delivery item',exact:true}).click();
+ await expect(page.locator('[data-input-id="old-command"]')).toHaveCount(0);
+ assert.deepEqual(await outbox(),[{...originalSubmission,closed:true}],'Close retains the exact original submission, without claiming delivery');
+ await page.reload();await composer.waitFor();
+ await expect(page.locator('[data-input-id="old-command"]')).toHaveCount(0);
+ assert.deepEqual(await outbox(),[{...originalSubmission,closed:true}],'Closed submission survives reload');
+ const closed=page.locator('details').filter({has:page.locator('summary').filter({hasText:'Closed delivery items (1)'})});
+ await closed.locator('summary').click();await expect(closed.getByText('Hi!',{exact:true})).toBeVisible();
+ await closed.locator('summary').click();
+ assert.equal(calls.filter(row=>['conversation.send','conversation.retry','session.create'].includes(row.action)).length,0,'Closing and inspecting the retained original never sends it again');
  await composer.fill('Start fresh');await page.getByRole('button',{name:'Send message',exact:true}).click();
  await expect(page.getByText('Workspace folder does not exist: /missing',{exact:true})).toBeVisible();
  await expect(page.getByRole('banner')).toContainText('New chat');
@@ -88,7 +100,7 @@ try{
  await expect(page.getByText('Start fresh',{exact:true})).toHaveCount(1);
  await expect(page.getByRole('banner')).toContainText('Created conversation');
  assert.equal(await page.evaluate(()=>window.amplifier.getState().selectedSessionId),'created');
- await page.waitForFunction(()=>JSON.parse(sessionStorage.getItem('amplifier.messageOutbox.v1')).length===0);
+ await expect.poll(outbox).toEqual([{...originalSubmission,closed:true}]);
  assert.equal(calls.filter(row=>row.action==='conversation.send').length,1);
  assert.deepEqual(calls.filter(row=>row.action==='session.create').map(row=>row.args.workspace),['/missing','/existing']);
  const creations=calls.filter(row=>row.action==='session.create');
@@ -350,6 +362,6 @@ try{
  assert.equal(handoffActions().filter(row=>/^(conversation\.(send|retry)|session\.create)$/.test(row.action)).length,0);
  assert.deepEqual(externalRequests,[]);
  assert.deepEqual(errors,[]);
- console.log('New chat recovery passed: truthful new-chat header; scoped persisted failed-message discard; inline creation error; corrected-path retry sends once; worker reset and newer drafts retained; modal error dismissal; no settled handoff UI or shell at 320/1280px; unresolved review/details and keyboard continuation; exact read/confirm/cancel settle ahead of older stream without recovery GETs or replay; stale read ordering; known-target delayed rejection/unknown and actual dirty-guard decline keep errors and drafts; explicit navigation only. Zero model calls.');
+ console.log('New chat recovery passed: truthful new-chat header; scoped closed delivery item retains exact original through reload without replay; inline creation error; corrected-path retry sends once; worker reset and newer drafts retained; modal error dismissal; no settled handoff UI or shell at 320/1280px; unresolved review/details and keyboard continuation; exact read/confirm/cancel settle ahead of older stream without recovery GETs or replay; stale read ordering; known-target delayed rejection/unknown and actual dirty-guard decline keep errors and drafts; explicit navigation only. Zero model calls.');
 }catch(error){console.error('Recovery fixture evidence:',JSON.stringify({errors,body:await page?.locator('body').innerText().catch(()=>''),actions:calls.map(row=>({action:row.action,id:row.id}))}));throw error}
 finally{await browser?.close();await vite?.close()}
