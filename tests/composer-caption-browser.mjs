@@ -32,11 +32,12 @@ const composer=()=>page.getByRole('textbox',{name:'Message Amplifier',exact:true
 const status=()=>page.locator('.a-composer .a-sr-only[role="status"]');
 const primary=()=>page.locator('[data-part="composer-primary-action"]');
 const sendCount=()=>calls.filter(row=>row.action==='conversation.send').length;
-const geometry=async()=>{
+const geometry=async(withStop=false)=>{
  const elements={surface:page.locator('[data-part="composer-surface"]'),controls:page.locator('.a-compose-configuration'),primary:primary(),
   attachment:page.getByRole('button',{name:'Add attachments',exact:true}),
   providerModel:page.getByRole('button',{name:'Model and reasoning settings',exact:true}),
   providerModelLabel:page.getByRole('button',{name:'Model and reasoning settings',exact:true}).locator('span')};
+ if(withStop)elements.stop=page.getByRole('button',{name:'Stop response',exact:true});
  const result={};
  for(const [name,element] of Object.entries(elements)){
   await expect(element).toBeVisible();const box=await element.boundingBox();
@@ -45,10 +46,22 @@ const geometry=async()=>{
  }
  return result;
 };
-const aligned=(idle,actual,phase)=>{
+const aligned=(idle,actual,phase,{withStop=false}={})=>{
  for(const name of Object.keys(idle))for(const axis of ['x','y','width','height'])
+  // Accepted PR99 keeps the whole action row stable, but Stop's auto margin
+  // places Model at the trailing end of its existing configuration cell.
+  if(!(withStop&&axis==='x'&&['providerModel','providerModelLabel'].includes(name)))
   assert.ok(Math.abs(actual[name][axis]-idle[name][axis])<=1,
    `${phase}: ${name}.${axis} shifted ${actual[name][axis]-idle[name][axis]} CSS px`);
+ if(withStop){
+  const {stop,providerModel:model,providerModelLabel:label,controls,primary,attachment}=actual;
+  assert.ok(stop.width>=44&&stop.height>=44,'Stop retains its touch target');
+  assert.ok(Math.abs(stop.y+stop.height/2-primary.y-primary.height/2)<=1,'Stop shares the stable action-row center');
+  assert.ok(stop.x>=controls.x&&stop.x+stop.width<=model.x,'Stop and Model do not overlap');
+  assert.ok(attachment.x+attachment.width<=stop.x&&model.x+model.width<=primary.x,'All actions remain in their original cells');
+  assert.ok(Math.abs(model.x+model.width-(controls.x+controls.width-2))<=1,'Model follows the accepted trailing edge inside the 2px-padded configuration cell');
+  assert.ok(Math.abs(label.x-model.x-(idle.providerModelLabel.x-idle.providerModel.x))<=1,'Moving Model retains its label inset');
+ }
 };
 async function accessibleSending(){
  await expect(status()).toHaveText('Sending message…');
@@ -175,8 +188,18 @@ async function run(){
   row.keyboard=await geometry();aligned(row.idle,row.keyboard,'keyboard '+width);await snap(width+'-sending');
   state.sessions[0].status='working';await emit();
   await expect(page.locator('.a-live-activity')).toBeVisible();
-  row.working=await geometry();aligned(row.idle,row.working,'working '+width);await snap(width+'-working');
+  row.working=await geometry(true);aligned(row.idle,row.working,'working '+width,{withStop:true});
+  for(const name of ['Stop response','Model and reasoning settings']){
+   const hit=await page.getByRole('button',{name,exact:true}).evaluate(node=>{const r=node.getBoundingClientRect();return node.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))});
+   assert.equal(hit,true,name+' stays hit-testable');
+  }
+  const shifted=structuredClone(row.working);shifted.providerModel.y+=2;
+  assert.throws(()=>aligned(row.idle,shifted,'vertical negative',{withStop:true}),'Model cannot jump vertically with Stop');
+  const overlapped=structuredClone(row.working);overlapped.stop.width=overlapped.controls.width;
+  assert.throws(()=>aligned(row.idle,overlapped,'overlap negative',{withStop:true}),'Stop cannot cover Model');
+  await snap(width+'-working');
   state.sessions[0].status='idle';await emit();await expect(page.locator('.a-live-activity')).toHaveCount(0);
+  row.afterWorking=await geometry();aligned(row.idle,row.afterWorking,'after working '+width);
   const failure='Fixture send rejection '+width;
   await item.route.fulfill({status:409,json:{accepted:false,error:failure}});
   const bubble=page.locator('.a-user').filter({hasText:text});
