@@ -1,5 +1,5 @@
 import React,{createContext,useContext,useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react';
-import {request,recentRequestTimings} from '../api';
+import {request,recentRequestTimings,onAuthenticationChange} from '../api';
 import {transportFailure} from '../connection-notice.js';
 import {WorkspaceManager,ConversationList} from './navigation-components';
 import './shell.css';
@@ -35,21 +35,31 @@ export function useShell(state,dispatch,clientId,displayState=state,connection={
  const latest=useRef({data:null,bootstrap:null,dispatch}),hosts=useRef(new Map()),inflight=useRef(null);
  const demand=useRef({id:0,key:null}),synced=useRef(0),diagnostics=useRef(null),alive=useRef(true),reconnectAfter=useRef(null);
  const [reconnectTick,setReconnectTick]=useState(0);
+ const [authenticationTick,setAuthenticationTick]=useState(0),readingOwner=useRef({principal:state?.client?.historyScope,tick:0,epoch:0});
+ if(readingOwner.current.principal!==state?.client?.historyScope||readingOwner.current.tick!==authenticationTick)
+  readingOwner.current={principal:state?.client?.historyScope,tick:authenticationTick,epoch:readingOwner.current.epoch+1};
+ const readingEpoch=readingOwner.current.epoch;
+ useEffect(()=>onAuthenticationChange(()=>{
+  const next={...readingOwner.current,tick:readingOwner.current.tick+1,epoch:readingOwner.current.epoch+1};readingOwner.current=next;
+  latest.current.readingEpoch=next.epoch;
+  for(const record of hosts.current.values()){record.snapshot=freeze({...empty,navigationReadingOwner:next.epoch});record.acknowledgedView=null;record.listeners.forEach(fn=>fn())}
+  hosts.current.clear();setAuthenticationTick(next.tick);
+ }),[]);
  if(!diagnostics.current)diagnostics.current=createShellDiagnostics();
  const [visible,setVisible]=useState(()=>!document.hidden);
  const navigationNarrow=useNarrowScreen(NAVIGATION_NARROW_QUERY);
  const supportsStatus=!data?.resolvedInstances||data.resolvedInstances.some(row=>row.package==='builtin.chats');
- const resources=visible?navigationResources(state,navigationExpanded(state?.view,navigationNarrow),supportsStatus):[],scope=shellScope(state),demandKey=JSON.stringify([scope,resources]);
+ const resources=visible?navigationResources(state,navigationExpanded(state?.view,navigationNarrow),supportsStatus):[],scope=shellScope(state),demandKey=JSON.stringify([readingEpoch,scope,resources]);
  if(demand.current.key!==demandKey)demand.current={id:demand.current.id+1,key:demandKey,scope,resources};
- latest.current={...latest.current,dispatch,state:displayState,authoritative:state,connection,visible,demand:demand.current};
+ latest.current={...latest.current,dispatch,state:displayState,authoritative:state,connection,visible,demand:demand.current,readingEpoch};
  const publish=useCallback(next=>{
-  const snapshots={...next.snapshots};
+  const snapshots=Object.fromEntries(Object.entries(next.snapshots).map(([id,snapshot])=>[id,{...snapshot,navigationReadingOwner:latest.current.readingEpoch}]));
   for(const host of hosts.current.values()){
    const raw=snapshots[host.id];
    if(!raw||raw.generation!==host.generation)continue;
    if(host.acknowledgedView)snapshots[host.id]={...raw,view:host.acknowledgedView.view,viewRevision:host.acknowledgedView.viewRevision};
   }
-  next=retainEqual(latest.current.data,{...next,snapshots});
+  next=retainEqual(latest.current.data,{...next,snapshots,navigationReadingOwner:latest.current.readingEpoch});
   latest.current.data=next;setData(next);
   for(const host of hosts.current.values()){
    const raw=next.snapshots?.[host.id]||empty;
@@ -60,7 +70,7 @@ export function useShell(state,dispatch,clientId,displayState=state,connection={
  },[]);
  const receive=useCallback(envelope=>{
   const current=latest.current,bootstrap=current.bootstrap;
-  if(!bootstrap||!alive.current)return false;
+  if(!bootstrap||!alive.current||current.bootstrapReadingOwner!==current.readingEpoch)return false;
   const authoritativeHost=current.authoritative?.client?.hostInstanceId;
   if(authoritativeHost&&authoritativeHost!==bootstrap.hostInstanceId&&authoritativeHost!==current.bootstrapObservedHost)return false;
   if(matchesResources(envelope,bootstrap,current.demand))envelope=retainResourceVersions(current.data?.shellResources,envelope);
@@ -82,7 +92,7 @@ export function useShell(state,dispatch,clientId,displayState=state,connection={
   const current=latest.current,requested=current.demand;
   const bootstrapKey=current.authoritative?.shellBootstrapKey,hostInstanceId=current.authoritative?.client?.hostInstanceId;
   const hostChanged=hostInstanceId&&hostInstanceId!==current.bootstrap?.hostInstanceId&&hostInstanceId!==current.bootstrapObservedHost;
-  const needsBootstrap=reason==='composition'||!current.bootstrap||hostChanged||(bootstrapKey!==current.bootstrap.shellBootstrapKey&&bootstrapKey!==current.bootstrapObservedKey);
+  const needsBootstrap=reason==='composition'||!current.bootstrap||current.bootstrapReadingOwner!==current.readingEpoch||hostChanged||(bootstrapKey!==current.bootstrap.shellBootstrapKey&&bootstrapKey!==current.bootstrapObservedKey);
   if(needsBootstrap&&!current.visible)return Promise.resolve();
   if(inflight.current)return inflight.current.promise;
   const kind=needsBootstrap?'bootstrap':reason;
@@ -90,15 +100,15 @@ export function useShell(state,dispatch,clientId,displayState=state,connection={
   const query=new URLSearchParams({bundled:'1',clientId,demandId:String(requested.id),navigationResources:JSON.stringify(requested.resources),scope:JSON.stringify(requested.scope)});
   if(recovery)query.set('recovery','1');
   diagnostics.current.record(kind,{demandId:requested.id,resources:requested.resources});
-  const job={id:requested.id,bootstrapKey,hostInstanceId,controller:new AbortController()};
+  const job={id:requested.id,bootstrapKey,hostInstanceId,readingEpoch:current.readingEpoch,controller:new AbortController()};
   job.promise=(needsBootstrap?request('/api/shell?'+query,{signal:job.controller.signal}):request('/api/shell/resources',{method:'POST',body:requestScope,signal:job.controller.signal})).then(next=>{
-   if(!alive.current)return;
+   if(!alive.current||job.readingEpoch!==latest.current.readingEpoch)return;
    if(needsBootstrap){
     if(next.clientId!==clientId||!next.shellBootstrapKey||!next.hostInstanceId||!next.instanceGenerations)throw Error('Invalid shell bootstrap.');
     const currentKey=latest.current.authoritative?.shellBootstrapKey,currentHost=latest.current.authoritative?.client?.hostInstanceId;
     if(currentKey!==bootstrapKey&&next.shellBootstrapKey!==currentKey||currentHost!==hostInstanceId&&next.hostInstanceId!==currentHost){diagnostics.current.record('stale',{demandId:requested.id});return}
     if(latest.current.bootstrap?.hostInstanceId!==next.hostInstanceId)for(const host of hosts.current.values())host.acknowledgedView=null;
-    latest.current.bootstrap=next;latest.current.bootstrapObservedKey=bootstrapKey;latest.current.bootstrapObservedHost=hostInstanceId;
+    latest.current.bootstrap=next;latest.current.bootstrapObservedKey=bootstrapKey;latest.current.bootstrapObservedHost=hostInstanceId;latest.current.bootstrapReadingOwner=job.readingEpoch;
     return receive(next.shellResources);
    }else return receive(next);
   }).catch(error=>{
@@ -114,7 +124,7 @@ export function useShell(state,dispatch,clientId,displayState=state,connection={
    // Only a genuinely newer demand gets a follow-up. Errors and repeated
    // notifications cannot sustain an identical request loop.
    const now=latest.current,newKey=now.authoritative?.shellBootstrapKey,newHost=now.authoritative?.client?.hostInstanceId;
-   const changedDescriptor=newKey!==job.bootstrapKey&&newKey!==now.bootstrap?.shellBootstrapKey&&newKey!==now.bootstrapObservedKey
+   const changedDescriptor=job.readingEpoch!==now.readingEpoch||newKey!==job.bootstrapKey&&newKey!==now.bootstrap?.shellBootstrapKey&&newKey!==now.bootstrapObservedKey
     ||newHost!==job.hostInstanceId&&newHost!==now.bootstrap?.hostInstanceId&&newHost!==now.bootstrapObservedHost;
    if(alive.current&&(changedDescriptor||now.demand.id!==job.id&&synced.current!==now.demand.id))void refresh(changedDescriptor?'composition':'demand');
   });
@@ -123,6 +133,11 @@ export function useShell(state,dispatch,clientId,displayState=state,connection={
  useLayoutEffect(()=>{
   const current=latest.current;
   const host=state?.client?.hostInstanceId;
+  if(current.data&&current.data.navigationReadingOwner!==current.readingEpoch){
+   for(const record of hosts.current.values()){record.snapshot=freeze({...empty,navigationReadingOwner:current.readingEpoch});record.acknowledgedView=null;record.listeners.forEach(fn=>fn())}
+   hosts.current.clear();
+   current.data=null;setData(null);setError('');return;
+  }
   if(current.bootstrap&&current.data&&(!matchesResources(current.data.shellResources,current.bootstrap,current.demand)
    ||host&&host!==current.bootstrap.hostInstanceId&&host!==current.bootstrapObservedHost)){
    publish({...current.data,snapshots:pendingSnapshots(current.bootstrap,current.data,current.demand,host)});setError('');
@@ -159,27 +174,33 @@ export function useShell(state,dispatch,clientId,displayState=state,connection={
  },[clientId]);
  const hostFor=useCallback(instance=>{
   const generation=latest.current.data?.instanceGenerations?.[instance.id];
-  const key=instance.id+':'+generation;
+  const key=instance.id+':'+generation+':'+latest.current.readingEpoch;
   if(!hosts.current.has(key)){
    const sharedAge=['builtin.chats','builtin.workspaces'].includes(instance.package);
+   const ownerEpoch=latest.current.readingEpoch;
+   const ownerCurrent=()=>alive.current&&readingOwner.current.epoch===ownerEpoch;
    const record={id:instance.id,generation,scope:instance.scope,sharedAge,listeners:new Set(),pending:[],snapshot:freeze(navigationSnapshot(latest.current.data?.snapshots?.[instance.id]||empty,latest.current.state,instance.scope,sharedAge))};
    let queue=Promise.resolve();
    const run=(action,args)=>{
+    if(!ownerCurrent())return Promise.reject(Error('The navigation account changed. No command was sent.'));
     const pending=action==='shell.view.update'?{patch:args.patch}:null;
     if(pending){record.pending.push(pending);record.snapshot=freeze({...record.snapshot,view:{...record.snapshot.view,...pending.patch}});record.listeners.forEach(fn=>fn())}
     const navigation=action==='shell.command'&&args.action==='session.select',submittedHost=latest.current.bootstrap?.hostInstanceId;
     // Enter the main navigation controller during the gesture, before waiting
     // on earlier shell work. Its request still observes that ordering barrier.
-    const immediate=navigation?latest.current.dispatch(action,{...args,generation},{before:queue,
+    const immediate=navigation?latest.current.dispatch(action,{...args,generation},{before:queue,suggestionIsCurrent:ownerCurrent,
      navigationSession:record.snapshot.sessions?.find(row=>row.id===args.args?.id)
       ||record.snapshot.chatNavigation?.items?.find(row=>row.id===args.args?.id)
       ||record.snapshot.sidebarNavigation?.pinned?.items?.find(row=>row.id===args.args?.id)
       ||record.snapshot.sidebarNavigation?.recent?.items?.find(row=>row.id===args.args?.id)}):null;
     const execute=async()=>{
+     if(!ownerCurrent())throw Error('The navigation account changed. No command was sent.');
      const commandHost=immediate?submittedHost:latest.current.bootstrap?.hostInstanceId;
      try{
-      const result=await (immediate||latest.current.dispatch(action,{...args,generation}));
-      if(action==='shell.command'&&args.action==='session.select'&&!latest.current.state?.view?.navPinned)await latest.current.dispatch('view.update',{patch:{navExpanded:false}});
+      const result=await (immediate||latest.current.dispatch(action,{...args,generation},{suggestionIsCurrent:ownerCurrent}));
+      if(!ownerCurrent())return {accepted:result.accepted,result:result.result};
+      if(action==='shell.command'&&args.action==='session.select'&&!latest.current.state?.view?.navPinned)await latest.current.dispatch('view.update',{patch:{navExpanded:false}},{suggestionIsCurrent:ownerCurrent});
+      if(!ownerCurrent())return {accepted:result.accepted,result:result.result};
       const committed=result.result?.shellView;
       if(committed&&commandHost===latest.current.bootstrap?.hostInstanceId
        &&(!latest.current.authoritative?.client?.hostInstanceId||commandHost===latest.current.authoritative.client.hostInstanceId)
@@ -192,13 +213,13 @@ export function useShell(state,dispatch,clientId,displayState=state,connection={
       }
       return {accepted:result.accepted,result:result.result};
      }finally{
-      if(pending){record.pending=record.pending.filter(item=>item!==pending);if(latest.current.data)publish(latest.current.data)}
+      if(pending){record.pending=record.pending.filter(item=>item!==pending);if(ownerCurrent()&&latest.current.data)publish(latest.current.data)}
      }
     };
     const promise=queue.then(execute,execute);queue=promise.catch(()=>{});return promise;
    };
    record.api=Object.freeze({apiVersion:'1.0',clientId,instanceId:instance.id,
-    getSnapshot:()=>record.snapshot,refreshResources:async()=>{if(await refresh('manual')!==true)throw Error('Navigation resources could not be refreshed.');return record.snapshot},subscribe:fn=>{record.listeners.add(fn);return()=>{record.listeners.delete(fn);if(!record.listeners.size&&(latest.current.data?.instanceGenerations?.[instance.id])!==generation)hosts.current.delete(key)}},
+    getSnapshot:()=>record.snapshot,refreshResources:async()=>{if(!ownerCurrent()||await refresh('manual')!==true||!ownerCurrent())throw Error('Navigation resources could not be refreshed.');return record.snapshot},subscribe:fn=>{record.listeners.add(fn);return()=>{record.listeners.delete(fn);if(!record.listeners.size&&(latest.current.data?.instanceGenerations?.[instance.id])!==generation)hosts.current.delete(key)}},
     setDirty:dirty=>run('shell.view.update',{clientId,instanceId:instance.id,patch:{},dirty}),
     dispatch:(action,args={})=>action==='view.update'
      ?run('shell.view.update',{clientId,instanceId:instance.id,patch:args.patch||{}})
@@ -209,7 +230,8 @@ export function useShell(state,dispatch,clientId,displayState=state,connection={
   return hosts.current.get(key).api;
  },[clientId,publish,refresh]);
  const statuses=useRef({}),statusCallbacks=useRef(new Map()),reportTimer=useRef(null);
- const savedComposition=recovery?defaultComposition:data?.effectiveComposition||defaultComposition;
+ const currentData=data?.navigationReadingOwner===readingEpoch?data:null;
+ const savedComposition=recovery?defaultComposition:currentData?.effectiveComposition||defaultComposition;
  const appearancePresentation=displayState?.appearance?.availability!=='failed'?displayState?.appearance?.renderedPreferences:null;
  const composition=appearancePresentation&&typeof appearancePresentation==='object'
   ?{...savedComposition,presentation:appearancePresentation}:savedComposition;
@@ -254,7 +276,7 @@ export function useShell(state,dispatch,clientId,displayState=state,connection={
   reportTimer.current=setTimeout(()=>report(renderedStatuses(data,statuses.current)),80);
   return()=>clearTimeout(reportTimer.current);
  },[data?.revision,data?.preview?.id,report]);
- return {data,error,composition,hostFor,recover,report,statusFor,refresh,setPresentation,ready:!!data,recovery,clientId};
+ return {data:currentData,error,composition,hostFor,recover,report,statusFor,refresh,setPresentation,ready:!!currentData,recovery,clientId};
 }
 
 class ModuleBoundary extends React.Component{

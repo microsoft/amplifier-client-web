@@ -19,28 +19,43 @@ export function matchesResources(envelope,bootstrap,demand){
 
 const navigation=new Set(['builtin.chats','builtin.workspaces']);
 
+const statusKinds={workStatusAttention:'attention',workStatusUnread:'unread',workStatusWorking:'working',workStatusWaiting:'waiting',workStatusPaused:'paused',workStatusIdle:'idle'};
 const sidebarFields={pinnedNavigation:['pinnedNavigation'],
  recentNavigation:['recentNavigation','recentShortcuts'],
- workspaceShortcuts:['workspaceShortcuts']};
+ workspaceShortcuts:['workspaceShortcuts'],...Object.fromEntries(Object.keys(statusKinds).map(name=>[name,[name]]))};
 const queryScope=['mode','workspaceId','filter','clientId','instanceId','generation','age'];
 function readingResources(bootstrap,instance,prior,snapshot,wanted){
- const retained={};
+ const retained={};let remainingBytes=512*1024;
  if(!prior||prior.generation!==snapshot.generation
+  ||prior.navigationResourceClientId!==bootstrap.clientId
   ||prior.navigationResourceScope?.[0]!==bootstrap.hostInstanceId
   ||prior.navigationResourceScope?.[1]!==bootstrap.shellBootstrapKey)return retained;
  // Sidebar shortcuts have a fixed query independent of the selected chat and
  // main browsing surface. Keep their old rows only as explicitly stale reading
  // state. A pinned instance changing its effective workspace is a new query.
- if(!prior.recentScope||!snapshot.recentScope
-  ||queryScope.some(key=>prior.recentScope[key]!==snapshot.recentScope[key]))return retained;
  for(const name of wanted){
   if(!sidebarFields[name])continue;
   if((prior.view?.navAge||'all')!==(snapshot.view?.navAge||'all'))continue;
+  const kind=statusKinds[name];
+  if(kind){
+   if((prior.workHomePinnedScope||'all')!==(snapshot.workHomePinnedScope||'all')
+    ||(prior.view?.navStatusPages?.[kind]||0)!==(snapshot.view?.navStatusPages?.[kind]||0))continue;
+  }else if(!prior.recentScope||!snapshot.recentScope
+   ||queryScope.some(key=>prior.recentScope[key]!==snapshot.recentScope[key]))continue;
   if(name==='recentNavigation'&&!!prior.view?.navShowAgentCreated!==!!snapshot.view?.navShowAgentCreated)continue;
   if(name==='pinnedNavigation'&&(prior.view?.navPinnedPage||0)!==(snapshot.view?.navPinnedPage||0))continue;
   const old=prior.navigationResourceRetained?.[name];
   if(!prior.navigationResources?.includes(name)&&!old)continue;
   const value=old||Object.fromEntries(sidebarFields[name].filter(key=>prior[key]!==undefined).map(key=>[key,prior[key]]));
+  const page=value[name];
+  if(kind&&(!page||page.workScope!==(snapshot.workHomePinnedScope||'all')||page.scope?.age!==(snapshot.view?.navAge||'all')
+   ||page.requestedIndex!==(snapshot.view?.navStatusPages?.[kind]||0)))continue;
+  // Reading continuity is optional and bounded independently of live pages.
+  // Refuse oversized payloads rather than truncate or mislabel membership.
+  const rows=name==='workspaceShortcuts'?value.workspaceShortcuts:page?.items;
+  if(Array.isArray(rows)&&rows.length>1000)continue;
+  const bytes=new TextEncoder().encode(JSON.stringify(value)).length;
+  if(bytes>remainingBytes)continue;remainingBytes-=bytes;
   if(Object.keys(value).length)retained[name]=value;
  }
  return retained;
@@ -56,6 +71,7 @@ function readingActivity(fields){
  if(reading.recentNavigation)reading.recentNavigation={...reading.recentNavigation,
   items:reading.recentNavigation.items.map(mark)};
  if(reading.recentShortcuts)reading.recentShortcuts=reading.recentShortcuts.map(mark);
+ for(const name of Object.keys(statusKinds))if(reading[name])reading[name]={...reading[name],items:reading[name].items.map(mark)};
  return reading;
 }
 
@@ -81,12 +97,13 @@ export function resourceSnapshots(bootstrap,envelope,demand,previous={}){
   if(entry&&!validEntry(entry))return null;
   if(navigation.has(instance.package)){
    const resources=entry?.resources||{},context=resources.context?.value;
-   // A hidden surface can keep its private edit owner, never its old pages.
-   const retained=!demand.resources.length&&previous[instance.id]?.generation===generation
-    ?{view:previous[instance.id].view}:{};
+   // Retain only bounded sidebar reading payloads, never live page coverage.
+   const prior=previous[instance.id];
+   const retained=!context&&prior?.generation===generation
+    ?{recentScope:prior.recentScope,workHomePinnedScope:prior.workHomePinnedScope,view:prior.view}:{};
    const pending=Object.fromEntries(demand.resources
     .filter(name=>entry?.pending?.[name]).map(name=>[name,{...entry.pending[name]}]));
-   const snapshot={...retained,...context,generation,navigationResources:[],navigationResourceAges:{},navigationResourcePending:pending,
+   const snapshot={...retained,...context,generation,navigationResourceClientId:bootstrap.clientId,navigationResources:[],navigationResourceAges:{},navigationResourcePending:pending,
     navigationResourceScope:[envelope.hostInstanceId,envelope.bootstrapKey,envelope.demandId,generation,...envelope.scope]};
    for(const name of demand.resources){
     const resource=resources[name];if(!resource)continue;
@@ -98,8 +115,8 @@ export function resourceSnapshots(bootstrap,envelope,demand,previous={}){
     if(sidebarNavigation)snapshot.sidebarNavigation={...snapshot.sidebarNavigation,...sidebarNavigation};
     snapshot.navigationResources.push(name);
    }
-   snapshot.navigationResourceRetained=readingResources(bootstrap,instance,previous[instance.id],snapshot,
-    demand.resources.filter(name=>pending[name]&&!snapshot.navigationResources.includes(name)));
+   snapshot.navigationResourceRetained=readingResources(bootstrap,instance,prior,snapshot,
+    Object.keys(sidebarFields).filter(name=>!demand.resources.includes(name)||pending[name]&&!snapshot.navigationResources.includes(name)));
    snapshots[instance.id]=snapshot;
   }else if(!instance.package.startsWith('builtin.')&&entry?.resources?.customSnapshot){
    snapshots[instance.id]={...entry.resources.customSnapshot.value,generation};
@@ -137,13 +154,14 @@ export function pendingSnapshots(bootstrap,previous,demand,hostInstanceId=bootst
   const prior=previous.snapshots?.[instance.id],generation=bootstrap.instanceGenerations[instance.id];
   if(!prior||prior.generation!==generation)continue;
   if(navigation.has(instance.package)){
-   const context=previous.shellResources?.instances?.[instance.id]?.resources?.context?.value||{};
+   const context=previous.shellResources?.instances?.[instance.id]?.resources?.context?.value
+    ||{recentScope:prior.recentScope,workHomePinnedScope:prior.workHomePinnedScope};
    // This context belongs to the previous demand. Its activity map is not
    // current coverage merely because we are retaining sidebar reading rows.
-   const snapshot={...context,navigationActivityById:{},view:prior.view,generation,navigationResources:[],
+   const snapshot={...context,navigationActivityById:{},view:prior.view,generation,navigationResourceClientId:bootstrap.clientId,navigationResources:[],
     navigationResourcePending:Object.fromEntries((demand?.resources||[]).map(name=>[name,{status:'pending'}])),
     navigationResourceScope:[hostInstanceId,bootstrap.shellBootstrapKey,demand?.id,generation,...(demand?.scope||[])]};
-   snapshot.navigationResourceRetained=hostInstanceId===bootstrap.hostInstanceId?readingResources(bootstrap,instance,prior,snapshot,demand?.resources||[]):{};
+   snapshot.navigationResourceRetained=hostInstanceId===bootstrap.hostInstanceId?readingResources(bootstrap,instance,prior,snapshot,Object.keys(sidebarFields)):{};
    snapshots[instance.id]=snapshot;
   }else if(!instance.package.startsWith('builtin.'))snapshots[instance.id]=prior;
  }

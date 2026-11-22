@@ -402,6 +402,9 @@ function App(){
    // Navigation and answers have separate queues; neither may overtake an
    // already declared renderer edit when its transition can remove the view.
    if((navigation||['question.answer','question.cancel','question.supersede','canvas.views.loadVersion'].includes(action))&&dirtyBarrier)await dirtyBarrier;
+   // An account or owner can change while a declared renderer edit settles.
+   // Recheck the caller's exact scope after waits, before any command POST.
+   if(meta.suggestionIsCurrent&&!meta.suggestionIsCurrent())return {accepted:false};
    if(capabilityMutation)capabilityStopFence.current.assertMutation(args,meta.capabilityRead);
    if(meta.chatLink&&!meta.chatLinkIsCurrent())return {accepted:false};
    if(handoffNavigation&&!meta.handoffIsCurrent())return {accepted:false,error:'The handoff is no longer in this source chat.'};
