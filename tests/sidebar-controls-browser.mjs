@@ -145,6 +145,7 @@ async function menuRegression({page,scenario,readState,emit}){
   await page.evaluate(()=>delete navigator.clipboard);
   readState().sessions[0]=original;await emit();await expect(notice).toBeEmpty();
   readState().selectedSessionId=null;await emit();await expect(trigger).toHaveCount(0);
+  await expect(page.getByRole('combobox',{name:'Agent for new chat',exact:true})).toBeEnabled();
   readState().selectedSessionId=original.id;await emit();await expect(trigger).toHaveCount(1);
   proof.syntheticClipboard=['pending','stale rejection','managed runtime ID','denied','failed','unavailable','new draft'];
  }
@@ -167,7 +168,13 @@ async function menuRegression({page,scenario,readState,emit}){
    'core.canvas.toolbar':'inactive','core.settings.appearance':'inactive',
   });
  }
- const interactive=rows=>rows.filter(call=>call.action!=='shell.report').map(({action,args})=>({action,args}));
+ // Entering New chat during the owner-reset probe reads the agent catalog.
+ // Exempt only one settled read from that phase, not reads during disclosures
+ // or other external-agent operations.
+ const catalogReads=proof.actionTrace.filter(row=>row.call.action==='externalAgents.list');
+ assert.equal(catalogReads.length,['desktop-320','mobile-390'].includes(scenario.name)?1:0);
+ for(const {phase,call} of catalogReads){assert.equal(phase,'clipboard-owner-reset');assert.deepEqual(call.args,{})}
+ const interactive=rows=>rows.filter(call=>!['shell.report','externalAgents.list'].includes(call.action)).map(({action,args})=>({action,args}));
  assert.deepEqual(interactive(calls.slice(copyStart)),[],
   'Chat menu disclosure/copy never dispatches an interactive action or changes selection/model/draft: '+actionEvidence);
  assert.deepEqual(interactive(calls.slice(start)),scenario.touch?[{action:'view.update',args:{patch:{navExpanded:false}}}]:[],
@@ -359,11 +366,14 @@ async function appearanceRegression({page,scenario,readState,emit,stopGuard}){
  await usable(composer);
  const form=await page.locator('.a-composer').evaluate(rect),stripBox=await strip.evaluate(rect);
  const chip=await attachment.evaluate(rect),labelBox=await link.evaluate(rect),removeBox=await usable(remove,{button:true});
- const clip=await link.evaluate(node=>({width:node.clientWidth,scroll:node.scrollWidth,
+ const label=link.locator('.a-attachment-label'),textBox=await label.evaluate(rect),metadataBox=await link.locator('small').evaluate(rect);
+ const clip=await label.evaluate(node=>({width:node.clientWidth,scroll:node.scrollWidth,
   overflow:getComputedStyle(node).overflowX,ellipsis:getComputedStyle(node).textOverflow}));
- proof.attachment={form,strip:stripBox,chip,label:labelBox,remove:removeBox,clip};
+ proof.attachment={form,strip:stripBox,chip,label:labelBox,text:textBox,metadata:metadataBox,remove:removeBox,clip};
  assert.ok(clip.width>20&&clip.scroll>clip.width,'The long text actually requires clipping');
  assert.equal(clip.overflow,'hidden');assert.equal(clip.ellipsis,'ellipsis');
+ for(const box of [labelBox,textBox,metadataBox])assert.ok(box.top>=chip.top&&box.bottom<=chip.bottom&&box.left>=chip.left&&box.right<=chip.right,'Label and metadata stay inside their compact chip');
+ assert.ok(chip.top>=stripBox.top&&chip.bottom<=stripBox.bottom,'The chip remains inside its attachment strip');
  assert.ok(stripBox.left>=form.left&&stripBox.right<=form.right+1&&chip.right<=stripBox.right+1);
  assert.ok(labelBox.right<=removeBox.left-4&&removeBox.right<=chip.right+1,'Clipped text leaves Remove unobscured');
  proof.composer=await usable(page.locator('[data-part="composer-primary-action"]'),{button:true});
@@ -400,6 +410,15 @@ async function appearanceRegression({page,scenario,readState,emit,stopGuard}){
  proof.transcript={bottom,reading,jumped};
  await retained();
  if(!mobile){
+  const actionRow=await page.locator('.a-compose-surface').evaluate(node=>{
+   const box=el=>{const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}};
+   return {surface:box(node),add:box(node.querySelector('.a-compose-add>button')),end:box(node.querySelector('.a-compose-end')),
+    stop:box(node.querySelector('.a-compose-stop')),model:box(node.querySelector('.a-model-trigger')),
+    primary:box(node.querySelector('[data-part="composer-primary-action"]')),fine:matchMedia('(pointer:fine)').matches};
+  });
+  assert.equal(actionRow.fine,true,'This regression exercises the accepted fine-pointer Stop/Send row');
+  for(const control of [actionRow.add,actionRow.stop,actionRow.model,actionRow.primary])
+   assert.ok(Math.abs(control.y+control.height/2-actionRow.primary.y-actionRow.primary.height/2)<=1,'Stop, model, Add and Send share the action-row center');
   assert.equal(explicitStops.length,0);
   stopGuard.armed=true;
   try{await stop.click();await expect.poll(()=>explicitStops.length).toBe(1)}
@@ -407,6 +426,14 @@ async function appearanceRegression({page,scenario,readState,emit,stopGuard}){
   assert.deepEqual(explicitStops[0].args,{sessionId:'chat'});
   await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().sessions.find(row=>row.id==='chat').status)).toBe('stopped');
   await expect(page.locator('.a-live-activity')).toHaveCount(0);await expect(stop).toHaveCount(0);
+  const afterStop=await page.locator('.a-compose-surface').evaluate(node=>{
+   const box=el=>{const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}};
+   return {surface:box(node),add:box(node.querySelector('.a-compose-add>button')),end:box(node.querySelector('.a-compose-end')),
+    primary:box(node.querySelector('[data-part="composer-primary-action"]'))};
+  });
+  for(const name of ['surface','add','end','primary'])for(const axis of ['x','y','width','height'])
+   assert.ok(Math.abs(afterStop[name][axis]-actionRow[name][axis])<=1,'Removing Stop keeps '+name+'.'+axis+' steady');
+  proof.actionRow={before:actionRow,after:afterStop};
   await expect(running.locator('.a-execution-complete')).toHaveCount(0);
   await expect(running.locator('[aria-label="Stopped"]')).toHaveCount(1);
   proof.explicitStop={count:1,sessionId:'chat',syntheticOnly:true};
@@ -603,6 +630,10 @@ try{
    if(path==='/api/actions'){
     const envelope=request.postDataJSON(),body=envelope.action==='shell.command'?(envelope.args.command||envelope.args):envelope;calls.push(body);
     if(activeMenuProof)activeMenuProof.actionTrace.push({phase:menuPhase,callIndex:calls.length-1,call:body,envelope});
+    if(body.action==='externalAgents.list'){
+     assert.deepEqual(body.args,{});
+     return route.fulfill({json:{accepted:true,result:{agents:[]}}});
+    }
     if(body.action==='conversation.stop'){
      assert.ok(scenario.name==='desktop-320'&&stopGuard.armed&&explicitStops.length===0,'Only the explicit fixture Stop is allowed');
      assert.deepEqual(body.args,{sessionId:'chat'});stopGuard.armed=false;explicitStops.push(body);

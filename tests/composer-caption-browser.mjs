@@ -32,11 +32,12 @@ const composer=()=>page.getByRole('textbox',{name:'Message Amplifier',exact:true
 const status=()=>page.locator('.a-composer .a-sr-only[role="status"]');
 const primary=()=>page.locator('[data-part="composer-primary-action"]');
 const sendCount=()=>calls.filter(row=>row.action==='conversation.send').length;
-const geometry=async()=>{
+const geometry=async(withStop=false)=>{
  const elements={surface:page.locator('[data-part="composer-surface"]'),controls:page.locator('.a-compose-configuration'),primary:primary(),
   attachment:page.getByRole('button',{name:'Add attachments',exact:true}),
   providerModel:page.getByRole('button',{name:'Model and reasoning settings',exact:true}),
   providerModelLabel:page.getByRole('button',{name:'Model and reasoning settings',exact:true}).locator('span')};
+ if(withStop)elements.stop=page.getByRole('button',{name:'Stop response',exact:true});
  const result={};
  for(const [name,element] of Object.entries(elements)){
   await expect(element).toBeVisible();const box=await element.boundingBox();
@@ -45,10 +46,22 @@ const geometry=async()=>{
  }
  return result;
 };
-const aligned=(idle,actual,phase)=>{
+const aligned=(idle,actual,phase,{withStop=false}={})=>{
  for(const name of Object.keys(idle))for(const axis of ['x','y','width','height'])
+  // Accepted PR99 keeps the whole action row stable, but Stop's auto margin
+  // places Model at the trailing end of its existing configuration cell.
+  if(!(withStop&&axis==='x'&&['providerModel','providerModelLabel'].includes(name)))
   assert.ok(Math.abs(actual[name][axis]-idle[name][axis])<=1,
    `${phase}: ${name}.${axis} shifted ${actual[name][axis]-idle[name][axis]} CSS px`);
+ if(withStop){
+  const {stop,providerModel:model,providerModelLabel:label,controls,primary,attachment}=actual;
+  assert.ok(stop.width>=44&&stop.height>=44,'Stop retains its touch target');
+  assert.ok(Math.abs(stop.y+stop.height/2-primary.y-primary.height/2)<=1,'Stop shares the stable action-row center');
+  assert.ok(stop.x>=controls.x&&stop.x+stop.width<=model.x,'Stop and Model do not overlap');
+  assert.ok(attachment.x+attachment.width<=stop.x&&model.x+model.width<=primary.x,'All actions remain in their original cells');
+  assert.ok(Math.abs(model.x+model.width-(controls.x+controls.width-2))<=1,'Model follows the accepted trailing edge inside the 2px-padded configuration cell');
+  assert.ok(Math.abs(label.x-model.x-(idle.providerModelLabel.x-idle.providerModel.x))<=1,'Moving Model retains its label inset');
+ }
 };
 async function accessibleSending(){
  await expect(status()).toHaveText('Sending message…');
@@ -106,9 +119,17 @@ async function run(){
   if(url.pathname==='/api/view')return route.fulfill({json:{accepted:true}});
   if(url.pathname!=='/api/actions'){blocked.push(url.pathname);return route.abort()}
   const envelope=request.postDataJSON(),body=envelope.action==='shell.command'?(envelope.args.command||envelope.args):envelope;calls.push(body);
+  if(body.action==='theme.list'){
+   assert.deepEqual(body.args,{});
+   return route.fulfill({json:{accepted:true,result:{items:[],errors:[]}}});
+  }
   if(body.action==='conversation.send'){held.push({route,body});return}
-  if(body.action==='conversation.delivery')return route.fulfill({json:{accepted:true,result:{
-   delivery:'not_saved',message:'Fixture: no saved copy. Nothing was resent.'},state:shell.state()}});
+  if(body.action==='conversation.delivery'){
+   assert.equal(body.args.sessionId,sid);assert.ok(body.args.inputId);
+   return route.fulfill({json:{accepted:true,result:{
+    sessionId:sid,inputId:body.args.inputId,source:{workspace,nativeIdentity:sid},
+    delivery:'not_saved',message:'Fixture: no saved copy. Nothing was resent.'},state:shell.state()}});
+  }
   if(body.action==='view.update'){state.view={...state.view,...body.args.patch};state.revision++}
   else if(!['shell.report','attention.read','bundles.list','configuration.defaults','providers.list'].includes(body.action)&&
    !(body.action==='runtime.control'&&body.args.operation==='configuration.catalog')){
@@ -158,8 +179,8 @@ async function run(){
   await composer().focus();await page.keyboard.type(nextDraft);
   await expect(composer()).toHaveDraft(nextDraft);await expect(composer()).toContainText(nextDraft);
   await page.getByRole('button',{name:'Add attachments',exact:true}).focus();
-  await page.keyboard.press('Tab');await expect(primary()).toBeFocused();
   await page.keyboard.press('Tab');await expect(page.getByRole('button',{name:'Model and reasoning settings',exact:true})).toBeFocused();
+  await page.keyboard.press('Tab');await expect(primary()).toBeFocused();
   // Current main deliberately moves Chat controls into the header Chat menu.
   await page.getByRole('button',{name:'Chat',exact:true}).focus();
   await expect(page.getByRole('button',{name:'Chat',exact:true})).toBeFocused();
@@ -167,8 +188,18 @@ async function run(){
   row.keyboard=await geometry();aligned(row.idle,row.keyboard,'keyboard '+width);await snap(width+'-sending');
   state.sessions[0].status='working';await emit();
   await expect(page.locator('.a-live-activity')).toBeVisible();
-  row.working=await geometry();aligned(row.idle,row.working,'working '+width);await snap(width+'-working');
+  row.working=await geometry(true);aligned(row.idle,row.working,'working '+width,{withStop:true});
+  for(const name of ['Stop response','Model and reasoning settings']){
+   const hit=await page.getByRole('button',{name,exact:true}).evaluate(node=>{const r=node.getBoundingClientRect();return node.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))});
+   assert.equal(hit,true,name+' stays hit-testable');
+  }
+  const shifted=structuredClone(row.working);shifted.providerModel.y+=2;
+  assert.throws(()=>aligned(row.idle,shifted,'vertical negative',{withStop:true}),'Model cannot jump vertically with Stop');
+  const overlapped=structuredClone(row.working);overlapped.stop.width=overlapped.controls.width;
+  assert.throws(()=>aligned(row.idle,overlapped,'overlap negative',{withStop:true}),'Stop cannot cover Model');
+  await snap(width+'-working');
   state.sessions[0].status='idle';await emit();await expect(page.locator('.a-live-activity')).toHaveCount(0);
+  row.afterWorking=await geometry();aligned(row.idle,row.afterWorking,'after working '+width);
   const failure='Fixture send rejection '+width;
   await item.route.fulfill({status:409,json:{accepted:false,error:failure}});
   const bubble=page.locator('.a-user').filter({hasText:text});
@@ -179,7 +210,11 @@ async function run(){
   assert.equal(sendCount()-before,1,'Typing/state/rejection must not submit another message');
   row.rejected={errorVisible:true,retryVisible:true,nextDraft:await readComposerDraft(composer()),sendPosts:sendCount()-before};
   await snap(width+'-rejected');
-  await bubble.getByRole('button',{name:'Discard unsent message',exact:true}).click();await expect(bubble).toHaveCount(0);
+  const originalEntry=await page.evaluate(id=>JSON.parse(sessionStorage.getItem('amplifier.messageOutbox.v1')).find(row=>row.commandId===id),item.body.id);
+  await bubble.getByRole('button',{name:'Close delivery item',exact:true}).click();await expect(bubble).toHaveCount(0);
+  assert.deepEqual(await page.evaluate(id=>JSON.parse(sessionStorage.getItem('amplifier.messageOutbox.v1')).find(row=>row.commandId===id),item.body.id),
+   {...originalEntry,closed:true},'Closing retains the original submission without resending');
+  assert.equal(sendCount()-before,1);
   // Unknown local submission retains Check delivery and the original-identity
   // retry action; merely checking must never resend or invent a new command.
   const uncertainText='Unknown send '+width;await composer().fill(uncertainText);await page.getByRole('button',{name:'Send message',exact:true}).click();

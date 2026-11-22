@@ -56,6 +56,7 @@ function Forms(){
   <SettingsPageContext.Provider value="diagnostics"><MaintenanceSettings state={state} act={act}/></SettingsPageContext.Provider>
   <SettingsPageContext.Provider value="reset"><MaintenanceSettings state={state} act={act}/></SettingsPageContext.Provider>
   <label id="wrapped-choice"><input type="checkbox"/>A multiline choice keeps its first line beside the control and all remaining lines in the same text column even on a narrow screen.</label>
+  <label id="wrapped-radio"><input type="radio" name="wrapped-choice"/>A multiline radio keeps the native control before its first line while the remaining text wraps in its own column.</label>
   <label className="a-sr-only" htmlFor="ordinary">Ordinary field</label><input id="ordinary"/>
   <div className="a-workspace-picker"><label className="a-picker-search"><Search aria-hidden="true"/><input aria-label="Compound picker"/></label></div>
   <div className="a-appearance-settings"><label className="a-appearance-toggle"><input type="checkbox"/>Appearance toggle</label>
@@ -127,9 +128,10 @@ async function choiceGeometry(locator,dir,firstLine=true){
   let text;while(walker.nextNode()){if(walker.currentNode.textContent.trim()){text=walker.currentNode;break}}
   const range=document.createRange();range.selectNodeContents(text);
   const boxes=[...range.getClientRects()].map(r=>({left:r.left,right:r.right,top:r.top,bottom:r.bottom}));
-  const r=input.getBoundingClientRect();return {input:{left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width},boxes};
+  const r=input.getBoundingClientRect(),style=getComputedStyle(node);return {display:style.display,direction:style.flexDirection,input:{left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width},boxes};
  });
  const {input,boxes}=geometry;
+ assert.equal(geometry.display,'flex');assert.equal(geometry.direction,'row','Native choices keep their row direction under a generic appearance label rule');
  assert.ok(input.width>=16&&input.width<=18,'Choice stays intrinsic-sized');
  for(const box of boxes)assert.ok((dir==='rtl'?input.left-box.right:box.left-input.right)>=6,'Every wrapped line stays in the text column');
  if(firstLine)assert.ok(Math.abs(input.top-boxes[0].top)<=6,'Choice aligns with first text line, not whole wrapped block');
@@ -176,18 +178,24 @@ try{
    await expect(page.getByRole('textbox',{name:'Starter name'})).toBeVisible();
    for(const detail of await page.locator('.a-starter-options').all())await detail.evaluate(node=>{node.open=true});
    const label=[width,dir,scheme,forced?'forced':'normal'].join('-');
+   // Isolate the reported appearance interaction to this choice checkpoint.
+   // Search geometry has its own independent assertions before and after it.
+   const choiceAppearance=await page.addStyleTag({content:'#amp-one .a-dialog label{display:block;flex-direction:column}'});
    for(const name of ['Create SCRATCH.md working memory','Track external resources','Initialize local workspace Git',
     'Collect app diagnostics and enable selected forwarding','Record provider requests and responses for troubleshooting',
     'Reset app configuration and credentials']){
     await choiceGeometry(page.getByRole('checkbox',{name,exact:true}).locator('..'),dir);
    }
    await choiceGeometry(page.locator('#wrapped-choice'),dir);
+   await choiceGeometry(page.locator('#wrapped-radio'),dir);
    for(const name of ['Appearance toggle','Metric choice']){
     const choice=page.getByRole('checkbox',{name,exact:true});
     await choiceGeometry(choice.locator('..'),dir,false);
     assert.equal((await rect(choice)).width,16,'Existing Appearance choice geometry retained');
     await expect(choice.locator('..'),'Appearance keeps its intentional gap').toHaveCSS('column-gap','8px');
    }
+   await expect(page.locator('label[for=ordinary]')).toHaveCSS('display','block');
+   await choiceAppearance.evaluate(node=>node.remove());
    for(const input of [page.getByRole('textbox',{name:'Compound picker'})]){
     await input.focus();await expect(input).toBeFocused();
     await expect(input).toHaveCSS('outline-style','none');

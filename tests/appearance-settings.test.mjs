@@ -1165,13 +1165,54 @@ test('pending fields reject duplicate edits without locking unrelated settings',
   const dark=renderer.root.findByProps({name:'appearance-scheme',value:'dark'});
   await act(async()=>dark.props.onChange());
   const pending=renderer.root.findByProps({name:'appearance-scheme',value:'dark'});
-  assert.equal(pending.props.disabled,true);
+  assert.equal(pending.props.disabled,false,'Own-field pending does not natively disable the focused radio');
+  assert.equal(pending.props['aria-disabled'],true);
+  assert.equal(pending.props.checked,true);
+  for(const value of ['system','light','dark']){
+   const control=renderer.root.findByProps({name:'appearance-scheme',value});
+   let clicks=0;control.props.onClickCapture({preventDefault(){clicks++}});
+   assert.equal(clicks,1,'Pending pointer/label activation is cancelled');
+   for(const key of [' ','Enter','ArrowLeft','ArrowRight','ArrowUp','ArrowDown']){
+    let prevented=0;control.props.onKeyDown({key,preventDefault(){prevented++}});
+    assert.equal(prevented,1,key+': native radio movement is blocked while saving');
+   }
+   for(const key of ['Tab','Escape']){
+    control.props.onKeyDown({key,preventDefault(){assert.fail(key+' must retain its native navigation behavior')}});
+   }
+   await act(async()=>control.props.onChange());
+  }
   await act(async()=>pending.props.onChange());
   await act(async()=>renderer.root.findByProps({'aria-label':'Layout'}).props.onChange({target:{value:'conversation'}}));
   assert.deepEqual(changes.map(([field])=>field),['scheme','layout']);
   assert.deepEqual(changes[1],['layout','conversation',{namespace,generation:'generation-1',expectedRevision:1,expectedStorageVersion:'browser-version',scope:'client',retry:false}]);
   await act(async()=>{held.resolve({accepted:true,result:{status:'stored'}});await held.promise});
+  assert.equal(renderer.root.findByProps({name:'appearance-scheme',value:'dark'}).props['aria-disabled'],undefined);
  }finally{await act(async()=>renderer.unmount())}
+});
+
+test('scheme guards cover pre-render duplicate and profile-selection races',async()=>{
+ for(const first of ['scheme','profile']){
+  const held=deferred(),changes=[],selections=[];
+  const renderer=await renderPreferencePage({
+   onPreferenceChange:(...args)=>{changes.push(args);return held.promise},
+   onPreferenceSelect:(...args)=>{selections.push(args);return held.promise},
+  });
+  try{
+   const dark=renderer.root.findByProps({name:'appearance-scheme',value:'dark'});
+   const light=renderer.root.findByProps({name:'appearance-scheme',value:'light'});
+   await act(async()=>{
+    if(first==='profile')button(renderer.root,'Global').props.onClick();
+    else dark.props.onChange();
+    light.props.onChange();
+   });
+   assert.equal(changes.length,first==='scheme'?1:0,'Synchronous owners fence stale pre-render handlers');
+   assert.equal(selections.length,first==='profile'?1:0);
+   const current=renderer.root.findByProps({name:'appearance-scheme',value:'dark'});
+   assert.equal(current.props.disabled,first==='profile','Profile changes retain the native conflicting-operation lock');
+   await act(async()=>{held.resolve({accepted:true,result:{status:'stored'}});await held.promise});
+   assert.equal(renderer.root.findByProps({name:'appearance-scheme',value:'dark'}).props.disabled,false);
+  }finally{await act(async()=>renderer.unmount())}
+ }
 });
 
 test('a failed local edit retries the captured field and profile without share or clear controls',async()=>{

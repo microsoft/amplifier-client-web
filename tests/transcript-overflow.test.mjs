@@ -209,6 +209,197 @@ test('overflow reporting leaves submitted anchors, call following and reading in
  h.controller.dispose();
 });
 
+test('a temporarily unreachable reading offset survives a pane reflow round trip',()=>{
+ const row=message('reading',32,1200),h=harness({messages:[row],scrollHeight:1300});
+ h.controller.select('alpha');h.settle();h.scrollTo(0);
+ const offset=row.getBoundingClientRect().top;
+ // A narrow pane reduces top padding. The old offset would require negative
+ // scrollTop, so opening can only reach the boundary; closing can restore it.
+ row.contentTop=18;h.controller.update();h.settle();
+ assert.equal(h.pane.scrollTop,0);
+ assert.equal(row.getBoundingClientRect().top,18);
+ h.pane.dispatchEvent(new Event('scroll'));h.flushFrames();
+ row.contentTop=32;h.controller.update();h.settle();
+ assert.equal(row.getBoundingClientRect().top,offset,'A clamped intermediate layout is not a new reading choice');
+ assert.equal(h.pane.scrollTop,0);
+ assert.equal(h.following.current,false);
+ h.controller.dispose();
+});
+
+test('a below-viewport fallback cannot hold an unreachable goal over the newly visible message',()=>{
+ const question=message('question',32),answer=message('answer',1600),h=harness({messages:[question,answer],scrollHeight:2000});
+ h.controller.select('alpha');h.settle();h.scrollTo(500);
+ // Work between messages can fill the whole viewport. The first later message
+ // remains a useful ordinary layout fallback, but was never visible here.
+ assert.equal(answer.getBoundingClientRect().top,1100);
+ answer.contentTop=1000;h.controller.update();h.settle();
+ assert.equal(h.pane.scrollTop,0);
+ assert.equal(question.getBoundingClientRect().top,32);
+ answer.contentTop=1285;h.controller.update();h.settle();
+ assert.equal(h.pane.scrollTop,0,'Reopening Work preserves the visible question, not an unreachable offscreen answer offset');
+ assert.equal(question.getBoundingClientRect().top,32);
+ h.controller.dispose();
+});
+
+test('capture-time visible goals survive a smaller viewport while partial tall messages remain eligible',()=>{
+ for(const kind of ['viewport','tall']){
+  const row=kind==='viewport'?message('reading',700,80):message('reading',100,1200);
+  const h=harness({messages:[row],scrollHeight:2000,clientHeight:800});
+  h.controller.select('alpha');h.settle();h.scrollTo(kind==='viewport'?0:600);
+  const before=row.getBoundingClientRect().top;
+  if(kind==='viewport'){h.pane.clientHeight=600;row.contentTop=650}
+  else{h.pane.scrollHeight=1300;row.contentTop=900}
+  h.controller.update();h.settle();
+  if(kind==='viewport'){h.pane.clientHeight=800;row.contentTop=700}
+  else{h.pane.scrollHeight=2000;row.contentTop=100}
+  h.controller.update();h.settle();
+  assert.equal(row.getBoundingClientRect().top,before,kind);
+  h.view.dispatchEvent(new Event('pagehide'));
+  const saved=JSON.parse(h.storage.get('amplifier.chat-reading.v1')).alpha;
+  assert.deepEqual(Object.keys(saved).sort(),['messageId','offset','seenAt','submittedId','top'],'Visibility evidence is not persisted');
+  h.controller.dispose();
+ }
+});
+
+test('saved offscreen fallback restores once without becoming a retained reading goal',()=>{
+ const question=message('question',32),answer=message('answer',1000),h=harness({messages:[question,answer],scrollHeight:2000});
+ h.controller.select('alpha');h.settle();h.scrollTo(500);
+ // Persist an ordinary fallback below the viewport, then revisit after collapse.
+ answer.contentTop=1600;h.scrollTo(501);h.controller.select('beta');h.settle();
+ answer.contentTop=1000;h.controller.select('alpha');h.settle();
+ assert.equal(h.pane.scrollTop,0);
+ answer.contentTop=1284;h.controller.update();h.settle();
+ assert.equal(h.pane.scrollTop,0,'A saved offscreen fallback cannot take over the newly visible question');
+ h.controller.dispose();
+});
+
+test('new reading movement supersedes an offset that was clamped by pane reflow',()=>{
+ for(const intent of ['wheel','touchmove','keydown','scrollbar']){
+  const row=message('reading',32,1200),h=harness({messages:[row],scrollHeight:1300});
+  h.controller.select('alpha');h.settle();h.scrollTo(0);
+  row.contentTop=18;h.controller.update();h.settle();
+  if(intent!=='scrollbar'){
+   const event=new Event(intent);
+   Object.assign(event,{deltaY:80,key:'PageDown'});
+   // The keyboard handler checks whether the target is an editor.
+   h.pane.closest=()=>null;h.pane.dispatchEvent(event);
+  }
+  h.scrollTo(80);const latest=row.getBoundingClientRect().top;
+  row.contentTop=32;h.controller.update();h.settle();
+  assert.equal(row.getBoundingClientRect().top,latest,intent+': latest reading choice wins over the opener');
+  assert.equal(h.pane.scrollTop,94);
+  assert.equal(h.following.current,false);
+  h.controller.dispose();
+ }
+});
+
+test('a boundary gesture with no scroll replaces and persists the constrained goal',()=>{
+ for(const intent of ['wheel','touchmove','keydown']){
+  const row=message('reading',32,1200),h=harness({messages:[row],scrollHeight:1300});
+  h.controller.select('alpha');h.settle();h.scrollTo(0);
+  row.contentTop=18;h.controller.update();h.settle();
+  h.view.dispatchEvent(new Event('pagehide'));
+  const saved=()=>JSON.parse(h.storage.get('amplifier.chat-reading.v1')).alpha;
+  assert.equal(saved().offset,32,'Persistence keeps the desired offset and actual fallback top');
+  assert.equal(saved().top,0);
+  const event=new Event(intent);Object.assign(event,{deltaY:-80,key:'Home'});
+  h.pane.closest=()=>null;h.pane.dispatchEvent(event);
+  h.view.dispatchEvent(new Event('pagehide'));
+  assert.equal(saved().offset,18,'New boundary intent is saved even without movement');
+  row.contentTop=32;h.controller.update();h.settle();
+  assert.equal(row.getBoundingClientRect().top,18);
+  h.controller.dispose();
+ }
+});
+
+test('constrained bottom restoration retains its goal through repeated layout reports',()=>{
+ const row=message('reading',500,800),h=harness({messages:[row],scrollHeight:900});
+ h.controller.select('alpha');h.settle();h.scrollTo(480);
+ row.contentTop=700;h.controller.update();h.settle();
+ assert.equal(h.pane.scrollTop,600);
+ assert.equal(row.getBoundingClientRect().top,100);
+ for(let i=0;i<3;i++){h.pane.dispatchEvent(new Event('scroll'));h.controller.update();h.settle()}
+ row.contentTop=500;h.controller.update();h.settle();
+ assert.equal(h.pane.scrollTop,480);
+ assert.equal(row.getBoundingClientRect().top,20);
+ h.controller.dispose();
+});
+
+test('horizontal wheel, editor keys and text selection do not replace a vertical reading goal',()=>{
+ for(const intent of ['horizontal','zero','editor-key','selection']){
+  const row=message('reading',32,1200),h=harness({messages:[row],scrollHeight:1300});
+  h.controller.select('alpha');h.settle();h.scrollTo(0);
+  row.contentTop=18;h.controller.update();h.settle();
+  if(intent==='horizontal'||intent==='zero'){
+   const event=new Event('wheel');Object.assign(event,{deltaX:intent==='horizontal'?80:0,deltaY:0});h.pane.dispatchEvent(event);
+  }else if(intent==='editor-key'){
+   h.pane.closest=()=>({});const event=new Event('keydown');Object.assign(event,{key:'Home'});h.pane.dispatchEvent(event);
+  }else{h.pane.dispatchEvent(new Event('pointerdown'));h.document.dispatchEvent(new Event('selectionchange'))}
+  row.contentTop=32;h.controller.update();h.settle();
+  assert.equal(row.getBoundingClientRect().top,32,intent);
+  h.controller.dispose();
+ }
+});
+
+test('unexplained pre-frame bottom movement remains a newer external reading position',()=>{
+ const row=message('reading',500,800),h=harness({messages:[row],scrollHeight:900});
+ h.controller.select('alpha');h.settle();h.scrollTo(480);
+ row.contentTop=700;h.controller.update();h.settle();
+ assert.equal(h.pane.scrollTop,600);
+ // The controller did not make this move. A native clamp and a scrollbar/focus
+ // move to the same new boundary are indistinguishable here. Keep the existing
+ // conservative external-scroll rule rather than overriding newer input.
+ h.pane.scrollHeight=800;h.pane.dispatchEvent(new Event('scroll'));
+ const latest=row.getBoundingClientRect().top;assert.equal(latest,200);
+ h.pane.scrollHeight=900;row.contentTop=500;h.controller.update();h.settle();
+ assert.equal(row.getBoundingClientRect().top,latest);
+ h.controller.dispose();
+});
+
+test('constrained reading restores across chat visits without moving the other chat',()=>{
+ const row=message('reading',32,1200),h=harness({messages:[row],scrollHeight:1300});
+ h.controller.select('alpha');h.settle();h.scrollTo(0);
+ row.contentTop=18;h.controller.update();h.settle();
+ h.controller.select('beta');h.settle();
+ assert.equal(h.pane.scrollTop,1000,'The other chat keeps its normal initial position');
+ row.contentTop=32;h.controller.select('alpha');h.settle();
+ assert.equal(row.getBoundingClientRect().top,32);
+ assert.equal(h.pane.scrollTop,0);
+ h.controller.dispose();
+});
+
+test('a hidden constrained anchor is not resurrected on a later layout',()=>{
+ const row=message('reading',32,1200),h=harness({messages:[row],scrollHeight:1300});
+ h.controller.select('alpha');h.settle();h.scrollTo(0);
+ row.contentTop=18;h.controller.update();h.settle();
+ row.closest=()=>({});h.controller.update();h.settle();
+ row.closest=()=>null;row.contentTop=32;h.controller.update();h.settle();
+ assert.equal(h.pane.scrollTop,0,'The missing anchor leaves only the actual fallback position');
+ h.scrollTo(60);const latest=row.getBoundingClientRect().top;
+ row.contentTop=18;h.controller.update();h.settle();
+ assert.equal(row.getBoundingClientRect().top,latest);
+ h.controller.dispose();
+});
+
+test('explicit latest, jump, submission and call supersede constrained reading',()=>{
+ for(const intent of ['latest','jump','submitted','call']){
+  const row=message('reading',32,1200,'input'),h=harness({messages:[row],scrollHeight:1600});
+  let focusCount=0;row.focus=()=>focusCount++;
+  h.controller.select('alpha');h.settle();h.scrollTo(0);
+  row.contentTop=18;h.controller.update();h.settle();
+  if(intent==='latest')h.controller.reveal();
+  if(intent==='jump')h.controller.jump('reading');
+  if(intent==='submitted')h.controller.submitted('input');
+  if(intent==='call')h.controller.setCall('call','alpha');
+  h.settle();row.contentTop=32;h.controller.update();h.settle();
+  if(intent==='jump'){assert.equal(row.getBoundingClientRect().top,16);assert.equal(focusCount,1)}
+  else if(intent==='submitted')assert.equal(row.getBoundingClientRect().bottom,16);
+  else if(intent==='call')assert.equal(h.pane.scrollTop,1300);
+  else assert.equal(h.pane.scrollTop,1300,'Latest remains at its nearest reachable offset, not the old top anchor');
+  h.controller.dispose();
+ }
+});
+
 test('mounted inactive, external and disconnected iframe hosts do not suppress fades',()=>{
  const h=harness(),wrapper=append(h.pane,element('article')),iframe=append(wrapper,element('iframe'));
  h.controller.select('alpha');h.settle();h.flushFrames();

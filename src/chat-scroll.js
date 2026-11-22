@@ -34,6 +34,14 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
  let storage;try{storage=view.sessionStorage}catch{}
  const positions=readingPositions(storage);
  let frame=0,disposed=false,sessionId=null,ready=false,restore=null,submitted=null,snapshot=null,saveTimer=0,initial=false,resuming=false;
+ // Keep the desired reading offset separate from the actual geometry. A pane
+ // can temporarily make it unreachable (for example, narrower top padding).
+ // Reporting that clamped position must not turn it into a new reading choice.
+ let constrainedPosition=null;
+ // Ordinary fallback anchors can lie beyond the viewport when Work fills it.
+ // Only a genuinely visible reading goal may outlive a clamped restoration.
+ // Keep capture-time evidence private, not in the stored reading record.
+ const readingGoals=new WeakMap();
  // A sandboxed preview can be the host activeElement without matching CSS
  // :focus/:focus-within. Observe host focus only, never the embedded document.
  // Keep this frame separate: focus observation must not move or save anchors.
@@ -60,17 +68,27 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
   const top=pane.getBoundingClientRect().top,rows=messages();
   const anchor=rows.find(node=>node.getBoundingClientRect().bottom>top)||rows.at(-1);
   const messageId=anchor?.dataset.messageId,reference=readingReference?.(sessionId,messageId);
-  snapshot={top:pane.scrollTop,messageId,offset:anchor?anchor.getBoundingClientRect().top-top:0,
+  const box=anchor?.getBoundingClientRect();
+  snapshot={top:pane.scrollTop,messageId,offset:box?box.top-top:0,
    ...(reference?.kind==='transcript-window'&&typeof reference.restoreCursor==='string'?{reference:{kind:reference.kind,restoreCursor:reference.restoreCursor}}:{})};
+  readingGoals.set(snapshot,!!box&&box.top<top+pane.clientHeight&&box.bottom>top);
  };
  // A reply anchor is different from deliberate scrollback. Preserve that intent
  // across chat switches, even when the reply had not arrived before leaving.
- const persist=()=>{view.clearTimeout(saveTimer);if(ready&&(unresolvedPosition||snapshot))positions.set(sessionId,unresolvedPosition||{...snapshot,submittedId:following.current?submitted:null})};
+ const persist=()=>{view.clearTimeout(saveTimer);if(ready&&(unresolvedPosition||snapshot))positions.set(sessionId,unresolvedPosition||(constrainedPosition?{...constrainedPosition,top:snapshot.top,submittedId:null}:{...snapshot,submittedId:following.current?submitted:null}))};
  const report=()=>{const remaining=pane.scrollHeight-pane.scrollTop-pane.clientHeight;if(ready){pane.dataset.overflowAbove=String(pane.scrollTop>8);pane.dataset.overflowBelow=String(remaining>1);updateGutterInsets()}else clearOverflow();onAway(remaining>80);if(ready){capture();view.clearTimeout(saveTimer);saveTimer=view.setTimeout(persist,200)}};
  const restorePosition=position=>{
+  constrainedPosition=null;
   const anchor=messages().find(node=>node.dataset.messageId===position.messageId);
   if(anchor){
-   pane.scrollTop+=anchor.getBoundingClientRect().top-pane.getBoundingClientRect().top-position.offset;
+   const box=anchor.getBoundingClientRect();
+   // Saved records have no capture-time viewport evidence. Restore them
+   // normally; retain a constrained goal only if plausible in this viewport.
+   if(!readingGoals.has(position))readingGoals.set(position,position.offset<pane.clientHeight&&position.offset+box.bottom-box.top>0);
+   const target=pane.scrollTop+box.top-pane.getBoundingClientRect().top-position.offset;
+   const limit=Math.max(0,pane.scrollHeight-pane.clientHeight);
+   pane.scrollTop=target;
+   if(!position.focus&&readingGoals.get(position)&&(target< -1&&pane.scrollTop<=1||target>limit+1&&Math.abs(pane.scrollTop-limit)<=1))constrainedPosition=position;
    if(position.focus){anchor.tabIndex=-1;anchor.focus({preventScroll:true})}
   }
   else pane.scrollTop=Math.min(position.top||0,pane.scrollHeight);
@@ -78,7 +96,7 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
  const flush=()=>{
   frame=0;if(disposed||!ready)return;
   if(followingCall()){
-   anchorLoad=null;unresolvedPosition=null;restore=null;initial=false;submitted=null;resuming=false;following.current=false;pane.scrollTop=pane.scrollHeight;
+   constrainedPosition=null;anchorLoad=null;unresolvedPosition=null;restore=null;initial=false;submitted=null;resuming=false;following.current=false;pane.scrollTop=pane.scrollHeight;
   }else if(restore){
    if(restore.messageId&&!restore.focus&&!messages().length&&!pane.querySelector?.('[data-activity-group],[data-peer-run]'))return;
    if(restore.messageId&&!messages().some(node=>node.dataset.messageId===restore.messageId)&&loadAnchor&&attemptedAnchor!==restore.messageId){
@@ -99,15 +117,24 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
    if(anchor){resuming=false;const end=pane.scrollTop+anchor.getBoundingClientRect().bottom-pane.getBoundingClientRect().top;pane.scrollTop=Math.max(0,end-16)}
    else if(resuming&&messages().length){resuming=false;submitted=null;following.current=false;pane.scrollTop=pane.scrollHeight}
   }else if(initial){pane.scrollTop=pane.scrollHeight;initial=false;following.current=false}
-  else if(snapshot)restorePosition(snapshot);
+  else if(snapshot){
+   if(constrainedPosition&&!visibleMessage(pane,constrainedPosition.messageId))constrainedPosition=null;
+   restorePosition(constrainedPosition||snapshot);
+  }
   report();
  };
  const update=()=>{if(!frame&&!disposed)frame=view.requestAnimationFrame(flush)};
- const stop=()=>{if(callId&&callSessionId===sessionId)callPaused=true;anchorLoad=null;unresolvedPosition=null;submitted=null;following.current=false;restore=null;initial=false};
+ const stop=()=>{
+  if(callId&&callSessionId===sessionId)callPaused=true;
+  anchorLoad=null;unresolvedPosition=null;submitted=null;following.current=false;restore=null;initial=false;
+  // A boundary gesture can choose the current position without a scroll event.
+  if(constrainedPosition){constrainedPosition=null;report()}
+ };
  // Clicking/selecting transcript content is not scrollback. Actual scrollbar
  // moves are detected by scroll(); wheel/touch/keyboard express reading intent.
  const wheel=e=>{
-  if(followingCall()&&(!e.deltaY||e.deltaY>0&&atBottom()||e.deltaY<0&&pane.scrollTop<=0))return;
+  if(!e.deltaY)return; // Horizontal scrolling is not a new vertical reading choice.
+  if(followingCall()&&(e.deltaY>0&&atBottom()||e.deltaY<0&&pane.scrollTop<=0))return;
   stop();
  };
  const keyDown=e=>{if(!e.target.closest('input,textarea,select,[contenteditable="true"]')&&['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '].includes(e.key))stop()};
@@ -121,6 +148,8 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
   // before our layout frame runs. That does not cancel call or submitted intent.
   // Wheel/touch/key intent has already stopped following; other external
   // scrolls, including browser focus moves, retain their existing behavior.
+  // Do not infer reading intent from an unexplained bottom clamp: a scrollbar
+  // or focus move to that same position must still supersede a constrained goal.
   const limit=Math.max(0,pane.scrollHeight-pane.clientHeight);
   if(snapshot&&(followingCall()||(submitted&&following.current))&&snapshot.top>limit&&atBottom()){update();return}
   if(snapshot)stop();report();
@@ -146,7 +175,7 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
   select(id,isReady=true){
    if(id!==sessionId){
     clearIframeFocus();persist();clearOverflow();const sendingNewChat=sessionId===null&&submitted;
-    sessionId=id;snapshot=null;restore=positions.get(id)||null;anchorLoad=null;attemptedAnchor=null;unresolvedPosition=null;
+    sessionId=id;snapshot=null;constrainedPosition=null;restore=positions.get(id)||null;anchorLoad=null;attemptedAnchor=null;unresolvedPosition=null;
     submitted=sendingNewChat||(typeof restore?.submittedId==='string'?restore.submittedId:null);
     resuming=!!submitted&&!sendingNewChat;
     following.current=!!submitted;
@@ -155,7 +184,7 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
    }
    ready=isReady;if(!ready){clearOverflow();clearIframeFocus()}else queueIframeFocus();update();
   },
-  submitted(id){if(callId&&callSessionId===sessionId)callPaused=false;anchorLoad=null;unresolvedPosition=null;submitted=id;resuming=false;restore=null;initial=false;following.current=true;update()},
+  submitted(id){if(callId&&callSessionId===sessionId)callPaused=false;constrainedPosition=null;anchorLoad=null;unresolvedPosition=null;submitted=id;resuming=false;restore=null;initial=false;following.current=true;update()},
   jump(id){
    stop();
    const target={messageId:id,top:pane.scrollTop,offset:16,focus:true};

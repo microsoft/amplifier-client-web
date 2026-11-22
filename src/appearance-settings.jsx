@@ -385,6 +385,12 @@ export function AppearanceSettings({
  const change=(field,value)=>{void commitPreference(field,value,activeScope,{target:targetForScope(activeScope)})};
  const controlDisabled=field=>profileFeedback?.status==='pending'||fieldPending(field,activeScope)||
   ['appearanceId','accent'].includes(field)&&['appearanceId','accent'].some(related=>fieldPending(related,activeScope));
+ // A pending color-mode save must keep the initiating radio focused. Cancel
+ // native selection/navigation while its existing operation owner is pending,
+ // rather than disabling the focused element or restoring focus afterward.
+ const schemeBlocked=()=>controlDisabled('scheme')||profileOwner.current!==null||fieldOwners.current.has(fieldKey(activeScope,'scheme'));
+ const guardSchemeActivation=event=>{if(schemeBlocked())event.preventDefault()};
+ const guardSchemeKey=event=>{if([' ','Enter','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))guardSchemeActivation(event)};
  const valueFor=field=>displayedValue(field,activeScope);
  const accentPickerValue=()=>{
   const stored=valueFor('accent');
@@ -431,7 +437,7 @@ export function AppearanceSettings({
   <h2 id={`appearance-group-${group.id}`}>{group.title}</h2>
   {group.id==='visual-basics'&&<>
    {row('appearanceId','Appearance','Choose an included or saved look, or restore the neutral appearance.',renderAppearanceCards())}
-   {row('scheme','Color mode','Choose the color mode for the selected Global or This browser profile.',<div className="a-appearance-modes" role="radiogroup" aria-label="Color mode">{[['system','System'],['light','Light'],['dark','Dark']].map(([value,label])=><label key={value}><input type="radio" name="appearance-scheme" value={value} checked={valueFor('scheme')===value} disabled={controlDisabled('scheme')} data-action="appearance.preferences.update" onChange={()=>change('scheme',value)}/>{label}</label>)}</div>)}
+   {row('scheme','Color mode','Choose the color mode for the selected Global or This browser profile.',<div className="a-appearance-modes" role="radiogroup" aria-label="Color mode">{[['system','System'],['light','Light'],['dark','Dark']].map(([value,label])=><label key={value}><input type="radio" name="appearance-scheme" value={value} checked={valueFor('scheme')===value} disabled={profileFeedback?.status==='pending'} aria-disabled={controlDisabled('scheme')||undefined} data-action="appearance.preferences.update" onClickCapture={guardSchemeActivation} onKeyDown={guardSchemeKey} onChange={()=>{if(!schemeBlocked())change('scheme',value)}}/>{label}</label>)}</div>)}
    {row('density','Density',null,<select aria-label="Density" value={valueFor('density')} disabled={controlDisabled('density')} data-action="appearance.preferences.update" onChange={event=>change('density',event.target.value)}><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select>)}
    {row('accent','Accent color','An optional override until you choose a different appearance.',<div className="a-detail-choices"><input type="color" aria-label="Accent color" value={valueFor('accent')??accentPickerValue()} disabled={controlDisabled('accent')} data-action="appearance.preferences.update" onChange={event=>change('accent',event.target.value)}/><button type="button" className="a-soft" disabled={controlDisabled('accent')} data-action="appearance.preferences.update" onClick={()=>change('accent',null)}>Use appearance accent</button></div>)}
   </>}
