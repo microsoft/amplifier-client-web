@@ -4,7 +4,7 @@ import {ownershipState} from './ownership.js';
 import {delegationRoutingLabel} from './delegation-routing.js';
 import {useOutsideDismiss} from './use-outside-dismiss';
 import React,{useEffect,useState,useRef,useId} from 'react';
-import {ChevronDown,X,Paperclip,Download} from 'lucide-react';
+import {X,Paperclip,Download} from 'lucide-react';
 import {providerFields} from './setup-data';
 import {ModelSelect} from './model-select';
 import {NextMessageImpact,bundleToolsMayChange,selectionImpact} from './next-message-impact';
@@ -198,7 +198,7 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
  const savedChoice=session?.pendingModelSelection;
  const savedModelImpact=selectionImpact(impact,savedChoice?.instance,savedChoice?.model);
  const savedBundleImpact=bundleToolsMayChange(session,pendingBundle?.bundle)?'tools':null;
- const savedImpact=savedModelImpact||savedBundleImpact;
+
  const previous = session?.previousTurnSettings;
  // Old chats may have an actual runtime selection but no per-turn settings receipt.
  // Use it only for explanatory text. Restoring still needs the host's proof.
@@ -206,14 +206,14 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
  const priorChoice = previous?.selection || (hasHistory && (session.runtimeReport?.effective_selection ||
   (!savedChoice && session.selection) || (lastCall?.model && {model:lastCall.model})));
  const pendingChoice = !!(savedChoice || pendingBundle);
- const restoreOffered = pendingChoice && !!previous?.inputId && !!previous.generationId && !previous.restorePending;
+ const restoreOffered = !!previous?.canAvoidHistoryPreparation && !!savedModelImpact && !previous.restorePending && !pendingBundle && !session.configurationPending && !session.configurationBusy && previous.configurationRevision===configurationRevision;
  async function restorePrevious() {
   if (!restoreOffered || blocked) return;
   setError('');
   touched.current=false;
   effortPending.current=null;
   try {
-   await nextMessage.configure({restorePreviousInputId:previous.inputId,restorePreviousGenerationId:previous.generationId},nextMessageRevision);
+   await nextMessage.configure({onlyIfAvoidable:true,restorePreviousInputId:previous.inputId,restorePreviousGenerationId:previous.generationId},nextMessageRevision);
   } catch (err) {setError(err.message)}
  }
  function settingsNotice(kind) {
@@ -224,22 +224,26 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
   const pendingLabel = nextMessage.pending ? 'Saving next message settings…' :
    pendingChoice && !viewingUnsavedChoice ? 'Saved for your next message.' : working && open ? 'Changes apply to your next message.' : '';
   const unmeasured = !kind && selectionChanged && !impact;
-  if (!kind && !unmeasured && !pendingLabel && !restoreOffered) return null;
+  const showSwitchHint = open && !kind && !unmeasured && !pendingChoice && !touched.current &&
+   draft.instance === impact?.source?.instance && draft.model === impact?.source?.model &&
+   impact?.coldModels === true && Number.isSafeInteger(impact.inputTokens) && impact.inputTokens > 0;
+  if (!kind && !unmeasured && !pendingLabel && !restoreOffered && !showSwitchHint) return null;
   return <div className="a-next-choice" data-part="next-message-settings" data-impact={kind||undefined}>
    {pendingLabel&&<span className="a-caption" role="status">{pendingLabel}</span>}
+   {showSwitchHint&&<p className="a-caption">Switching models may make the next reply slower or cost more if earlier messages need to be read again.</p>}
    <NextMessageImpact impact={impact} kind={kind}/>
    {unmeasured&&<p className="a-caption" data-next-message-impact="unknown">Earlier messages may need preparing again. The time and cost are unknown.</p>}
-   {restoreOffered&&<button type="button" className="a-link" data-action="conversation.configure" disabled={blocked} onClick={restorePrevious}>Use previous settings</button>}
+   {restoreOffered&&<button type="button" className="a-link" data-action="conversation.configure" disabled={blocked} onClick={restorePrevious}>Keep {options.find(row=>row.id===previous.selection.instance)?.label||previous.selection.instance} · {previous.selection.model}</button>}
   </div>;
  }
  const manageConnections=<div className="a-dialog-actions"><button type="button" className="a-link" disabled={!selected} onClick={()=>isDraft?act('providers.models',{id:draft.instance,workspace:setup.workspace,...location,refresh:true}):act('runtime.control',{sessionId,operation:'configuration.catalog',args:{refresh:true,instance:draft.instance}})}>Refresh this connection</button><button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{composerModel:{...draft,open:false},panel:'settings',settingsSection:'setup',settingsExpanded:['ai-connections'],aiConnectionEditor:{...(state.view?.aiConnectionEditor||{}),step:'list'}}})}>Manage connections</button></div>;
  const needsConnectionHelp=noProviders||binding?.eligible===false||!!failure||delayed;
  const renderModelOptions=optionsContent=><>
   {settingsNotice(selectedImpact || savedBundleImpact || (!touched.current && savedModelImpact))}
-  <details className="a-picker-advanced"><summary>Advanced</summary>
    <div data-composer-page="effort">
-   {choices.length>0?<><label htmlFor="chat-effort">Reasoning effort <strong>{effortLabel}</strong></label>{draft.effort&&!choices.includes(draft.effort)&&<small>Saved effort {effort} is not advertised for this model. Choose an available effort to replace it.</small>}<input id="chat-effort" type="range" min={defaultPosition?-1:0} max={choices.length-1} step="1" value={sliderPosition} aria-valuetext={draft.effort&&!choices.includes(draft.effort)?'Choose effort; saved value is not advertised':effortLabel} disabled={blocked||!draft.model||binding?.eligible===false} data-action={isDraft?'view.update':'conversation.configure'} onChange={previewEffort} onPointerUp={commitEffort} onKeyUp={commitEffort} onBlur={commitEffort}/><div className="a-effort-labels"><span>{defaultPosition?'Provider default':choices[0]}</span><span>{choices.at(-1)}</span></div></>:<small>{binding?.eligible===false?'Saved connection settings need review before changing reasoning effort.':entry?.metadata||selected?.configSchema||selected?.info?.config_fields?'Reasoning effort is not configurable for this model.':failure||delayed||entry?.phase==='error'?'Model capabilities unavailable.':'Loading model capabilities…'}{effort&&` Saved effort: ${effort}.`}</small>}
+   {choices.length>0?<><label htmlFor="chat-effort">Effort <strong>{effortLabel}</strong></label>{draft.effort&&!choices.includes(draft.effort)&&<small>Saved effort {effort} is not advertised for this model. Choose an available effort to replace it.</small>}<input id="chat-effort" type="range" min={defaultPosition?-1:0} max={choices.length-1} step="1" value={sliderPosition} aria-valuetext={draft.effort&&!choices.includes(draft.effort)?'Choose effort; saved value is not advertised':effortLabel} disabled={blocked||!draft.model||binding?.eligible===false} data-action={isDraft?'view.update':'conversation.configure'} onChange={previewEffort} onPointerUp={commitEffort} onKeyUp={commitEffort} onBlur={commitEffort}/><div className="a-effort-labels"><span>{defaultPosition?'Provider default':choices[0]}</span><span>{choices.at(-1)}</span></div></>:<small>{binding?.eligible===false?'Saved connection settings need review before changing effort.':entry?.metadata||selected?.configSchema||selected?.info?.config_fields?'Effort is not configurable for this model.':failure||delayed||entry?.phase==='error'?'Model capabilities unavailable.':'Loading model capabilities…'}{effort&&` Saved effort: ${effort}.`}</small>}
    </div>
+  <details className="a-picker-advanced"><summary>Advanced</summary>
    {optionsContent}
    {!isDraft&&<p className="a-muted" data-part="delegation-routing">{delegationRoutingLabel(catalog?.delegationRouting||session?.runtimeReport?.delegationRouting)}</p>}
    {children}
@@ -251,18 +255,18 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
  </>;
  const renderPanel=embedded?content=>content:renderPopover;
  return <div className="a-model-control" ref={popover}>
-  {!embedded&&<button type="button" className="a-model-trigger" aria-label="Model and reasoning settings" aria-haspopup={compact?'dialog':undefined} disabled={unavailable} aria-expanded={!!open} aria-busy={checkingDefaults||undefined} title={checkingDefaults?`${modelLabel} · Checking bundle settings…`:modelLabel} data-action="view.update" onClick={show}><span>{!effective.model&&(delayed||failure)?'Model settings unavailable':compact?modelAndEffort:modelLabel}</span>{(session?.pendingModelSelection||pendingBundle)&&<small>Next message</small>}<ChevronDown/></button>}
-  {!open&&settingsNotice(savedImpact)}
+  {!embedded&&<button type="button" className="a-model-trigger" aria-label="Model and reasoning settings" aria-haspopup={compact?'dialog':undefined} disabled={unavailable} aria-expanded={!!open} aria-busy={checkingDefaults||undefined} title={checkingDefaults?`${modelLabel} · Checking bundle settings…`:modelLabel} data-action="view.update" onClick={show}><span>{!effective.model&&(delayed||failure)?'Model settings unavailable':compact?modelAndEffort:modelLabel}</span>{(session?.pendingModelSelection||pendingBundle)&&<small>Next message</small>}</button>}
+
   {!open&&error&&<p className="a-danger" role="status">{error}</p>}
   {open&&renderPanel(<section ref={panelRef} className={embedded?"a-embedded-model":`a-model-popover a-compact-popover${compact?' a-composer-options-panel':''}`} style={embedded?undefined:position} role="dialog" aria-label="Model for this chat" aria-describedby={`${descriptionId}-heading`}>
    <div className="a-settings-row a-composer-options-heading"><strong id={`${descriptionId}-heading`}>Model for this chat</strong>{!embedded&&<button type="button" className="a-icon" aria-label={compact?'Close chat options':'Close model settings'} data-action="view.update" onClick={close}><X/></button>}</div>
    {binding?.eligible===false&&<p role="status">{binding.reason} The existing selection is preserved.</p>}
    <div data-composer-page="provider">
-   <label htmlFor="chat-provider">Connection</label><ProviderSelect controlId="chat-provider" value={draft.instance} providers={providers} options={options} mayCostMore={id=>selectionImpact(impact,id)} placeholderDisabled data-action={isDraft?'view.update':'conversation.configure'} disabled={blocked} onChange={chooseProvider} placeholder={providers.length?'Choose a connection':noProviders?'No connections configured':failure||delayed?'Connections unavailable':'Loading connections…'}/>
+   <label htmlFor="chat-provider">Connection</label><ProviderSelect controlId="chat-provider" value={draft.instance} providers={providers} options={options} placeholderDisabled data-action={isDraft?'view.update':'conversation.configure'} disabled={blocked} onChange={chooseProvider} placeholder={providers.length?'Choose a connection':noProviders?'No connections configured':failure||delayed?'Connections unavailable':'Loading connections…'}/>
    {draft.instance&&!selected&&<small>Saved connection {draft.instance} is not available in this configuration scope.</small>}
    </div>
    <div data-composer-page="model">
-   <label htmlFor="chat-model">Model</label>{binding?.eligible===false?<><input id="chat-model" aria-label="Conversation model" value={draft.model||''} disabled readOnly/><p className="a-caption">The configured connection’s model list cannot be used for this chat until its saved connection settings match. This does not mean the model is unavailable. Choose a different connection above or review the saved configuration.</p></>:<ModelSelect key={draft.instance} id="chat-model" label="Conversation model" mayCostMore={id=>selectionImpact(impact,draft.instance,id)} value={draft.model||''} entry={entry} state={state} act={act} disabled={blocked||!selected} onChange={model=>{touched.current=true;edit({model,...(model!==draft.model?{effort:''}:{})})}} onCommit={model=>apply({model,effort:draft.model===model?draft.effort:''})} renderOptions={renderModelOptions}/>}
+   <label htmlFor="chat-model">Model</label>{binding?.eligible===false?<><input id="chat-model" aria-label="Conversation model" value={draft.model||''} disabled readOnly/><p className="a-caption">The configured connection’s model list cannot be used for this chat until its saved connection settings match. This does not mean the model is unavailable. Choose a different connection above or review the saved configuration.</p></>:<ModelSelect key={draft.instance} id="chat-model" label="Conversation model" value={draft.model||''} entry={entry} state={state} act={act} disabled={blocked||!selected} onChange={model=>{touched.current=true;edit({model,...(model!==draft.model?{effort:''}:{})})}} onCommit={model=>apply({model,effort:draft.model===model?draft.effort:''})} renderOptions={renderModelOptions}/>}
    </div>
    {binding?.eligible===false&&renderModelOptions(null)}
    {embedded&&session?.failure?.code==='transition_intent_required'&&<button type="button" className="a-soft" disabled={blocked||!selected||!draft.model||binding?.eligible===false} onClick={()=>apply({model:draft.model})}>Use this model for my next message</button>}
