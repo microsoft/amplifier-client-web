@@ -111,8 +111,12 @@ async function run(){
    return route.fulfill({json:{accepted:true,result:{items:[],errors:[]}}});
   }
   if(body.action==='conversation.send'){held.push({route,body});return}
-  if(body.action==='conversation.delivery')return route.fulfill({json:{accepted:true,result:{
-   delivery:'not_saved',message:'Fixture: no saved copy. Nothing was resent.'},state:shell.state()}});
+  if(body.action==='conversation.delivery'){
+   assert.equal(body.args.sessionId,sid);assert.ok(body.args.inputId);
+   return route.fulfill({json:{accepted:true,result:{
+    sessionId:sid,inputId:body.args.inputId,source:{workspace,nativeIdentity:sid},
+    delivery:'not_saved',message:'Fixture: no saved copy. Nothing was resent.'},state:shell.state()}});
+  }
   if(body.action==='view.update'){state.view={...state.view,...body.args.patch};state.revision++}
   else if(!['shell.report','attention.read','bundles.list','configuration.defaults','providers.list'].includes(body.action)&&
    !(body.action==='runtime.control'&&body.args.operation==='configuration.catalog')){
