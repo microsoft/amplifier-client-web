@@ -56,6 +56,7 @@ function Forms(){
   <SettingsPageContext.Provider value="diagnostics"><MaintenanceSettings state={state} act={act}/></SettingsPageContext.Provider>
   <SettingsPageContext.Provider value="reset"><MaintenanceSettings state={state} act={act}/></SettingsPageContext.Provider>
   <label id="wrapped-choice"><input type="checkbox"/>A multiline choice keeps its first line beside the control and all remaining lines in the same text column even on a narrow screen.</label>
+  <label id="wrapped-radio"><input type="radio" name="wrapped-choice"/>A multiline radio keeps the native control before its first line while the remaining text wraps in its own column.</label>
   <label className="a-sr-only" htmlFor="ordinary">Ordinary field</label><input id="ordinary"/>
   <div className="a-workspace-picker"><label className="a-picker-search"><Search aria-hidden="true"/><input aria-label="Compound picker"/></label></div>
   <div className="a-appearance-settings"><label className="a-appearance-toggle"><input type="checkbox"/>Appearance toggle</label>
@@ -127,9 +128,10 @@ async function choiceGeometry(locator,dir,firstLine=true){
   let text;while(walker.nextNode()){if(walker.currentNode.textContent.trim()){text=walker.currentNode;break}}
   const range=document.createRange();range.selectNodeContents(text);
   const boxes=[...range.getClientRects()].map(r=>({left:r.left,right:r.right,top:r.top,bottom:r.bottom}));
-  const r=input.getBoundingClientRect();return {input:{left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width},boxes};
+  const r=input.getBoundingClientRect(),style=getComputedStyle(node);return {display:style.display,direction:style.flexDirection,input:{left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width},boxes};
  });
  const {input,boxes}=geometry;
+ assert.equal(geometry.display,'flex');assert.equal(geometry.direction,'row','Native choices keep their row direction under a generic appearance label rule');
  assert.ok(input.width>=16&&input.width<=18,'Choice stays intrinsic-sized');
  for(const box of boxes)assert.ok((dir==='rtl'?input.left-box.right:box.left-input.right)>=6,'Every wrapped line stays in the text column');
  if(firstLine)assert.ok(Math.abs(input.top-boxes[0].top)<=6,'Choice aligns with first text line, not whole wrapped block');
@@ -154,6 +156,9 @@ try{
   for(const dir of ['ltr','rtl'])for(const scheme of ['light','dark'])for(const forced of [false,true]){
    await page.emulateMedia({colorScheme:scheme,forcedColors:forced?'active':'none',reducedMotion:'reduce'});
    await page.goto(vite.resolvedUrls.local[0]+'shared-controls');
+   // A valid appearance may give ordinary field labels a column layout.
+   // The semantic native-choice owner must retain its complete row geometry.
+   await page.addStyleTag({content:'#amp-one .a-dialog label{display:block;flex-direction:column}'});
    const search=page.getByRole('searchbox',{name:'Find a starter'}),wrapper=search.locator('..');
    await expect(search).toBeVisible();
    await page.locator('#amp-one').evaluate((node,{dir,scheme})=>{node.dir=dir;node.dataset.themeScheme=scheme},{dir,scheme});
@@ -182,6 +187,7 @@ try{
     await choiceGeometry(page.getByRole('checkbox',{name,exact:true}).locator('..'),dir);
    }
    await choiceGeometry(page.locator('#wrapped-choice'),dir);
+   await choiceGeometry(page.locator('#wrapped-radio'),dir);
    for(const name of ['Appearance toggle','Metric choice']){
     const choice=page.getByRole('checkbox',{name,exact:true});
     await choiceGeometry(choice.locator('..'),dir,false);

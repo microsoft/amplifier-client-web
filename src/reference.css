@@ -621,6 +621,7 @@ body,
 /* Native choice inputs must not inherit full-width text-field geometry. */
 #amp-one :where(.a-dialog) label:has(> input:is([type="checkbox"], [type="radio"])) {
   display: flex;
+  flex-direction: row;
   align-items: flex-start;
   gap: 10px;
   min-width: 0;
