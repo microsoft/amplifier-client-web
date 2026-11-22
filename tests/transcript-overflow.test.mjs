@@ -241,6 +241,38 @@ test('a below-viewport fallback cannot hold an unreachable goal over the newly v
  h.controller.dispose();
 });
 
+test('capture-time visible goals survive a smaller viewport while partial tall messages remain eligible',()=>{
+ for(const kind of ['viewport','tall']){
+  const row=kind==='viewport'?message('reading',700,80):message('reading',100,1200);
+  const h=harness({messages:[row],scrollHeight:2000,clientHeight:800});
+  h.controller.select('alpha');h.settle();h.scrollTo(kind==='viewport'?0:600);
+  const before=row.getBoundingClientRect().top;
+  if(kind==='viewport'){h.pane.clientHeight=600;row.contentTop=650}
+  else{h.pane.scrollHeight=1300;row.contentTop=900}
+  h.controller.update();h.settle();
+  if(kind==='viewport'){h.pane.clientHeight=800;row.contentTop=700}
+  else{h.pane.scrollHeight=2000;row.contentTop=100}
+  h.controller.update();h.settle();
+  assert.equal(row.getBoundingClientRect().top,before,kind);
+  h.view.dispatchEvent(new Event('pagehide'));
+  const saved=JSON.parse(h.storage.get('amplifier.chat-reading.v1')).alpha;
+  assert.deepEqual(Object.keys(saved).sort(),['messageId','offset','seenAt','submittedId','top'],'Visibility evidence is not persisted');
+  h.controller.dispose();
+ }
+});
+
+test('saved offscreen fallback restores once without becoming a retained reading goal',()=>{
+ const question=message('question',32),answer=message('answer',1000),h=harness({messages:[question,answer],scrollHeight:2000});
+ h.controller.select('alpha');h.settle();h.scrollTo(500);
+ // Persist an ordinary fallback below the viewport, then revisit after collapse.
+ answer.contentTop=1600;h.scrollTo(501);h.controller.select('beta');h.settle();
+ answer.contentTop=1000;h.controller.select('alpha');h.settle();
+ assert.equal(h.pane.scrollTop,0);
+ answer.contentTop=1284;h.controller.update();h.settle();
+ assert.equal(h.pane.scrollTop,0,'A saved offscreen fallback cannot take over the newly visible question');
+ h.controller.dispose();
+});
+
 test('new reading movement supersedes an offset that was clamped by pane reflow',()=>{
  for(const intent of ['wheel','touchmove','keydown','scrollbar']){
   const row=message('reading',32,1200),h=harness({messages:[row],scrollHeight:1300});

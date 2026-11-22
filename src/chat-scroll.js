@@ -38,6 +38,10 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
  // can temporarily make it unreachable (for example, narrower top padding).
  // Reporting that clamped position must not turn it into a new reading choice.
  let constrainedPosition=null;
+ // Ordinary fallback anchors can lie beyond the viewport when Work fills it.
+ // Only a genuinely visible reading goal may outlive a clamped restoration.
+ // Keep capture-time evidence private, not in the stored reading record.
+ const readingGoals=new WeakMap();
  // A sandboxed preview can be the host activeElement without matching CSS
  // :focus/:focus-within. Observe host focus only, never the embedded document.
  // Keep this frame separate: focus observation must not move or save anchors.
@@ -64,8 +68,10 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
   const top=pane.getBoundingClientRect().top,rows=messages();
   const anchor=rows.find(node=>node.getBoundingClientRect().bottom>top)||rows.at(-1);
   const messageId=anchor?.dataset.messageId,reference=readingReference?.(sessionId,messageId);
-  snapshot={top:pane.scrollTop,messageId,offset:anchor?anchor.getBoundingClientRect().top-top:0,
+  const box=anchor?.getBoundingClientRect();
+  snapshot={top:pane.scrollTop,messageId,offset:box?box.top-top:0,
    ...(reference?.kind==='transcript-window'&&typeof reference.restoreCursor==='string'?{reference:{kind:reference.kind,restoreCursor:reference.restoreCursor}}:{})};
+  readingGoals.set(snapshot,!!box&&box.top<top+pane.clientHeight&&box.bottom>top);
  };
  // A reply anchor is different from deliberate scrollback. Preserve that intent
  // across chat switches, even when the reply had not arrived before leaving.
@@ -75,10 +81,14 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
   constrainedPosition=null;
   const anchor=messages().find(node=>node.dataset.messageId===position.messageId);
   if(anchor){
-   const target=pane.scrollTop+anchor.getBoundingClientRect().top-pane.getBoundingClientRect().top-position.offset;
+   const box=anchor.getBoundingClientRect();
+   // Saved records have no capture-time viewport evidence. Restore them
+   // normally; retain a constrained goal only if plausible in this viewport.
+   if(!readingGoals.has(position))readingGoals.set(position,position.offset<pane.clientHeight&&position.offset+box.bottom-box.top>0);
+   const target=pane.scrollTop+box.top-pane.getBoundingClientRect().top-position.offset;
    const limit=Math.max(0,pane.scrollHeight-pane.clientHeight);
    pane.scrollTop=target;
-   if(!position.focus&&(target< -1&&pane.scrollTop<=1||target>limit+1&&Math.abs(pane.scrollTop-limit)<=1))constrainedPosition=position;
+   if(!position.focus&&readingGoals.get(position)&&(target< -1&&pane.scrollTop<=1||target>limit+1&&Math.abs(pane.scrollTop-limit)<=1))constrainedPosition=position;
    if(position.focus){anchor.tabIndex=-1;anchor.focus({preventScroll:true})}
   }
   else pane.scrollTop=Math.min(position.top||0,pane.scrollHeight);
