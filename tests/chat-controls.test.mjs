@@ -45,7 +45,7 @@ test('external agent label does not discover or configure local models and bundl
  let root;
  try{
   await renderAct(async()=>root=create(React.createElement(ComposerOptions,{state:{view:{}},session,act:record(calls)})));
-  assert.match(renderedText(root.toJSON()),/Project assistant/);
+  assert.equal(root.toJSON(),null);
   assert.equal(root.root.findAllByProps({'aria-label':'Model and reasoning settings'}).length,0);
   assert.equal(root.root.findAllByProps({role:'dialog'}).length,0);
   assert.deepEqual(calls,[],'External presentation must not load the local runtime');
@@ -69,7 +69,8 @@ test('one compact model panel embeds bundle choices under Advanced and shares it
   assert.equal(dialog.findAllByProps({'data-composer-page':'overview'}).length,0);
   assert.equal(dialog.findAllByProps({'aria-label':'Back to chat options'}).length,0);
   const advanced=dialog.findByProps({className:'a-picker-advanced'});
-  assert.equal(advanced.findByProps({'data-composer-page':'effort'}).findByProps({id:'chat-effort'}).type,'input');
+  assert.equal(advanced.findAllByProps({id:'chat-effort'}).length,0);
+  assert.equal(dialog.findByProps({id:'chat-effort'}).type,'input');
   assert.ok(advanced.findByProps({'data-part':'model-pricing-announcement'}));
   assert.ok(advanced.findAllByType('button').some(b=>b.children.includes('Enter an exact model ID')));
   assert.deepEqual(advanced.findAllByType('summary')[0].children,['Advanced']);
@@ -487,7 +488,7 @@ test('authoritative unsupported reasoning shows no invented slider or selection'
  try{
   await renderAct(async()=>root=create(React.createElement(ModelControl,{state,session,act:async(name,args)=>{calls.push({name,args});return {accepted:true}}})));
   assert.equal(root.root.findAllByProps({id:'chat-effort'}).length,0);
-  assert.match(JSON.stringify(root.toJSON()),/Reasoning effort is not configurable for this model/);
+  assert.match(JSON.stringify(root.toJSON()),/Effort is not configurable for this model/);
   assert.equal(calls.some(row=>row.name==='conversation.configure'||row.name==='conversation.send'),false);
  }finally{await renderAct(async()=>root?.unmount())}
 });
@@ -803,13 +804,14 @@ test('known costly options are marked before saving and the notice clears on a s
  try{
   await renderAct(async()=>root=create(render()));
   const option=(id,value)=>renderedText(field(root,id).findAllByType('option').find(node=>node.props.value===value).children);
-  assert.match(option('chat-model','other'),/May cost more/);
-  assert.match(option('chat-provider','two'),/May cost more/);
+  assert.equal(option('chat-model','other'),'other');
+  assert.match(renderedText(root.toJSON()),/Switching models may make the next reply slower/);
+  assert.doesNotMatch(option('chat-provider','two'),/May cost more/);
   assert.doesNotMatch(option('chat-provider','alias'),/May cost more/);
   assert.doesNotMatch(option('chat-model','model'),/May cost more/);
   assert.equal(notice().length,0);
   await renderAct(async()=>field(root,'chat-model').props.onChange({target:{value:'other'}}));
-  assert.match(renderedText(notice()[0].children),/88,000 input tokens/);
+  assert.match(renderedText(notice()[0].children),/reread earlier messages/);
   await renderAct(async()=>field(root,'chat-model').props.onChange({target:{value:'model'}}));
   assert.equal(notice().length,0);
   assert.deepEqual(calls.filter(c=>c.name!=='view.update').map(c=>c.name),['conversation.configure','conversation.configure']);
@@ -817,7 +819,7 @@ test('known costly options are marked before saving and the notice clears on a s
   state={...state,view:{composerModel:{open:false,sessionId:'chat'}}};
   session={...session,pendingModelSelection:{instance:'one',model:'other'}};
   await renderAct(async()=>root.update(render()));
-  assert.equal(notice().length,1,'the saved choice is visible before Send');
+  assert.equal(notice().length,0,'closing the popup returns the space to the chat');
   session={...session,pendingModelSelection:{...source,effort:'high'}};
   await renderAct(async()=>root.update(render()));
   assert.equal(notice().length,0,'effort alone has no proven impact');
@@ -854,10 +856,10 @@ test('known large native history is disclosed for a different provider even afte
  try{
   await renderAct(async()=>root=create(render()));
   assert.doesNotMatch(renderedText(field(root,'chat-model').findAllByType('option').find(n=>n.props.value==='other').children),/May cost more/);
-  assert.match(renderedText(field(root,'chat-provider').findAllByType('option').find(n=>n.props.value==='two').children),/May cost more/);
+  assert.doesNotMatch(renderedText(field(root,'chat-provider').findAllByType('option').find(n=>n.props.value==='two').children),/May cost more/);
   await renderAct(async()=>field(root,'chat-provider').props.onChange({target:{value:'two'}}));
   const hint=root.root.findByProps({'data-next-message-impact':'handoff'});
-  assert.match(renderedText(hint.children),/60,000 tokens.*summarize/i);
+  assert.match(renderedText(hint.children),/earlier messages need a summary/i);
   assert.equal(root.root.findAllByProps({'data-next-message-impact':'selection'}).length,0);
   await renderAct(async()=>field(root,'chat-provider').props.onChange({target:{value:'one'}}));
   assert.equal(root.root.findAllByProps({'data-next-message-impact':'handoff'}).length,0);
@@ -865,32 +867,14 @@ test('known large native history is disclosed for a different provider even afte
  }finally{await renderAct(async()=>root?.unmount())}
 });
 
-test('pending unmeasured model change can restore only the previous admitted settings',async()=>{
- const calls=[],selected={instance:'one',model:'second'},prior={inputId:'admitted-input',generationId:'prior-generation',selection:{instance:'one',model:'first'},bundle:'work'};
- let session={id:'chat',nextMessageRevision:3,pendingModelSelection:selected,previousTurnSettings:prior};
- let state=savedModelState();
- state={...state,view:{composerModel:{sessionId:'chat',open:false}}};
- const render=()=>React.createElement(ModelControl,{state,session,act:record(calls)});
+test('an unmeasured switch never offers a shortcut to save preparation',async()=>{
+ const selected={instance:'one',model:'second'};
+ const session={id:'chat',pendingModelSelection:selected,previousTurnSettings:{inputId:'admitted-input',generationId:'prior-generation',selection:{instance:'one',model:'first'}}};
+ const state={...savedModelState(),view:{composerModel:{sessionId:'chat',open:true,...selected}}};
  let root;
  try{
-  await renderAct(async()=>root=create(render()));
-  const hint=root.root.findByProps({'data-next-message-impact':'unknown'});
-  assert.match(renderedText(hint.children),/time and cost.*unknown/i);
-  const restore=()=>root.root.findAllByType('button').filter(n=>n.children.includes('Use previous settings'));
-  assert.equal(restore().length,1);
-  await renderAct(async()=>restore()[0].props.onClick());
-  assert.deepEqual(calls.filter(row=>row.name==='conversation.configure'),[{name:'conversation.configure',args:{
-   sessionId:'chat',expectedRevision:3,restorePreviousInputId:'admitted-input',restorePreviousGenerationId:'prior-generation'}}]);
-  session={...session,previousTurnSettings:{...prior,restorePending:true}};
-  await renderAct(async()=>root.update(render()));
-  assert.equal(restore().length,0,'A corrective pending restore is already staged');
-  session={...session,previousTurnSettings:{...prior,generationId:undefined}};
-  await renderAct(async()=>root.update(render()));
-  assert.equal(restore().length,0);
-  session={...session,pendingModelSelection:undefined,previousTurnSettings:undefined};
-  await renderAct(async()=>root.update(render()));
-  assert.equal(root.root.findAllByProps({'data-next-message-impact':'unknown'}).length,0);
-  assert.equal(restore().length,0);
+  await renderAct(async()=>root=create(React.createElement(ModelControl,{state,session,act:record([])})));
+  assert.doesNotMatch(renderedText(root.toJSON()),/Keep .* · /);
  }finally{await renderAct(async()=>root?.unmount())}
 });
 

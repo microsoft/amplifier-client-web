@@ -5,7 +5,7 @@ export async function showComposerOptionWith(expect,page,section){
  const dialog=composerOptionsPanel(page);
  await expect(dialog).toHaveCount(1);
  await expect(dialog).toBeVisible();
- if(['advanced','bundle','effort'].includes(section)){
+ if(['advanced','bundle'].includes(section)){
   const advanced=dialog.locator('details.a-picker-advanced');
   if(await advanced.getAttribute('open')===null)await advanced.locator(':scope > summary').click();
   if(section==='advanced'){await expect(advanced).toHaveAttribute('open','');return}
