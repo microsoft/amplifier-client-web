@@ -4,7 +4,7 @@ import React,{act as renderAct} from 'react';
 import {create} from 'react-test-renderer';
 import {createServer} from 'vite';
 const server=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
-const {ModelControl,readAttachment,useNextMessageConfiguration}=await server.ssrLoadModule('/src/chat-controls.jsx');
+const {AttachmentStrip,ModelControl,readAttachment,useNextMessageConfiguration}=await server.ssrLoadModule('/src/chat-controls.jsx');
 const {ComposerOptions}=await server.ssrLoadModule('/src/composer-options.jsx');
 const record=calls=>async(name,args)=>{calls.push({name,args});return {accepted:true,...(name==='conversation.configure'?{result:{revision:args.expectedRevision+1}}:{})}};
 // Match the actual form control, not ModelSelect's component props. A user
@@ -14,6 +14,32 @@ const optionValues=(root,id)=>field(root,id).findAllByType('option').map(node=>n
 const renderedText=node=>typeof node==='string'?node:Array.isArray(node)?node.map(renderedText).join(''):renderedText(node?.children||[]);
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 test.after(()=>server.close());
+test('attachment labels retain complete text with separate metadata and unchanged actions',async()=>{
+ for(const kind of ['image','text-preview','link']){
+  const calls=[],removed=[],name='long-filename-'.repeat(30)+(kind==='image'?'.png':'.txt');
+  const file={id:'a'.repeat(32),name,size:4096,mime:kind==='image'?'image/png':'text/plain',
+   source:'clipboard-text',preview:'Long pasted excerpt. '.repeat(40),url:'/api/attachments/'+'a'.repeat(32)};
+  let root;
+  try{
+   await renderAct(async()=>root=create(React.createElement(AttachmentStrip,{items:[file],privateDraft:true,remove:id=>removed.push(id),
+    ...(kind==='text-preview'?{act:record(calls),sessionId:'chat'}:{})})));
+   assert.equal(root.root.findByProps({className:'a-attachments'}).props['data-private'],true);
+   const label=root.root.findByProps({className:'a-attachment-label'}),control=label.parent;
+   assert.equal(renderedText(label),kind==='image'?name:file.preview);
+   assert.equal(control.props.title,name);
+   assert.equal(renderedText(control.findByType('small')),kind==='link'?'Pasted text · 4 KB':'4 KB');
+   assert.deepEqual(calls,[],'Rendering does not fetch/open the attachment');
+   if(kind==='text-preview'){
+    await renderAct(async()=>control.props.onClick());
+    assert.deepEqual(calls,[{name:'canvas.openAttachment',args:{sessionId:'chat',id:file.id}}]);
+    assert.equal(root.root.findByProps({'aria-label':'Download '+name}).props.download,name);
+   }else if(kind==='image'){assert.equal(control.props['aria-haspopup'],'dialog');assert.equal(control.props['aria-label'],'Preview '+name)}
+   else{assert.equal(control.props.href,file.url);assert.equal(control.props.rel,'noopener noreferrer')}
+   await renderAct(async()=>root.root.findByProps({'aria-label':'Remove '+name}).props.onClick());
+   assert.deepEqual(removed,[file.id]);
+  }finally{await renderAct(async()=>root?.unmount())}
+ }
+});
 test('external agent label does not discover or configure local models and bundles',async()=>{
  const calls=[],session={id:'external-chat',externalAgent:{id:'remote',label:'Project assistant'}};
  let root;

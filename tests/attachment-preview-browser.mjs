@@ -26,6 +26,25 @@ function Fixture(){
 }
 createRoot(document.getElementById('amp-one')).render(React.createElement(Fixture));
 </script></body></html>`;
+const stripHtml=`<!doctype html><html><body style="margin:0"><div id="amp-one" class="a-chat-shell"></div><script type="module">
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import {AttachmentStrip} from '/src/chat-controls.jsx';
+import '/src/reference.css';
+import '/src/compact-composer.css';
+window.stripActions=[];
+const image={id:'a'.repeat(32),name:'unbroken-image-name-'.repeat(30)+'.png',mime:'image/png',size:4096,url:'/api/attachments/'+'a'.repeat(32)};
+const text={...image,id:'b'.repeat(32),name:'unbroken-text-name-'.repeat(30)+'.txt',mime:'text/plain',source:'clipboard-text',preview:'Long spaced pasted excerpt. '.repeat(40),url:'/api/attachments/'+'b'.repeat(32)};
+const act=async(action,args)=>{window.stripActions.push({action,args});return {accepted:true}};
+const remove=id=>window.stripActions.push({remove:id});
+createRoot(document.getElementById('amp-one')).render(React.createElement('div',{className:'a-composer a-compact-composer',style:{width:'min(760px,100%)',boxSizing:'border-box',padding:12}},
+ ...[
+  ['image',{items:[image],remove}],
+  ['text-preview',{items:[text],remove,act,sessionId:'chat'}],
+  ['link',{items:[text],remove,privateDraft:true}],
+  ['short',{items:[{...text,name:'note.txt',source:null,preview:null}],remove}],
+ ].map(([kind,props])=>React.createElement('section',{'data-fixture-kind':kind,key:kind},React.createElement(AttachmentStrip,props)))));
+</script></body></html>`;
 let vite,browser;
 const errors=[];
 const out=process.env.AMPLIFIER_TEST_ARTIFACTS||fileURLToPath(new URL('../output/attachment-preview',import.meta.url));
@@ -58,7 +77,9 @@ function stable(frames,label,fit=true){
 try{
  await mkdir(out,{recursive:true});
  vite=await createServer({configFile:false,root:fileURLToPath(new URL('../',import.meta.url)),
-  plugins:[{name:'preview-fixture',configureServer(server){server.middlewares.use('/preview-fixture',async(_req,res)=>{res.setHeader('Content-Type','text/html');res.end(await server.transformIndexHtml('/preview-fixture',html))})}}],
+  plugins:[{name:'preview-fixture',configureServer(server){
+   for(const [path,content] of [['/preview-fixture',html],['/strip-fixture',stripHtml]])server.middlewares.use(path,async(_req,res)=>{res.setHeader('Content-Type','text/html');res.end(await server.transformIndexHtml(path,content))});
+  }}],
   server:{host:'127.0.0.1',port:0,hmr:false}});
  await vite.listen();
  browser=await chromium.launch({headless:true,ignoreDefaultArgs:['--hide-scrollbars'],...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}:{})});
@@ -69,6 +90,51 @@ try{
   const data=await page.evaluate(()=>window.fixtureImage);
   await route.fulfill({contentType:'image/png',body:Buffer.from(data.split(',')[1],'base64')});
  });
+ // The shared strip must bound each real control branch, not clip metadata or
+ // shrink Remove merely to hide a very long filename/clipboard excerpt.
+ const stripPage=await browser.newPage({viewport:{width:1280,height:900}});
+ stripPage.on('pageerror',e=>errors.push(e.message));
+ await stripPage.route('**/api/attachments/*',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a1S8AAAAASUVORK5CYII=','base64')}));
+ try{
+  await stripPage.goto(vite.resolvedUrls.local[0]+'strip-fixture');
+  await expect(stripPage.locator('.a-attachment-label')).toHaveCount(4);
+  for(const width of [1280,390,320]){
+   await stripPage.setViewportSize({width,height:900});
+   const measurements=await stripPage.locator('[data-fixture-kind]').evaluateAll(sections=>sections.map(section=>{
+    const chip=section.querySelector('.a-attachment'),label=chip.querySelector('.a-attachment-label'),control=label.parentElement,metadata=control.querySelector('small'),remove=chip.querySelector('[data-action="attachment.remove"]');
+    const box=node=>{const r=node.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height}};
+    const r=box(remove),hit=document.elementFromPoint((r.left+r.right)/2,(r.top+r.bottom)/2);
+    return {kind:section.dataset.fixtureKind,chip:box(chip),control:box(control),label:box(label),metadata:box(metadata),remove:r,
+     width:label.clientWidth,scroll:label.scrollWidth,overflow:getComputedStyle(label).overflowX,ellipsis:getComputedStyle(label).textOverflow,
+     title:control.title,text:label.textContent,metadataText:metadata.textContent,removeHit:remove.contains(hit)};
+   }));
+   for(const m of measurements){
+    assert.ok(m.width>20&&m.title&&m.text&&m.metadataText.includes('4 KB'));
+    if(m.kind==='short')assert.equal(m.scroll,m.width,'Short labels remain untruncated');
+    else assert.ok(m.scroll>m.width,`${m.kind}: long text must exercise truncation`);
+    assert.equal(m.overflow,'hidden');assert.equal(m.ellipsis,'ellipsis');
+    for(const b of [m.control,m.label,m.metadata,m.remove])assert.ok(b.top>=m.chip.top&&b.bottom<=m.chip.bottom&&b.left>=m.chip.left&&b.right<=m.chip.right,JSON.stringify(m));
+    assert.ok(m.chip.right<=width&&m.remove.width>=44&&m.remove.height>=44&&m.removeHit);
+    assert.ok(m.control.right<=m.remove.left-4);
+   }
+   report.cases.push({label:`attachment strip ${width}`,measurements});
+  }
+  assert.deepEqual(await stripPage.evaluate(()=>window.stripActions),[]);
+  await expect(stripPage.locator('[data-fixture-kind="link"] .a-attachments')).toHaveAttribute('data-private','true');
+  // A wrapping summary is the old defect, not an acceptable alternative oracle.
+  const negative=await stripPage.addStyleTag({content:'#amp-one.a-chat-shell .a-attachment-label{white-space:normal}'});
+  assert.ok(await stripPage.locator('[data-fixture-kind="link"]').evaluate(section=>{
+   const chip=section.querySelector('.a-attachment').getBoundingClientRect(),control=section.querySelector('.a-attachment-label').parentElement.getBoundingClientRect();
+   return control.top<chip.top||control.bottom>chip.bottom;
+  }),'Vertical-containment control rejects the former wrapping summary');
+  await negative.evaluate(node=>node.remove());
+  await stripPage.locator('[data-fixture-kind="text-preview"] [data-action="canvas.openAttachment"]').click();
+  assert.deepEqual(await stripPage.evaluate(()=>window.stripActions),[{action:'canvas.openAttachment',args:{sessionId:'chat',id:'b'.repeat(32)}}]);
+  const imageName=stripPage.locator('[data-fixture-kind="image"] .a-attachment-preview-name');
+  await imageName.click();await expect(stripPage.getByRole('dialog',{name:'Image preview',exact:true})).toBeVisible();
+  await stripPage.getByRole('button',{name:'Close image preview',exact:true}).click();await expect(imageName).toBeFocused();
+  await stripPage.screenshot({path:join(out,'bounded-attachment-strips.png')});
+ }finally{await stripPage.close()}
  await page.goto(vite.resolvedUrls.local[0]+'preview-fixture');
  await page.waitForFunction(()=>!!window.previewImage);
  // A half CSS pixel rounded up at 150% scaling triggers the original loop.

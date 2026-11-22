@@ -366,11 +366,14 @@ async function appearanceRegression({page,scenario,readState,emit,stopGuard}){
  await usable(composer);
  const form=await page.locator('.a-composer').evaluate(rect),stripBox=await strip.evaluate(rect);
  const chip=await attachment.evaluate(rect),labelBox=await link.evaluate(rect),removeBox=await usable(remove,{button:true});
- const clip=await link.evaluate(node=>({width:node.clientWidth,scroll:node.scrollWidth,
+ const label=link.locator('.a-attachment-label'),textBox=await label.evaluate(rect),metadataBox=await link.locator('small').evaluate(rect);
+ const clip=await label.evaluate(node=>({width:node.clientWidth,scroll:node.scrollWidth,
   overflow:getComputedStyle(node).overflowX,ellipsis:getComputedStyle(node).textOverflow}));
- proof.attachment={form,strip:stripBox,chip,label:labelBox,remove:removeBox,clip};
+ proof.attachment={form,strip:stripBox,chip,label:labelBox,text:textBox,metadata:metadataBox,remove:removeBox,clip};
  assert.ok(clip.width>20&&clip.scroll>clip.width,'The long text actually requires clipping');
  assert.equal(clip.overflow,'hidden');assert.equal(clip.ellipsis,'ellipsis');
+ for(const box of [labelBox,textBox,metadataBox])assert.ok(box.top>=chip.top&&box.bottom<=chip.bottom&&box.left>=chip.left&&box.right<=chip.right,'Label and metadata stay inside their compact chip');
+ assert.ok(chip.top>=stripBox.top&&chip.bottom<=stripBox.bottom,'The chip remains inside its attachment strip');
  assert.ok(stripBox.left>=form.left&&stripBox.right<=form.right+1&&chip.right<=stripBox.right+1);
  assert.ok(labelBox.right<=removeBox.left-4&&removeBox.right<=chip.right+1,'Clipped text leaves Remove unobscured');
  proof.composer=await usable(page.locator('[data-part="composer-primary-action"]'),{button:true});
