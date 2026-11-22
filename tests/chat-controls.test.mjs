@@ -40,7 +40,7 @@ test('attachment labels retain complete text with separate metadata and unchange
   }finally{await renderAct(async()=>root?.unmount())}
  }
 });
-test('external agent label does not discover or configure local models and bundles',async()=>{
+test('an external agent without settings does not discover or configure local models and bundles',async()=>{
  const calls=[],session={id:'external-chat',externalAgent:{id:'remote',label:'Project assistant'}};
  let root;
  try{
@@ -791,7 +791,7 @@ test('a draft inherits connection defaults and keeps generic choices for a model
  }finally{await renderAct(async()=>root?.unmount())}
 });
 
-test('known costly options are marked before saving and the notice clears on a switch back',async()=>{
+test('model options stay concise while the separate history-cost hint clears on a switch back',async()=>{
  const calls=[],source={instance:'one',model:'model'};
  const impact={source,inputTokens:88000,coldModels:true,coldConnections:['two']};
  let session={id:'chat',status:'idle',selection:source,nextMessageImpact:impact};
@@ -878,6 +878,36 @@ test('an unmeasured switch never offers a shortcut to save preparation',async()=
  }finally{await renderAct(async()=>root?.unmount())}
 });
 
+test('a proven preparation-saving shortcut retains exact admitted identity and disappears when stale',async()=>{
+ const calls=[],source={instance:'one',model:'first'},next={instance:'one',model:'second'};
+ const previous={inputId:'admitted-input',generationId:'admitted-generation',selection:source,
+  canAvoidHistoryPreparation:true,configurationRevision:0};
+ let session={id:'chat',status:'idle',selection:source,pendingModelSelection:next,nextMessageRevision:3,
+  previousTurnSettings:previous,nextMessageImpact:{source,inputTokens:88000,coldModels:true}};
+ const state={...savedModelState(),view:{composerModel:{sessionId:'chat',open:true,...next}}};
+ const render=()=>React.createElement(ModelControl,{state,session,act:record(calls)});
+ let root;
+ const shortcuts=()=>root.root.findAllByType('button').filter(node=>/^Keep .* · /.test(renderedText(node.children)));
+ try{
+  await renderAct(async()=>root=create(render()));
+  assert.equal(shortcuts().length,1);
+  await renderAct(async()=>shortcuts()[0].props.onClick());
+  assert.deepEqual(calls.filter(row=>row.name==='conversation.configure'),[{name:'conversation.configure',args:{
+   sessionId:'chat',expectedRevision:3,onlyIfAvoidable:true,restorePreviousInputId:'admitted-input',restorePreviousGenerationId:'admitted-generation'}}]);
+  for(const patch of [
+   {previousTurnSettings:{...previous,canAvoidHistoryPreparation:false}},
+   {previousTurnSettings:{...previous,configurationRevision:1}},
+   {previousTurnSettings:{...previous,restorePending:true}},
+   {pendingBundleSelection:{bundle:'other'}},{configurationPending:true},{configurationBusy:true},
+  ]){
+   session={id:'chat',status:'idle',selection:source,pendingModelSelection:next,nextMessageRevision:3,
+    previousTurnSettings:previous,nextMessageImpact:{source,inputTokens:88000,coldModels:true},...patch};
+   await renderAct(async()=>root.update(render()));assert.equal(shortcuts().length,0);
+  }
+  assert.equal(calls.filter(row=>row.name==='conversation.configure').length,1);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+
 test('older chats use known prior settings for a cost-neutral hint, including before a changed provider is saved',async()=>{
  const calls=[],prior={instance:'one',model:'first'},state=savedModelState();
  state.runtimeControl.chat['configuration.catalog'].providers.push({id:'two',sharedCatalogKey:'second'});
@@ -897,7 +927,7 @@ test('older chats use known prior settings for a cost-neutral hint, including be
   session={...session,messages:[],runtimeReport:{effective_selection:prior}};
   await renderAct(async()=>root.update(render()));
   assert.equal(hint().length,0,'A new chat has no earlier context to prepare');
-  assert.equal(root.root.findAllByType('button').filter(n=>n.children.includes('Use previous settings')).length,0);
+  assert.equal(root.root.findAllByType('button').filter(n=>/^Keep .* · /.test(renderedText(n.children))).length,0);
  }finally{await renderAct(async()=>root?.unmount())}
 });
 

@@ -158,8 +158,8 @@ async function run(){
   await composer().focus();await page.keyboard.type(nextDraft);
   await expect(composer()).toHaveDraft(nextDraft);await expect(composer()).toContainText(nextDraft);
   await page.getByRole('button',{name:'Add attachments',exact:true}).focus();
-  await page.keyboard.press('Tab');await expect(primary()).toBeFocused();
   await page.keyboard.press('Tab');await expect(page.getByRole('button',{name:'Model and reasoning settings',exact:true})).toBeFocused();
+  await page.keyboard.press('Tab');await expect(primary()).toBeFocused();
   // Current main deliberately moves Chat controls into the header Chat menu.
   await page.getByRole('button',{name:'Chat',exact:true}).focus();
   await expect(page.getByRole('button',{name:'Chat',exact:true})).toBeFocused();
@@ -179,7 +179,11 @@ async function run(){
   assert.equal(sendCount()-before,1,'Typing/state/rejection must not submit another message');
   row.rejected={errorVisible:true,retryVisible:true,nextDraft:await readComposerDraft(composer()),sendPosts:sendCount()-before};
   await snap(width+'-rejected');
-  await bubble.getByRole('button',{name:'Discard unsent message',exact:true}).click();await expect(bubble).toHaveCount(0);
+  const originalEntry=await page.evaluate(id=>JSON.parse(sessionStorage.getItem('amplifier.messageOutbox.v1')).find(row=>row.commandId===id),item.body.id);
+  await bubble.getByRole('button',{name:'Close delivery item',exact:true}).click();await expect(bubble).toHaveCount(0);
+  assert.deepEqual(await page.evaluate(id=>JSON.parse(sessionStorage.getItem('amplifier.messageOutbox.v1')).find(row=>row.commandId===id),item.body.id),
+   {...originalEntry,closed:true},'Closing retains the original submission without resending');
+  assert.equal(sendCount()-before,1);
   // Unknown local submission retains Check delivery and the original-identity
   // retry action; merely checking must never resend or invent a new command.
   const uncertainText='Unknown send '+width;await composer().fill(uncertainText);await page.getByRole('button',{name:'Send message',exact:true}).click();

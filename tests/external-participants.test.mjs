@@ -149,3 +149,26 @@ test('losing a selected participant’s options closes the editor without retarg
   assert.deepEqual(calls,[]);
  }finally{await act(async()=>root?.unmount())}
 });
+
+test('composer participant settings retain the selected agent through roster reordering and exact revisioned edits',async()=>{
+ const option={id:'effort',name:'Reasoning effort',category:'thought_level',currentValue:'low',
+  options:[{value:'low',name:'Low'},{value:'high',name:'High'}]};
+ const alpha={id:'alpha',label:'Alpha',status:'idle',optionRevision:3,configOptions:[option]};
+ const beta={id:'beta',label:'Beta',status:'idle',optionRevision:7,configOptions:[option]};
+ const calls=[];let root;
+ const element=participants=>React.createElement(ComposerOptions,{state,session:{id:'room',externalAgent:{participation:'shared',participants}},
+  act:async(...args)=>{calls.push(args);return {accepted:true}},working:false});
+ try{
+  await act(async()=>root=create(element([alpha,beta])));
+  await act(async()=>root.root.findByProps({'aria-label':'Agent settings',type:'button'}).props.onClick());
+  await act(async()=>root.root.findByProps({'aria-label':'Agent'}).props.onChange({target:{value:'beta'}}));
+  await act(async()=>root.update(element([beta,alpha])));
+  assert.equal(root.root.findByProps({'aria-label':'Agent'}).props.value,'beta');
+  assert.equal(root.root.findAllByProps({'aria-label':'Message recipient'}).length,0,'Shared settings do not introduce a send recipient');
+  await act(async()=>root.root.findByProps({'aria-label':'Effort'}).props.onChange({target:{value:'high'}}));
+  assert.deepEqual(calls,[['conversation.participantConfigure',{sessionId:'room',participantId:'beta',expectedRevision:7,configId:'effort',value:'high'}]]);
+  await act(async()=>root.update(element([{...beta,configOptions:[]},alpha])));
+  assert.equal(root.root.findAllByProps({role:'dialog'}).length,0,'An unavailable selected editor never silently targets Alpha');
+  assert.equal(calls.length,1,'Roster changes neither send a message nor replay configuration');
+ }finally{await act(async()=>root?.unmount())}
+});

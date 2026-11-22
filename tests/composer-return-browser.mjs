@@ -49,6 +49,9 @@ async function compactHelpLayout(page,composer,expectedHelp,scenario){
   const field=el.querySelector('[role="textbox"]'),form=el.closest('form'),help=form.querySelector('[data-part="composer-return-help"]');
   const layout=el.closest('[data-part="workspace"]'),navigation=layout.querySelector('#workspace-navigation');
   return {surface:rect(el),editor:rect(field),help:rect(help),configuration:rect(form.querySelector('.a-compose-configuration')),
+   finePointer:matchMedia('(pointer:fine)').matches,
+   narrowConversation:el.closest('.a-conversation').clientWidth<=360,
+   actionButtons:[...el.querySelectorAll('.a-compose-add>button,.a-compose-end>button,.a-dictation>button')].filter(button=>button.getClientRects().length).map(rect),
    responsive:{navigationNarrow:layout.dataset.navigationNarrow,narrow:layout.dataset.narrow,
     navigationHidden:navigation.hidden,navigationDocked:navigation.dataset.docked,navigation:rect(navigation),
     navigationQuery:matchMedia('(max-width: 640px)').matches,canvasQuery:matchMedia('(max-width: 900px)').matches},
@@ -60,8 +63,12 @@ async function compactHelpLayout(page,composer,expectedHelp,scenario){
    buttons:[...el.querySelectorAll('button')].filter(button=>button.getClientRects().length).map(rect)};
  });
  const check=geometry=>{
-  assert.ok(geometry.surface.height<=72,`Idle field remains compact, not a relaxed cap: ${geometry.surface.height}`);
-  assert.ok(geometry.editor.height>=44);
+  // Accepted PR98 keeps writing above one action row at every width. Bound
+  // those two rows explicitly, rather than carrying the retired single-row cap.
+  const actionHeight=geometry.finePointer?32:44;
+  assert.ok(Math.abs(geometry.editor.height-44)<=1,'The shared resize owner retains the 44px empty editor minimum');
+  const frame=geometry.narrowConversation?14:8; // Narrow: 10px padding + 2px gap + 2px border.
+  assert.ok(Math.abs(geometry.surface.height-(44+actionHeight+frame))<=1,'Exactly writing and action rows plus their declared frame; no blank spacer');
   assert.equal(geometry.responsive.navigationNarrow,String(geometry.responsive.navigationQuery),'Measure only after the rendered navigation breakpoint matches this viewport');
   assert.equal(geometry.responsive.narrow,String(geometry.responsive.canvasQuery),'Measure only after the rendered workspace breakpoint matches this viewport');
   if(geometry.responsive.navigationQuery){
@@ -76,11 +83,12 @@ async function compactHelpLayout(page,composer,expectedHelp,scenario){
   assert.equal(geometry.helpStyle.clip,'rect(0px, 0px, 0px, 0px)');assert.equal(geometry.helpStyle.clipPath,'inset(50%)');
   assert.ok(geometry.help.width<=1&&geometry.help.height<=1,'Return description is not a painted caption');
   assert.equal(geometry.helpStyle.hidden,false);assert.notEqual(geometry.helpStyle.display,'none');assert.notEqual(geometry.helpStyle.visibility,'hidden');
-  assert.ok(Math.abs(geometry.configuration.y-(geometry.surface.y+geometry.surface.height))<=1,'No blank Return-help spacer between field and model/configuration controls');
-  assert.ok(geometry.buttons.length>=2,'Frequent add/primary actions remain present');
-  for(const box of geometry.buttons){
-   assert.ok(box.width>=44&&box.height>=44,'Frequent actions retain 44px touch targets');
-   assert.ok(Math.abs(box.y+box.height/2-(geometry.editor.y+geometry.editor.height/2))<=1,'Action and empty editor centers stay aligned');
+  assert.ok(geometry.configuration.y>=geometry.editor.y+geometry.editor.height-1,'Model/configuration controls occupy the row below writing');
+  assert.ok(geometry.configuration.y+geometry.configuration.height<=geometry.surface.y+geometry.surface.height,'Configuration is inside the shared surface');
+  assert.ok(geometry.actionButtons.length>=2,'Frequent add/primary actions remain present');
+  for(const box of geometry.actionButtons){
+   assert.ok(box.width>=actionHeight&&box.height>=actionHeight,'Frequent actions retain 44px coarse-pointer or 32px fine-pointer targets');
+   assert.ok(Math.abs(box.y+box.height/2-(geometry.configuration.y+geometry.configuration.height/2))<=1,'Action and model controls share one aligned row');
    assert.ok(box.x>=geometry.surface.x&&box.x+box.width<=geometry.surface.x+geometry.surface.width+1);
   }
  };
@@ -93,7 +101,7 @@ async function compactHelpLayout(page,composer,expectedHelp,scenario){
  }
  // The former visible-help requirement was explicitly replaced by the user.
  // Restore that caption temporarily: the same no-visible-hint/no-spacer oracle
- // must reject it without changing the compact 72px/44px geometry checks.
+ // must reject it without changing the accepted two-row geometry checks.
  const originalClass=await help.getAttribute('class');await help.evaluate(node=>{node.className='a-caption';});
  let broken;
  try{
