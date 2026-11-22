@@ -246,6 +246,82 @@ test('new reading movement supersedes an offset that was clamped by pane reflow'
  }
 });
 
+test('a boundary gesture with no scroll replaces and persists the constrained goal',()=>{
+ for(const intent of ['wheel','touchmove','keydown']){
+  const row=message('reading',32,1200),h=harness({messages:[row],scrollHeight:1300});
+  h.controller.select('alpha');h.settle();h.scrollTo(0);
+  row.contentTop=18;h.controller.update();h.settle();
+  h.view.dispatchEvent(new Event('pagehide'));
+  const saved=()=>JSON.parse(h.storage.get('amplifier.chat-reading.v1')).alpha;
+  assert.equal(saved().offset,32,'Persistence keeps the desired offset and actual fallback top');
+  assert.equal(saved().top,0);
+  const event=new Event(intent);Object.assign(event,{deltaY:-80,key:'Home'});
+  h.pane.closest=()=>null;h.pane.dispatchEvent(event);
+  h.view.dispatchEvent(new Event('pagehide'));
+  assert.equal(saved().offset,18,'New boundary intent is saved even without movement');
+  row.contentTop=32;h.controller.update();h.settle();
+  assert.equal(row.getBoundingClientRect().top,18);
+  h.controller.dispose();
+ }
+});
+
+test('constrained bottom restoration retains its goal through repeated layout reports',()=>{
+ const row=message('reading',500,800),h=harness({messages:[row],scrollHeight:900});
+ h.controller.select('alpha');h.settle();h.scrollTo(480);
+ row.contentTop=700;h.controller.update();h.settle();
+ assert.equal(h.pane.scrollTop,600);
+ assert.equal(row.getBoundingClientRect().top,100);
+ for(let i=0;i<3;i++){h.pane.dispatchEvent(new Event('scroll'));h.controller.update();h.settle()}
+ row.contentTop=500;h.controller.update();h.settle();
+ assert.equal(h.pane.scrollTop,480);
+ assert.equal(row.getBoundingClientRect().top,20);
+ h.controller.dispose();
+});
+
+test('constrained reading restores across chat visits without moving the other chat',()=>{
+ const row=message('reading',32,1200),h=harness({messages:[row],scrollHeight:1300});
+ h.controller.select('alpha');h.settle();h.scrollTo(0);
+ row.contentTop=18;h.controller.update();h.settle();
+ h.controller.select('beta');h.settle();
+ assert.equal(h.pane.scrollTop,1000,'The other chat keeps its normal initial position');
+ row.contentTop=32;h.controller.select('alpha');h.settle();
+ assert.equal(row.getBoundingClientRect().top,32);
+ assert.equal(h.pane.scrollTop,0);
+ h.controller.dispose();
+});
+
+test('a hidden constrained anchor is not resurrected on a later layout',()=>{
+ const row=message('reading',32,1200),h=harness({messages:[row],scrollHeight:1300});
+ h.controller.select('alpha');h.settle();h.scrollTo(0);
+ row.contentTop=18;h.controller.update();h.settle();
+ row.closest=()=>({});h.controller.update();h.settle();
+ row.closest=()=>null;row.contentTop=32;h.controller.update();h.settle();
+ assert.equal(h.pane.scrollTop,0,'The missing anchor leaves only the actual fallback position');
+ h.scrollTo(60);const latest=row.getBoundingClientRect().top;
+ row.contentTop=18;h.controller.update();h.settle();
+ assert.equal(row.getBoundingClientRect().top,latest);
+ h.controller.dispose();
+});
+
+test('explicit latest, jump, submission and call supersede constrained reading',()=>{
+ for(const intent of ['latest','jump','submitted','call']){
+  const row=message('reading',32,1200,'input'),h=harness({messages:[row],scrollHeight:1600});
+  let focusCount=0;row.focus=()=>focusCount++;
+  h.controller.select('alpha');h.settle();h.scrollTo(0);
+  row.contentTop=18;h.controller.update();h.settle();
+  if(intent==='latest')h.controller.reveal();
+  if(intent==='jump')h.controller.jump('reading');
+  if(intent==='submitted')h.controller.submitted('input');
+  if(intent==='call')h.controller.setCall('call','alpha');
+  h.settle();row.contentTop=32;h.controller.update();h.settle();
+  if(intent==='jump'){assert.equal(row.getBoundingClientRect().top,16);assert.equal(focusCount,1)}
+  else if(intent==='submitted')assert.equal(row.getBoundingClientRect().bottom,16);
+  else if(intent==='call')assert.equal(h.pane.scrollTop,1300);
+  else assert.equal(h.pane.scrollTop,1300,'Latest remains at its nearest reachable offset, not the old top anchor');
+  h.controller.dispose();
+ }
+});
+
 test('mounted inactive, external and disconnected iframe hosts do not suppress fades',()=>{
  const h=harness(),wrapper=append(h.pane,element('article')),iframe=append(wrapper,element('iframe'));
  h.controller.select('alpha');h.settle();h.flushFrames();
