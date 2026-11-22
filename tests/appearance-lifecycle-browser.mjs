@@ -311,7 +311,9 @@ try{
   const readSaved=await readAction(page,'theme.read',{id:saved.id});
   assert.equal(readSaved.css,css);assert.equal(readSaved.name,name);
   const row=page.locator('.a-appearance-saved-row').filter({has:page.getByText(name,{exact:true})});
-  const [download]=await Promise.all([page.waitForEvent('download'),row.getByRole('button',{name:'Export ZIP',exact:true}).click()]);
+  const exportButton=row.getByRole('button',{name:'Export ZIP for '+name,exact:true});
+  await expect(exportButton).toBeVisible();
+  const [download]=await Promise.all([page.waitForEvent('download'),exportButton.click()]);
   const stream=await download.createReadStream(),chunks=[];
   let bytes=0;
   for await(const chunk of stream){bytes+=chunk.length;assert.ok(bytes<=4_000_000,'Finite export');chunks.push(chunk)}
