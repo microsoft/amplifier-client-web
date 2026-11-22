@@ -156,9 +156,6 @@ try{
   for(const dir of ['ltr','rtl'])for(const scheme of ['light','dark'])for(const forced of [false,true]){
    await page.emulateMedia({colorScheme:scheme,forcedColors:forced?'active':'none',reducedMotion:'reduce'});
    await page.goto(vite.resolvedUrls.local[0]+'shared-controls');
-   // A valid appearance may give ordinary field labels a column layout.
-   // The semantic native-choice owner must retain its complete row geometry.
-   await page.addStyleTag({content:'#amp-one .a-dialog label{display:block;flex-direction:column}'});
    const search=page.getByRole('searchbox',{name:'Find a starter'}),wrapper=search.locator('..');
    await expect(search).toBeVisible();
    await page.locator('#amp-one').evaluate((node,{dir,scheme})=>{node.dir=dir;node.dataset.themeScheme=scheme},{dir,scheme});
@@ -181,6 +178,9 @@ try{
    await expect(page.getByRole('textbox',{name:'Starter name'})).toBeVisible();
    for(const detail of await page.locator('.a-starter-options').all())await detail.evaluate(node=>{node.open=true});
    const label=[width,dir,scheme,forced?'forced':'normal'].join('-');
+   // Isolate the reported appearance interaction to this choice checkpoint.
+   // Search geometry has its own independent assertions before and after it.
+   const choiceAppearance=await page.addStyleTag({content:'#amp-one .a-dialog label{display:block;flex-direction:column}'});
    for(const name of ['Create SCRATCH.md working memory','Track external resources','Initialize local workspace Git',
     'Collect app diagnostics and enable selected forwarding','Record provider requests and responses for troubleshooting',
     'Reset app configuration and credentials']){
@@ -194,6 +194,8 @@ try{
     assert.equal((await rect(choice)).width,16,'Existing Appearance choice geometry retained');
     await expect(choice.locator('..'),'Appearance keeps its intentional gap').toHaveCSS('column-gap','8px');
    }
+   await expect(page.locator('label[for=ordinary]')).toHaveCSS('display','block');
+   await choiceAppearance.evaluate(node=>node.remove());
    for(const input of [page.getByRole('textbox',{name:'Compound picker'})]){
     await input.focus();await expect(input).toBeFocused();
     await expect(input).toHaveCSS('outline-style','none');
