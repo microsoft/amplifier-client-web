@@ -278,6 +278,37 @@ test('constrained bottom restoration retains its goal through repeated layout re
  h.controller.dispose();
 });
 
+test('horizontal wheel, editor keys and text selection do not replace a vertical reading goal',()=>{
+ for(const intent of ['horizontal','zero','editor-key','selection']){
+  const row=message('reading',32,1200),h=harness({messages:[row],scrollHeight:1300});
+  h.controller.select('alpha');h.settle();h.scrollTo(0);
+  row.contentTop=18;h.controller.update();h.settle();
+  if(intent==='horizontal'||intent==='zero'){
+   const event=new Event('wheel');Object.assign(event,{deltaX:intent==='horizontal'?80:0,deltaY:0});h.pane.dispatchEvent(event);
+  }else if(intent==='editor-key'){
+   h.pane.closest=()=>({});const event=new Event('keydown');Object.assign(event,{key:'Home'});h.pane.dispatchEvent(event);
+  }else{h.pane.dispatchEvent(new Event('pointerdown'));h.document.dispatchEvent(new Event('selectionchange'))}
+  row.contentTop=32;h.controller.update();h.settle();
+  assert.equal(row.getBoundingClientRect().top,32,intent);
+  h.controller.dispose();
+ }
+});
+
+test('unexplained pre-frame bottom movement remains a newer external reading position',()=>{
+ const row=message('reading',500,800),h=harness({messages:[row],scrollHeight:900});
+ h.controller.select('alpha');h.settle();h.scrollTo(480);
+ row.contentTop=700;h.controller.update();h.settle();
+ assert.equal(h.pane.scrollTop,600);
+ // The controller did not make this move. A native clamp and a scrollbar/focus
+ // move to the same new boundary are indistinguishable here. Keep the existing
+ // conservative external-scroll rule rather than overriding newer input.
+ h.pane.scrollHeight=800;h.pane.dispatchEvent(new Event('scroll'));
+ const latest=row.getBoundingClientRect().top;assert.equal(latest,200);
+ h.pane.scrollHeight=900;row.contentTop=500;h.controller.update();h.settle();
+ assert.equal(row.getBoundingClientRect().top,latest);
+ h.controller.dispose();
+});
+
 test('constrained reading restores across chat visits without moving the other chat',()=>{
  const row=message('reading',32,1200),h=harness({messages:[row],scrollHeight:1300});
  h.controller.select('alpha');h.settle();h.scrollTo(0);

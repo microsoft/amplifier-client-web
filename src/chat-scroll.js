@@ -123,7 +123,8 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
  // Clicking/selecting transcript content is not scrollback. Actual scrollbar
  // moves are detected by scroll(); wheel/touch/keyboard express reading intent.
  const wheel=e=>{
-  if(followingCall()&&(!e.deltaY||e.deltaY>0&&atBottom()||e.deltaY<0&&pane.scrollTop<=0))return;
+  if(!e.deltaY)return; // Horizontal scrolling is not a new vertical reading choice.
+  if(followingCall()&&(e.deltaY>0&&atBottom()||e.deltaY<0&&pane.scrollTop<=0))return;
   stop();
  };
  const keyDown=e=>{if(!e.target.closest('input,textarea,select,[contenteditable="true"]')&&['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '].includes(e.key))stop()};
@@ -137,6 +138,8 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
   // before our layout frame runs. That does not cancel call or submitted intent.
   // Wheel/touch/key intent has already stopped following; other external
   // scrolls, including browser focus moves, retain their existing behavior.
+  // Do not infer reading intent from an unexplained bottom clamp: a scrollbar
+  // or focus move to that same position must still supersede a constrained goal.
   const limit=Math.max(0,pane.scrollHeight-pane.clientHeight);
   if(snapshot&&(followingCall()||(submitted&&following.current))&&snapshot.top>limit&&atBottom()){update();return}
   if(snapshot)stop();report();
