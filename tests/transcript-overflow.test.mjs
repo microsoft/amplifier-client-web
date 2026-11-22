@@ -226,6 +226,21 @@ test('a temporarily unreachable reading offset survives a pane reflow round trip
  h.controller.dispose();
 });
 
+test('a below-viewport fallback cannot hold an unreachable goal over the newly visible message',()=>{
+ const question=message('question',32),answer=message('answer',1600),h=harness({messages:[question,answer],scrollHeight:2000});
+ h.controller.select('alpha');h.settle();h.scrollTo(500);
+ // Work between messages can fill the whole viewport. The first later message
+ // remains a useful ordinary layout fallback, but was never visible here.
+ assert.equal(answer.getBoundingClientRect().top,1100);
+ answer.contentTop=1000;h.controller.update();h.settle();
+ assert.equal(h.pane.scrollTop,0);
+ assert.equal(question.getBoundingClientRect().top,32);
+ answer.contentTop=1285;h.controller.update();h.settle();
+ assert.equal(h.pane.scrollTop,0,'Reopening Work preserves the visible question, not an unreachable offscreen answer offset');
+ assert.equal(question.getBoundingClientRect().top,32);
+ h.controller.dispose();
+});
+
 test('new reading movement supersedes an offset that was clamped by pane reflow',()=>{
  for(const intent of ['wheel','touchmove','keydown','scrollbar']){
   const row=message('reading',32,1200),h=harness({messages:[row],scrollHeight:1300});
