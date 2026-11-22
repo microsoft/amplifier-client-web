@@ -410,6 +410,15 @@ async function appearanceRegression({page,scenario,readState,emit,stopGuard}){
  proof.transcript={bottom,reading,jumped};
  await retained();
  if(!mobile){
+  const actionRow=await page.locator('.a-compose-surface').evaluate(node=>{
+   const box=el=>{const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}};
+   return {surface:box(node),add:box(node.querySelector('.a-compose-add>button')),end:box(node.querySelector('.a-compose-end')),
+    stop:box(node.querySelector('.a-compose-stop')),model:box(node.querySelector('.a-model-trigger')),
+    primary:box(node.querySelector('[data-part="composer-primary-action"]')),fine:matchMedia('(pointer:fine)').matches};
+  });
+  assert.equal(actionRow.fine,true,'This regression exercises the accepted fine-pointer Stop/Send row');
+  for(const control of [actionRow.add,actionRow.stop,actionRow.model,actionRow.primary])
+   assert.ok(Math.abs(control.y+control.height/2-actionRow.primary.y-actionRow.primary.height/2)<=1,'Stop, model, Add and Send share the action-row center');
   assert.equal(explicitStops.length,0);
   stopGuard.armed=true;
   try{await stop.click();await expect.poll(()=>explicitStops.length).toBe(1)}
@@ -417,6 +426,14 @@ async function appearanceRegression({page,scenario,readState,emit,stopGuard}){
   assert.deepEqual(explicitStops[0].args,{sessionId:'chat'});
   await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().sessions.find(row=>row.id==='chat').status)).toBe('stopped');
   await expect(page.locator('.a-live-activity')).toHaveCount(0);await expect(stop).toHaveCount(0);
+  const afterStop=await page.locator('.a-compose-surface').evaluate(node=>{
+   const box=el=>{const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}};
+   return {surface:box(node),add:box(node.querySelector('.a-compose-add>button')),end:box(node.querySelector('.a-compose-end')),
+    primary:box(node.querySelector('[data-part="composer-primary-action"]'))};
+  });
+  for(const name of ['surface','add','end','primary'])for(const axis of ['x','y','width','height'])
+   assert.ok(Math.abs(afterStop[name][axis]-actionRow[name][axis])<=1,'Removing Stop keeps '+name+'.'+axis+' steady');
+  proof.actionRow={before:actionRow,after:afterStop};
   await expect(running.locator('.a-execution-complete')).toHaveCount(0);
   await expect(running.locator('[aria-label="Stopped"]')).toHaveCount(1);
   proof.explicitStop={count:1,sessionId:'chat',syntheticOnly:true};

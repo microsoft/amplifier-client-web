@@ -25,7 +25,7 @@ function Fixture(){
 createRoot(document.getElementById('amp-one')).render(React.createElement(Fixture));
 </script></body></html>`;
 const out=process.env.AMPLIFIER_TEST_ARTIFACTS||'output/participant-settings',report={scope:'synthetic participant controls',cases:[],errors:[]};
-let vite,browser,page;
+let vite,browser,page,failure;
 try{
  await mkdir(out,{recursive:true});
  vite=await createServer({configFile:false,root:fileURLToPath(new URL('../',import.meta.url)),server:{host:'127.0.0.1',port:0,hmr:false},
@@ -45,6 +45,8 @@ try{
   await agent.selectOption('beta');
   await page.evaluate(()=>window.setParticipants([...window.originalParticipants].reverse()));
   await expect(agent).toHaveValue('beta');
+  await page.evaluate(()=>window.setParticipants(window.originalParticipants));
+  await expect(agent,'The selected editor stays on non-first Beta').toHaveValue('beta');
   await dialog.getByRole('combobox',{name:'Effort',exact:true}).selectOption('high');
   await expect.poll(()=>page.evaluate(()=>window.calls)).toEqual([{action:'conversation.participantConfigure',args:{sessionId:'room',participantId:'beta',expectedRevision:7,configId:'effort',value:'high'}}]);
   await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused();
@@ -57,5 +59,14 @@ try{
   await page.screenshot({path:out+'/participant-'+width+'.png'});await page.close();page=null;
  }
  assert.deepEqual(report.errors,[]);report.passed=true;console.log('PASS: participant settings keyboard, focus return, exact selected-agent revision, roster changes and private draft at 1280/390/320.');
-}catch(error){report.failure=String(error.stack||error);throw error}
-finally{await writeFile(out+'/report.json',JSON.stringify(report,null,2)+'\n');await browser?.close();await vite?.close()}
+}catch(error){failure=error;report.failure=String(error.stack||error);throw error}
+finally{
+ const cleanupErrors=[];
+ for(const [name,close] of [['browser',()=>browser?.close()],['vite',()=>vite?.close()]]){
+  try{await close()}catch(error){cleanupErrors.push({name,error:String(error)})}
+ }
+ report.cleanupErrors=cleanupErrors;
+ try{await writeFile(out+'/report.json',JSON.stringify(report,null,2)+'\n')}
+ catch(error){if(failure||cleanupErrors.length)console.error('Participant report write failed:',error);else throw error}
+ if(cleanupErrors.length){if(failure)console.error('Participant cleanup failed:',cleanupErrors);else throw Error('Participant cleanup failed: '+JSON.stringify(cleanupErrors))}
+}

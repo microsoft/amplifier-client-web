@@ -164,6 +164,8 @@ test('composer participant settings retain the selected agent through roster reo
   await act(async()=>root.root.findByProps({'aria-label':'Agent'}).props.onChange({target:{value:'beta'}}));
   await act(async()=>root.update(element([beta,alpha])));
   assert.equal(root.root.findByProps({'aria-label':'Agent'}).props.value,'beta');
+  await act(async()=>root.update(element([alpha,beta])));
+  assert.equal(root.root.findByProps({'aria-label':'Agent'}).props.value,'beta','Reordering cannot retarget the open editor to the first agent');
   assert.equal(root.root.findAllByProps({'aria-label':'Message recipient'}).length,0,'Shared settings do not introduce a send recipient');
   await act(async()=>root.root.findByProps({'aria-label':'Effort'}).props.onChange({target:{value:'high'}}));
   assert.deepEqual(calls,[['conversation.participantConfigure',{sessionId:'room',participantId:'beta',expectedRevision:7,configId:'effort',value:'high'}]]);
