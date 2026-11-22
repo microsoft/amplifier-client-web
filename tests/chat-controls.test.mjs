@@ -462,7 +462,7 @@ test('authoritative unsupported reasoning shows no invented slider or selection'
  try{
   await renderAct(async()=>root=create(React.createElement(ModelControl,{state,session,act:async(name,args)=>{calls.push({name,args});return {accepted:true}}})));
   assert.equal(root.root.findAllByProps({id:'chat-effort'}).length,0);
-  assert.match(JSON.stringify(root.toJSON()),/Reasoning effort is not configurable for this model/);
+  assert.match(JSON.stringify(root.toJSON()),/Effort is not configurable for this model/);
   assert.equal(calls.some(row=>row.name==='conversation.configure'||row.name==='conversation.send'),false);
  }finally{await renderAct(async()=>root?.unmount())}
 });
