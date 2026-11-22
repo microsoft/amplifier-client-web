@@ -361,3 +361,20 @@ test('collection selection lock is focusable and independent of its checkbox loc
   assert.equal(prevented,1);assert.equal(selected.length,1);
  }finally{await act(async()=>root?.unmount())}
 });
+
+test('a same-render starter selection cannot overtake the synchronous save owner',async()=>{
+ let finish;
+ const f=await fixture({selected:'custom',save:args=>new Promise(resolve=>{finish=()=>resolve(ok({...args.starter,id:'custom',revision:8,builtIn:false}))})});
+ try{
+  const choose=f.root.root.findByProps({'data-collection-id':'builtin'}).findByType('button').props.onClick;
+  await act(async()=>{
+   f.root.root.findByType('form').props.onSubmit({preventDefault(){},nativeEvent:{submitter:{value:''}}});
+   choose();
+  });
+  assert.equal(f.calls.length,1);
+  assert.equal(control(f.root,'Starter name').props.value,'My starter');
+  assert.deepEqual(f.routes,[]);
+  await act(async()=>finish());
+  assert.equal(f.routes.at(-1).workspaceStarterEditor.id,'custom');
+ }finally{await f.clean()}
+});
