@@ -130,3 +130,22 @@ test('native and singleton streaming keep the existing single stream behavior',(
  const single=renderToStaticMarkup(React.createElement(StreamingMessage,{session:{id:'single',streaming:'Remote answer',externalAgent:{id:'alpha',label:'Only Alpha'}},state}));
  assert.match(single,/>Only Alpha<\/p>/);assert.match(single,/Remote answer/);assert.doesNotMatch(single,/data-agent-id|activity/);
 });
+
+test('losing a selected participant’s options closes the editor without retargeting it',async()=>{
+ const {ParticipantSettings}=await server.ssrLoadModule('/src/participant-settings.jsx');
+ const option={id:'effort',name:'Effort',category:'thought_level',currentValue:'low',options:[{value:'low',name:'Low'}]};
+ const alpha={id:'alpha',configOptions:[option]},beta={id:'beta',configOptions:[option]};
+ const calls=[];
+ const editor=participants=>React.createElement(ParticipantSettings,{session:{id:'room',externalAgent:{participants}},act:(...args)=>calls.push(args)});
+ let root;
+ try{
+  await act(async()=>{root=create(editor([alpha,beta]))});
+  await act(async()=>root.root.findByType('button').props.onClick());
+  await act(async()=>root.root.findByProps({'aria-label':'Agent'}).props.onChange({target:{value:'beta'}}));
+  await act(async()=>root.update(editor([alpha,{...beta,configOptions:[]}])));
+  assert.equal(root.root.findAllByProps({role:'dialog'}).length,0);
+  await act(async()=>root.update(editor([alpha,beta])));
+  assert.equal(root.root.findByType('button').props['aria-expanded'],false);
+  assert.deepEqual(calls,[]);
+ }finally{await act(async()=>root?.unmount())}
+});
