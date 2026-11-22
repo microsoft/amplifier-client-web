@@ -77,7 +77,7 @@
 #amp-one .a-compact-composer .a-compose-end>.a-send svg{width:20px;height:20px}
 @media(pointer:fine){
  #amp-one.a-chat-shell .a-compact-composer :is(.a-compose-add>.a-icon,.a-compose-end>.a-send,.a-compose-end>.a-dictation>button){width:32px;min-width:32px;height:32px;min-height:32px;padding:6px}
- #amp-one.a-chat-shell .a-compact-composer .a-model-trigger{min-height:32px}
+ #amp-one.a-chat-shell .a-compact-composer :is(.a-model-trigger,.a-compose-stop){min-height:32px}
 }
 
 #amp-one .a-compact-composer .a-context-shortcut{display:inline-flex;align-items:center;gap:3px;flex:none}
