@@ -16,6 +16,9 @@ const state={revision:1,settings:{workspace:'/fixture'},runtime:{available:true}
  workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:'chat',selectedWorkspaceId:'project',
  setup:{providers:[{id:'fixture',module:'provider-fixture',config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false}};
 const shell=createShellHttpFixture(()=>state),waiting=[],calls=[],errors=[],cases=[];
+// Only the exact inputs whose HTTP acknowledgement is deliberately lost may
+// receive the client's one passive unknown-delivery read. Reads never resend.
+const unknownInputs=new Set(),deliveryReads=[];
 const evidence=process.env.AMPLIFIER_TEST_ARTIFACTS;
 const args=process.argv.slice(2);
 assert.ok(!args.length||args.length===1&&args[0]==='--retained-recovery-only',
@@ -43,7 +46,7 @@ async function persistReceipt(){
   sendPosts:calls.filter(call=>call.action==='conversation.send').length,
   distinctSavedInputs:new Set(chat().messages.map(message=>message.inputId)).size,
   pageErrors:errors,routeErrors,evidenceErrors,retainedRecovery:recovery,
-  actions:calls,updateActions:updateCalls(),syntheticInstallAttempts:installAttempts,
+  actions:calls,deliveryReads,updateActions:updateCalls(),syntheticInstallAttempts:installAttempts,
   backendExecution:'synthetic HTTP/state fixture; no actual updater, model, install or restart'},null,2)+'\n');
 }
 async function capture(name,target=page){
@@ -146,6 +149,17 @@ async function retainedRecovery(){
   await project({...retained,currentStatus});await expect(install).toHaveCount(0);
   await unchanged(currentStatus===null?'null projection':'missing projection',['updates.check','updates.check']);
  }
+ // Accepted recovery policy distinguishes queued intent from live work. An
+ // action-required host projection can retain nextStage after interruption;
+ // mounting/reloading that projection still must not initiate installation.
+ for(const phase of ['checked','interrupted']){
+  const interrupted={...eligible,phase,initialPreparation:true,
+   sequence:{stage:'included',nextStage:'other',install:true}};
+  await project(interrupted);await expect(retry).toBeEnabled();await expect(check).toBeEnabled();
+  await unchanged(phase+' action-required projection releases stale continuation lock',['updates.check','updates.check']);
+  await page.reload();await expect(retry).toBeEnabled();await expect(check).toBeEnabled();
+  await unchanged(phase+' interrupted projection reload does not install',['updates.check','updates.check']);
+ }
  const guards=[
   ['checking',{phase:'checking'}],['staging',{phase:'staging'}],['validating',{phase:'validating'}],['activating',{phase:'activating'}],
   ['pending application',{pendingApp:{latest:'0.0.1'}}],['pending components',{pendingRelease:'candidate'}],
@@ -153,7 +167,8 @@ async function retainedRecovery(){
   ['replacement outcome unknown',{pendingReplacement:{}}],
   ['restart uncertain',{pendingRestart:{requestStatus:'uncertain'}}],
   ['restart rejected',{pendingRestart:{requestStatus:'rejected'},phase:'error',error:'Synthetic restart failed'}],
-  ['next stage queued',{sequence:{stage:'other',nextStage:'other'}}],
+  ['next stage queued without recovery',{sequence:{stage:'other',nextStage:'other'},
+   currentStatus:{...eligible.currentStatus,actionRequired:false}}],
   ['included proceed guard',{sequence:{stage:'included',included:{issues:1}},includedCanProceed:false}],
   ['development app guard',{application:{...application,status:'update',canInstall:false}}],
  ];
@@ -207,6 +222,20 @@ async function saved(item,label){
  assert.equal(calls.filter(call=>call.id===item.body.id).length,1,'The original submission is not replayed');
  cases.push({case:label,inputId:item.body.id,renderedCopies:1,posts:1,outboxEntries:0});
 }
+async function loseAcknowledgement(item){
+ unknownInputs.add(item.body.id);
+ await item.route.abort('failed');
+ const row=bubble(item.body.id);
+ await expect(row.getByText('Delivery not confirmed',{exact:false})).toBeVisible();
+ await expect.poll(()=>deliveryReads.filter(read=>read.inputId===item.body.id).length).toBe(1);
+ await expect(row.getByText('Fixture: the original delivery remains unknown. Nothing was sent again.',{exact:true})).toBeVisible();
+ await expect(row.getByRole('button',{name:'Check delivery',exact:true})).toBeEnabled();
+ const entry=(await outbox()).find(entry=>entry.commandId===item.body.id);
+ assert.ok(entry,'A passive unknown receipt cannot acknowledge or remove the original submission');
+ assert.equal(entry.text,item.body.args.text);
+ assert.equal(calls.filter(call=>call.action==='conversation.send'&&call.id===item.body.id).length,1);
+ cases.push({case:'one passive unknown read retains original input without replay',inputId:item.body.id,reads:1,posts:1});
+}
 async function runJourney(){
  vite=await createServer({configFile:false,root:fileURLToPath(new URL('../',import.meta.url)),
   cacheDir:fileURLToPath(new URL('../.vite-update-message-fixture',import.meta.url)),
@@ -227,8 +256,18 @@ async function runJourney(){
   if(retainedOnly)assert.ok(!body.action.startsWith('conversation.'),
    'Retained-recovery-only must not send, retry or inspect message delivery: '+JSON.stringify(body));
   if(body.action==='conversation.send'){waiting.push({route,body});return}
-  assert.ok(!['conversation.retry','conversation.delivery'].includes(body.action),
-   'Saved update input must not request retry or delivery recovery: '+JSON.stringify(body));
+  assert.notEqual(body.action,'conversation.retry','No message may be automatically retried: '+JSON.stringify(body));
+  if(body.action==='conversation.delivery'){
+   assert.deepEqual(body.args,{sessionId:'chat',inputId:body.args.inputId});
+   const inputId=body.args.inputId,original=calls.find(call=>call.action==='conversation.send'&&call.id===inputId);
+   assert.ok(original&&unknownInputs.has(inputId),'Only this fixture’s original uncertain input may be checked');
+   assert.ok(!deliveryReads.some(read=>read.inputId===inputId),'No duplicate passive check without reconnect or explicit gesture');
+   assert.ok(!chat().messages.some(message=>message.inputId===inputId),'Already saved queued/held inputs need no delivery recovery');
+   deliveryReads.push({sessionId:'chat',inputId,delivery:'unknown',originalCommandId:original.id});
+   return await route.fulfill({json:{accepted:true,result:{sessionId:'chat',inputId,
+    source:{workspace:'/fixture',nativeIdentity:'chat'},delivery:'unknown',
+    message:'Fixture: the original delivery remains unknown. Nothing was sent again.'},state:shell.state()}});
+  }
   if(body.action==='view.update')state.view={...state.view,...body.args.patch};
   if(body.action.startsWith('updates.'))assert.ok(['updates.check','updates.install'].includes(body.action),
    'The recovery fixture must not request a restart, rollback or other updater action');
@@ -270,12 +309,12 @@ async function runJourney(){
  await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().sessions[0].messages.length)).toBe(2);
  await saved(stateFirst,'late transport failure does not recreate outbox');
 
- const ackFirst=await send('The HTTP failure arrives before the saved state.');await ackFirst.route.abort('failed');
+ const ackFirst=await send('The HTTP failure arrives before the saved state.');await loseAcknowledgement(ackFirst);
  await expect(bubble(ackFirst.body.id).getByText('Delivery not confirmed',{exact:false})).toBeVisible();
  assert.equal((await outbox())[0].commandId,ackFirst.body.id);
  retain(ackFirst);await publish();await saved(ackFirst,'canonical receipt resolves uncertain outbox');
 
- const cold=await send('Reload with the original saved input identity.');await cold.route.abort('failed');
+ const cold=await send('Reload with the original saved input identity.');await loseAcknowledgement(cold);
  await expect(bubble(cold.body.id).getByText('Delivery not confirmed',{exact:false})).toBeVisible();
  assert.equal((await outbox())[0].commandId,cold.body.id);
  // The server saved the input while the client was disconnected. Bootstrap on
@@ -288,7 +327,7 @@ async function runJourney(){
  for(const item of [acknowledged,stateFirst,ackFirst,cold])await expect(bubble(item.body.id)).toHaveCount(1);
 
  const stoppedWhileDisconnected=await send('Stop retains this input before its acknowledgment arrives.');
- await stoppedWhileDisconnected.route.abort('failed');
+ await loseAcknowledgement(stoppedWhileDisconnected);
  await expect(bubble(stoppedWhileDisconnected.body.id).getByText('Delivery not confirmed',{exact:false})).toBeVisible();
  const disconnectedMessage=retain(stoppedWhileDisconnected);
  chat().status='stopped';
@@ -311,12 +350,15 @@ async function runJourney(){
  cases.push({case:'lost acknowledgment then Stop reconciles retained outbox on refresh',inputId:stoppedWhileDisconnected.body.id,status:'held'});
  assert.equal(calls.filter(call=>call.action==='conversation.send').length,5);
  assert.equal(new Set(chat().messages.map(message=>message.inputId)).size,5);
+ assert.deepEqual(deliveryReads.map(read=>read.inputId),[ackFirst.body.id,cold.body.id,stoppedWhileDisconnected.body.id],
+  'Saved/reloaded/Stop-held inputs never trigger an extra read or replay');
  await capture('held-mobile');
  historicalDelivery.status='passed';
  }
  phase='retained recovery';
  await retainedRecovery();
  assert.equal(calls.filter(call=>call.action==='conversation.send').length,retainedOnly?0:5);
+ assert.equal(deliveryReads.length,retainedOnly?0:3);
  assert.deepEqual(routeErrors,[]);assert.deepEqual(errors,[]);passed=true;phase='complete';
  console.log(retainedOnly?
   'PASS (retained-recovery-only synthetic client fixture): explicit Retry, Check-only, revoked projections and guards; no automatic install or replay. Historical message/lost-ack delivery NOT COVERED; earlier failure remains failed. Actual host eligibility/installation not covered.':
