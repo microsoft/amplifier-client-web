@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {executionData,messageTurnId,treeForTurn,usageLabel,combinedWork,workLabel} from '../src/timeline-data.js';
+import {executionData,messageTurnId,treeForTurn,usageLabel,combinedWork,workLabel,splitWork} from '../src/timeline-data.js';
 
 test('stopped work remains terminal while independent running work remains visible',()=>{
  const stopped={phase:'stopped',startedAt:1,endedAt:10};
@@ -18,6 +18,14 @@ test('a focused empty modern window does not synthesize a partial legacy timelin
  assert.deepEqual(executionData(session).turns,[]);
  delete session.workerSummary;
  assert.equal(executionData(session).nodes.length,1,'older servers retain legacy behavior');
+});
+
+test('a tool-only runtime event tail retains steps and marks every message gap as partial',()=>{
+ const messages=[{id:'a',createdAt:1},{id:'b',createdAt:3}];
+ const runtimeEvents=[2,4].map(at=>({type:'runtime.tool',phase:'post',callId:`tool-${at}`,at}));
+ const work=splitWork(messages,executionData({runtimeEvents}));
+ assert.deepEqual(work.turns.map(row=>[row.anchorMessageId,row.partialWindow]),[['a',true],['b',true]]);
+ assert.deepEqual(work.nodes.map(row=>row.callId),['tool-2','tool-4']);
 });
 
 for(const [status,expected] of [['working','running'],['starting','running'],['idle','completed'],['error','error'],['failed','failed'],['stopped','stopped']])test(`legacy tool errors respect the host ${status} lifecycle`,()=>{

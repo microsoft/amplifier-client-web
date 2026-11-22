@@ -25,7 +25,9 @@ export function executionData(session){
  // active work between calls. Independently live children stay inspectable.
  const status=['error','failed','cancelled','interrupted','stopped'].includes(session?.status)?session.status:
   ['working','starting','running','stopping'].includes(session?.status)||nodes.some(n=>['running','working','starting','queued','pending','retrying','idle'].includes(n.status))?'running':'completed';
- return {nodes,turns:[{id:turnId,label:'Recent execution activity',status}]};
+ // This bounded event tail can show tools and workers but has no model-call
+ // records. Keep its steps inspectable without publishing totals for the turn.
+ return {nodes,turns:[{id:turnId,label:'Recent execution activity',status,partialWindow:true}]};
 }
 export function messageTurnId(message,turns){
  if(message.role!=='user')return null;
