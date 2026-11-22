@@ -78,7 +78,7 @@ test('only explicitly shared rooms omit recipient selection, including while age
   assert.equal(isSharedExternalConversation({externalAgent:{id:'one'}}),false);
   assert.equal(isSharedExternalConversation(null),false);
   assert.equal(root.root.findAllByType('select').length,0);
-  assert.match(root.root.findByType('span').children.join(''),/Everyone in this chat can reply/);
+  assert.equal(root.toJSON(),null);
   assert.deepEqual(calls,[]);assert.deepEqual(changes,[]);
   await act(async()=>root.update(element(session)));
   assert.equal(root.root.findByType('select').props.value,'removed');

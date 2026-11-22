@@ -4,7 +4,7 @@ import {ownershipState} from './ownership.js';
 import {delegationRoutingLabel} from './delegation-routing.js';
 import {useOutsideDismiss} from './use-outside-dismiss';
 import React,{useEffect,useState,useRef,useId} from 'react';
-import {ChevronDown,X,Paperclip,Download} from 'lucide-react';
+import {X,Paperclip,Download} from 'lucide-react';
 import {providerFields} from './setup-data';
 import {ModelSelect} from './model-select';
 import {NextMessageImpact,bundleToolsMayChange,selectionImpact} from './next-message-impact';
@@ -198,7 +198,7 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
  const savedChoice=session?.pendingModelSelection;
  const savedModelImpact=selectionImpact(impact,savedChoice?.instance,savedChoice?.model);
  const savedBundleImpact=bundleToolsMayChange(session,pendingBundle?.bundle)?'tools':null;
- const savedImpact=savedModelImpact||savedBundleImpact;
+
  const previous = session?.previousTurnSettings;
  // Old chats may have an actual runtime selection but no per-turn settings receipt.
  // Use it only for explanatory text. Restoring still needs the host's proof.
@@ -206,14 +206,14 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
  const priorChoice = previous?.selection || (hasHistory && (session.runtimeReport?.effective_selection ||
   (!savedChoice && session.selection) || (lastCall?.model && {model:lastCall.model})));
  const pendingChoice = !!(savedChoice || pendingBundle);
- const restoreOffered = pendingChoice && !!previous?.inputId && !!previous.generationId && !previous.restorePending;
+ const restoreOffered = !!previous?.canAvoidHistoryPreparation && !!savedModelImpact && !previous.restorePending && !pendingBundle && !session.configurationPending && !session.configurationBusy && previous.configurationRevision===configurationRevision;
  async function restorePrevious() {
   if (!restoreOffered || blocked) return;
   setError('');
   touched.current=false;
   effortPending.current=null;
   try {
-   await nextMessage.configure({restorePreviousInputId:previous.inputId,restorePreviousGenerationId:previous.generationId},nextMessageRevision);
+   await nextMessage.configure({onlyIfAvoidable:true,restorePreviousInputId:previous.inputId,restorePreviousGenerationId:previous.generationId},nextMessageRevision);
   } catch (err) {setError(err.message)}
  }
  function settingsNotice(kind) {
@@ -233,7 +233,7 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
    {showSwitchHint&&<p className="a-caption">Switching models may make the next reply slower or cost more if earlier messages need to be read again.</p>}
    <NextMessageImpact impact={impact} kind={kind}/>
    {unmeasured&&<p className="a-caption" data-next-message-impact="unknown">Earlier messages may need preparing again. The time and cost are unknown.</p>}
-   {restoreOffered&&<button type="button" className="a-link" data-action="conversation.configure" disabled={blocked} onClick={restorePrevious}>Use previous settings</button>}
+   {restoreOffered&&<button type="button" className="a-link" data-action="conversation.configure" disabled={blocked} onClick={restorePrevious}>Keep {options.find(row=>row.id===previous.selection.instance)?.label||previous.selection.instance} · {previous.selection.model}</button>}
   </div>;
  }
  const manageConnections=<div className="a-dialog-actions"><button type="button" className="a-link" disabled={!selected} onClick={()=>isDraft?act('providers.models',{id:draft.instance,workspace:setup.workspace,...location,refresh:true}):act('runtime.control',{sessionId,operation:'configuration.catalog',args:{refresh:true,instance:draft.instance}})}>Refresh this connection</button><button type="button" className="a-link" data-action="view.update" onClick={()=>act('view.update',{patch:{composerModel:{...draft,open:false},panel:'settings',settingsSection:'setup',settingsExpanded:['ai-connections'],aiConnectionEditor:{...(state.view?.aiConnectionEditor||{}),step:'list'}}})}>Manage connections</button></div>;
@@ -255,14 +255,14 @@ export function ModelControl({state,session,act,working,embedded=false,compact=f
  </>;
  const renderPanel=embedded?content=>content:renderPopover;
  return <div className="a-model-control" ref={popover}>
-  {!embedded&&<button type="button" className="a-model-trigger" aria-label="Model and reasoning settings" aria-haspopup={compact?'dialog':undefined} disabled={unavailable} aria-expanded={!!open} aria-busy={checkingDefaults||undefined} title={checkingDefaults?`${modelLabel} · Checking bundle settings…`:modelLabel} data-action="view.update" onClick={show}><span>{!effective.model&&(delayed||failure)?'Model settings unavailable':compact?modelAndEffort:modelLabel}</span>{(session?.pendingModelSelection||pendingBundle)&&<small>Next message</small>}<ChevronDown/></button>}
-  {!open&&settingsNotice(savedImpact)}
+  {!embedded&&<button type="button" className="a-model-trigger" aria-label="Model and reasoning settings" aria-haspopup={compact?'dialog':undefined} disabled={unavailable} aria-expanded={!!open} aria-busy={checkingDefaults||undefined} title={checkingDefaults?`${modelLabel} · Checking bundle settings…`:modelLabel} data-action="view.update" onClick={show}><span>{!effective.model&&(delayed||failure)?'Model settings unavailable':compact?modelAndEffort:modelLabel}</span>{(session?.pendingModelSelection||pendingBundle)&&<small>Next message</small>}</button>}
+
   {!open&&error&&<p className="a-danger" role="status">{error}</p>}
   {open&&renderPanel(<section ref={panelRef} className={embedded?"a-embedded-model":`a-model-popover a-compact-popover${compact?' a-composer-options-panel':''}`} style={embedded?undefined:position} role="dialog" aria-label="Model for this chat" aria-describedby={`${descriptionId}-heading`}>
    <div className="a-settings-row a-composer-options-heading"><strong id={`${descriptionId}-heading`}>Model for this chat</strong>{!embedded&&<button type="button" className="a-icon" aria-label={compact?'Close chat options':'Close model settings'} data-action="view.update" onClick={close}><X/></button>}</div>
    {binding?.eligible===false&&<p role="status">{binding.reason} The existing selection is preserved.</p>}
    <div data-composer-page="provider">
-   <label htmlFor="chat-provider">Connection</label><ProviderSelect controlId="chat-provider" value={draft.instance} providers={providers} options={options} mayCostMore={id=>selectionImpact(impact,id)} placeholderDisabled data-action={isDraft?'view.update':'conversation.configure'} disabled={blocked} onChange={chooseProvider} placeholder={providers.length?'Choose a connection':noProviders?'No connections configured':failure||delayed?'Connections unavailable':'Loading connections…'}/>
+   <label htmlFor="chat-provider">Connection</label><ProviderSelect controlId="chat-provider" value={draft.instance} providers={providers} options={options} placeholderDisabled data-action={isDraft?'view.update':'conversation.configure'} disabled={blocked} onChange={chooseProvider} placeholder={providers.length?'Choose a connection':noProviders?'No connections configured':failure||delayed?'Connections unavailable':'Loading connections…'}/>
    {draft.instance&&!selected&&<small>Saved connection {draft.instance} is not available in this configuration scope.</small>}
    </div>
    <div data-composer-page="model">
