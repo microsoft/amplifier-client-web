@@ -344,8 +344,8 @@ try{
   await expect(dialog.getByRole('searchbox')).toHaveCount(0);
   const advanced=dialog.locator('.a-picker-advanced');await expect(advanced).not.toHaveAttribute('open','');
   await expect(dialog.locator('#chat-provider')).toBeVisible();await expect(dialog.locator('#chat-model')).toBeVisible();
-  await expect(dialog.locator('#chat-model option[value="haiku-fixture"]')).toHaveText(/May cost more/);
-  await expect(dialog.locator('#chat-effort')).not.toBeVisible();
+  await expect(dialog.locator('#chat-model option[value="haiku-fixture"]')).not.toHaveText(/May cost more/);
+  await expect(dialog.locator('#chat-effort')).toBeVisible();
   await advanced.locator('summary').click();await expect(dialog.locator('#chat-effort')).toBeVisible();
   await expect(advanced.locator('[data-part="model-pricing-announcement"]')).toHaveCount(1);
   const geometry=await dialog.evaluate(node=>{

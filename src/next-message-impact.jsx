@@ -28,17 +28,17 @@ export function NextMessageImpact({impact, kind}) {
   if (!kind || !impact) return null;
   if (kind === 'handoff' && measured(impact.portableHistoryTokens)) {
     return <p className="a-next-impact" role="status" data-next-message-impact="handoff">
-      <Clock3 aria-hidden="true"/><span>Earlier history was measured at {impact.portableHistoryTokens.toLocaleString()} tokens. This connection may need to summarize it, increasing time and cost.</span>
+      <Clock3 aria-hidden="true"/><span>Switching connections may take longer and cost more if earlier messages need a summary.</span>
     </p>;
   }
   if (!measured(impact.inputTokens)) return null;
   const explanation = {
-    selection: 'This choice may need to read the chat history again, increasing time and cost.',
+    selection: 'Your next reply may take longer and cost more if the model needs to reread earlier messages.',
     tools: 'Changing these tools may require reading the chat history again, increasing time and cost.',
     budget: 'This limit is smaller than the last request. Preparing the history to fit may take time and cost more.',
   }[kind];
   if (!explanation) return null;
   return <p className="a-next-impact" role="status" data-next-message-impact={kind}>
-    <Clock3 aria-hidden="true"/><span>{explanation} The last request used {impact.inputTokens.toLocaleString()} input tokens.</span>
+    <Clock3 aria-hidden="true"/><span>{explanation}{kind !== 'selection' && ` The last request used ${impact.inputTokens.toLocaleString()} input tokens.`}</span>
   </p>;
 }

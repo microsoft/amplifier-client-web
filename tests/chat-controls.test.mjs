@@ -43,7 +43,8 @@ test('one compact model panel embeds bundle choices under Advanced and shares it
   assert.equal(dialog.findAllByProps({'data-composer-page':'overview'}).length,0);
   assert.equal(dialog.findAllByProps({'aria-label':'Back to chat options'}).length,0);
   const advanced=dialog.findByProps({className:'a-picker-advanced'});
-  assert.equal(advanced.findByProps({'data-composer-page':'effort'}).findByProps({id:'chat-effort'}).type,'input');
+  assert.equal(advanced.findAllByProps({id:'chat-effort'}).length,0);
+  assert.equal(dialog.findByProps({id:'chat-effort'}).type,'input');
   assert.ok(advanced.findByProps({'data-part':'model-pricing-announcement'}));
   assert.ok(advanced.findAllByType('button').some(b=>b.children.includes('Enter an exact model ID')));
   assert.deepEqual(advanced.findAllByType('summary')[0].children,['Advanced']);
@@ -777,13 +778,14 @@ test('known costly options are marked before saving and the notice clears on a s
  try{
   await renderAct(async()=>root=create(render()));
   const option=(id,value)=>renderedText(field(root,id).findAllByType('option').find(node=>node.props.value===value).children);
-  assert.match(option('chat-model','other'),/May cost more/);
+  assert.equal(option('chat-model','other'),'other');
+  assert.match(renderedText(root.toJSON()),/Switching models may make the next reply slower/);
   assert.match(option('chat-provider','two'),/May cost more/);
   assert.doesNotMatch(option('chat-provider','alias'),/May cost more/);
   assert.doesNotMatch(option('chat-model','model'),/May cost more/);
   assert.equal(notice().length,0);
   await renderAct(async()=>field(root,'chat-model').props.onChange({target:{value:'other'}}));
-  assert.match(renderedText(notice()[0].children),/88,000 input tokens/);
+  assert.match(renderedText(notice()[0].children),/reread earlier messages/);
   await renderAct(async()=>field(root,'chat-model').props.onChange({target:{value:'model'}}));
   assert.equal(notice().length,0);
   assert.deepEqual(calls.filter(c=>c.name!=='view.update').map(c=>c.name),['conversation.configure','conversation.configure']);
@@ -831,7 +833,7 @@ test('known large native history is disclosed for a different provider even afte
   assert.match(renderedText(field(root,'chat-provider').findAllByType('option').find(n=>n.props.value==='two').children),/May cost more/);
   await renderAct(async()=>field(root,'chat-provider').props.onChange({target:{value:'two'}}));
   const hint=root.root.findByProps({'data-next-message-impact':'handoff'});
-  assert.match(renderedText(hint.children),/60,000 tokens.*summarize/i);
+  assert.match(renderedText(hint.children),/earlier messages need a summary/i);
   assert.equal(root.root.findAllByProps({'data-next-message-impact':'selection'}).length,0);
   await renderAct(async()=>field(root,'chat-provider').props.onChange({target:{value:'one'}}));
   assert.equal(root.root.findAllByProps({'data-next-message-impact':'handoff'}).length,0);
