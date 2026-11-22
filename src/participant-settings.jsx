@@ -30,6 +30,7 @@ export function ParticipantSettings({session,act}){
    {opts.map(option=>option.id==='history-reuse'&&option.options.some(c=>c.value==='restore')?
     <button key={option.id} type="button" className="a-link" disabled={blocked} onClick={()=>change(option,'restore')}>{option.options.find(c=>c.value==='restore').name}</button>:
     <label key={option.id}>{option.name}<select aria-label={option.name} value={option.currentValue} disabled={blocked} onChange={e=>change(option,e.target.value)}>{option.options.map(choice=><option key={choice.value} value={choice.value} disabled={!choice.value}>{choice.name}</option>)}</select></label>)}
+   {opts.find(o=>o.description)&&<p className="a-caption">{opts.find(o=>o.description).description}</p>}
    {error&&<p role="alert">{error}</p>}
   </section>)}
  </div>;
