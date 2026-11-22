@@ -5,7 +5,7 @@ import {fileURLToPath} from 'node:url';
 import {createServer} from 'vite';
 import {chromium,expect} from '@playwright/test';
 
-const html=`<!doctype html><html><body><div id="amp-one" class="a-settings-experience"></div><script type="module">
+const html=`<!doctype html><html><body><div id="amp-one"><div id="fixture" class="a-settings-experience"></div></div><script type="module">
 import React from 'react';import {createRoot} from 'react-dom/client';
 import {StarterSettings} from '/src/workspace-starters.jsx';
 import '/src/reference.css';import '/src/workspace-setup.css';
@@ -33,7 +33,7 @@ function Fixture(){
  const act=(action,args)=>{if(action!=='view.update')throw Error(action);window.routes.push(args.patch);setState(current=>({...current,view:{...current.view,...args.patch}}));return Promise.resolve({accepted:true})};
  return React.createElement(StarterSettings,{state,act,dispatch});
 }
-createRoot(document.getElementById('amp-one')).render(React.createElement(Fixture));
+createRoot(document.getElementById('fixture')).render(React.createElement(Fixture));
 </script></body></html>`;
 const out=process.env.AMPLIFIER_TEST_ARTIFACTS||'output/starter-selection',report={scope:'synthetic starter selection',errors:[],checks:[]};
 let vite,browser,page,failure;
@@ -44,11 +44,11 @@ try{
  await vite.listen();browser=await chromium.launch({headless:true});page=await browser.newPage({viewport:{width:1280,height:900}});
  page.on('pageerror',error=>report.errors.push(error.message));await page.goto(vite.resolvedUrls.local[0]+'starter-fixture');
  const row=id=>page.locator('[data-collection-id="'+id+'"]>button');
- const development=row('development'),section=page.locator('[data-part="workspace-starters"]');
+ const development=row('development'),collection=page.locator('[data-part="workspace-starters"] .a-collection');
  await expect(page.getByLabel('Starter name',{exact:true})).toHaveValue('Temporary');
  await page.getByRole('button',{name:'Delete this starter',exact:true}).click();
  await page.getByRole('alertdialog',{name:'Delete starter',exact:true}).getByRole('button',{name:'Delete starter',exact:true}).click();
- await expect(development).toHaveAttribute('aria-disabled','true');await expect(section).toHaveAttribute('aria-busy','true');
+ await expect(development).toHaveAttribute('aria-disabled','true');await expect(collection).toHaveAttribute('aria-busy','true');
  await expect(page.getByRole('status').filter({hasText:'Updating starters'})).toBeVisible();
  // ARIA disabling keeps the focused row discoverable but cancels activation.
  await development.focus();await page.keyboard.press('Enter');await page.keyboard.press('Space');
@@ -57,11 +57,13 @@ try{
  assert.equal(await page.evaluate(()=>window.routes.some(route=>route.workspaceStarterEditor.id==='development')),false);
  await page.evaluate(()=>window.releaseRemove());await page.waitForFunction(()=>!!window.releaseReload);
  await expect(development).toHaveAttribute('aria-disabled','true');await expect(development).toBeFocused();
+ await expect(page.getByRole('status').filter({hasText:'Updating starters'})).toBeVisible();
+ assert.equal(await page.getByRole('status').filter({hasText:'Updating starters'}).evaluate(node=>!!node.closest('[aria-busy=true]')),false,'Busy announcement stays outside the changing subtree');
  assert.equal(await development.evaluate(node=>getComputedStyle(node).cursor),'not-allowed');
- await page.keyboard.press('Enter');
  const routes=await page.evaluate(()=>window.routes.length);
+ await page.keyboard.press('Enter');assert.equal(await page.evaluate(()=>window.routes.length),routes,'The post-remove gap must refuse selection immediately');
  await page.evaluate(()=>window.releaseReload());await expect(development).not.toHaveAttribute('aria-disabled','true');
- await expect(section).toHaveAttribute('aria-busy','false');await expect(development).toBeFocused();
+ await expect(collection).not.toHaveAttribute('aria-busy','true');await expect(development).toBeFocused();
  assert.equal(await page.evaluate(()=>window.routes.length),routes,'Unlock never replays rejected selection intent');
  await page.keyboard.press('Enter');await expect(development).toHaveAttribute('aria-current','true');
  await expect(page.getByLabel('Starter name',{exact:true})).toHaveValue('Development');

@@ -9,6 +9,7 @@
 #amp-one .a-settings-experience .a-collection-row>button:before{content:'';position:absolute;inset:0;z-index:-1}
 #amp-one .a-settings-experience .a-collection-row:hover,#amp-one .a-settings-experience .a-collection-row:focus-within,#amp-one .a-settings-experience .a-collection-row.selected{background:var(--a-tint)}
 #amp-one .a-settings-experience .a-collection-row>button:hover{background:transparent}
+#amp-one .a-collection-row>button[aria-disabled=true]{opacity:.6;cursor:not-allowed}
 #amp-one .a-settings-experience .a-collection-row>button>span{flex:1;min-width:0}
 #amp-one .a-settings-experience .a-collection-row strong,#amp-one .a-settings-experience .a-collection-row small{display:block;overflow-wrap:anywhere}
 #amp-one .a-settings-experience .a-collection-row small{font-size:var(--a-text-sm,13px);line-height:1.5;color:var(--a-muted);margin-top:4px;font-weight:400}
