@@ -27,7 +27,7 @@ export function useTranscriptSuggestion({state,suggestionsSupported,readState,ac
  // A transport/catalog verification gap grants no work or preview authority.
  // Keep only the original private receipt identity for a status-only check
  // after this same principal/source/configuration is verified again.
- owner.observe(state,config?.revision,eligible,{retainReady,retainAttempt:!connected||suggestionsSupported===null,recipient});
+ owner.observe(state,config?.revision,eligible,{retainReady,invalidateAttempt:config?.enabled===false||suggestionsSupported===false||!suggestionPreference(state),recipient});
  const generation=owner.generation();
  useEffect(()=>{
   const hide=()=>{if(document.hidden)owner.suspend();setVisible(!document.hidden)};

@@ -66,16 +66,25 @@ test('null pre-admission terminal fields need the exact owned request plus fresh
 test('temporary transport/catalog verification gaps retain only exact attempt identity, never a visible candidate or new inference',()=>{
  for(const status of ['ready','pending','failed','empty','unsupported']){
   const h=harness(),args=h.request();h.controller.receive(args,{...h.result(args),status});
-  h.controller.observe(h.state,undefined,false,{retainAttempt:true});assert.equal(h.controller.candidate(),null);assert.equal(h.controller.resumeRequest(),null);
+  h.controller.observe(h.state,undefined,false);assert.equal(h.controller.candidate(),null);assert.equal(h.controller.resumeRequest(),null);
   h.observe();const original=h.controller.resumeRequest();assert.equal(original.requestId,args.requestId);assert.equal(h.controller.nextRequest(),null);
  }
 });
 test('a real Stop or explicit invalidation during a catalog verification gap dismisses all old receipts for that chat',()=>{
  for(const explicit of [false,true]){
   const h=harness(),args=h.request();h.controller.receive(args,{...h.result(args),status:'failed'});
-  h.controller.observe(h.state,undefined,false,{retainAttempt:true});
+  h.controller.observe(h.state,undefined,false);
   if(explicit)h.controller.invalidate();else{h.state.sessions[0].status='stopped';h.observe()}
   h.state.sessions[0].status='idle';h.observe();assert.equal(h.controller.resumeRequest(),null);assert.equal(h.controller.nextRequest(),null);
+ }
+});
+test('navigation busy and public-history hydration suspend a terminal receipt without dismissing it',()=>{
+ for(const gate of ['navigation','history']){
+  const h=harness(),args=h.request();h.controller.receive(args,{...h.result(args),status:'unsupported'});
+  if(gate==='history')h.state.sessions[0].historyLoading=true;
+  h.controller.observe(h.state,'model1',false);assert.equal(h.controller.disposition(),null);
+  delete h.state.sessions[0].historyLoading;h.observe();
+  assert.equal(h.controller.resumeRequest().requestId,args.requestId);assert.equal(h.controller.nextRequest(),null);
  }
 });
 test('controller observes unselected pre-client boot states without allocating work',()=>{

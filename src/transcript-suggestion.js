@@ -96,9 +96,12 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
   for(const [key,saved]of attempts)if(saved.args.sessionId===sessionId)attempts.set(key,{...saved,status:'dismissed'});
  }
  function invalidate(){dismissSession(current?.sessionId);suspend()}
- function observe(state,configRevision,eligible,{retainReady=false,retainAttempt=false,recipient}={}){
+ function observe(state,configRevision,eligible,{retainReady=false,invalidateAttempt=false,recipient}={}){
   const nextScope=suggestionScope(state),witness=suggestionWitness(state),key=witness&&JSON.stringify([witness.key,configRevision,recipient]);
   const session=state?.sessions?.find(row=>row.id===state.selectedSessionId);
+  const view=state?.view||{},document=view.draftDocument;
+  const structuralEdit=document!=null&&(document.version!==1||!Array.isArray(document.segments)||document.segments.some(part=>part?.type!=='text'||part.content?.type!=='paragraph'));
+  const hardInvalidation=invalidateAttempt||view.messageEdit||view.messageReply||structuralEdit||(session?.draftAttachments||state?.draftAttachments)?.length||['stopping','stopped','error','failed'].includes(session?.status)||session&&ownershipState(session).blocked;
   // A display prefix/page arriving must not buy another paid attempt. The
   // semantic witness still invalidates visible stale text; only a new response
   // or explicit configuration/source selection can allocate inference again.
@@ -107,8 +110,11 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
   for(const map of [ready,attempts])for(const [savedKey,saved]of map)if(Object.hasOwn(state?.conversationOrganization?.archived||{},saved.args.sessionId)||state?.sessions?.some(row=>row.id===saved.args.sessionId&&row.archived))map.delete(savedKey);
   if(current&&current.sessionId===state?.selectedSessionId&&(current.key!==key||!eligible&&!retainReady)){
    ready.delete(current.key);
-   if(!eligible&&!retainReady&&!retainAttempt)dismissSession(current.sessionId);
   }
+  // Busy navigation, history hydration, transport verification and temporary
+  // draft text can suspend assistance without deleting its exact receipt.
+  // Concrete Stop/ownership/structured-editor boundaries still invalidate it.
+  if(hardInvalidation)dismissSession(state?.selectedSessionId);
   if(current?.key!==key||current?.eligible!==eligible)suspend();
   current={key,attemptKey,witness,eligible,configRevision,sessionId:state?.selectedSessionId};
  }
