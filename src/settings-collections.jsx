@@ -4,17 +4,17 @@ import {ArrowLeft,ArrowUp,ArrowDown,ChevronRight} from 'lucide-react';
 import './settings-collections.css';
 import {ReorderList} from './reorder-list';
 
-export function CollectionRow({id,label,description,selected,onSelect,checked,onCheck,disabled,badge,checkLabel,checkAction='view.update'}){
+export function CollectionRow({id,label,description,selected,onSelect,selectionDisabled=false,checked,onCheck,disabled,badge,checkLabel,checkAction='view.update'}){
  return <div className={'a-collection-row'+(selected?' selected':'')} data-collection-id={id}>
   {onCheck&&<label className="a-collection-check"><input type="checkbox" aria-label={checkLabel||'Select '+label} checked={!!checked} disabled={disabled} data-action={checkAction} onChange={e=>onCheck(e.target.checked)}/></label>}
-  <button type="button" aria-current={selected?'true':undefined} data-action="view.update" onClick={onSelect}><span><strong>{label}</strong>{description&&<small>{description}</small>}</span>{badge&&<small className="a-collection-badge">{badge}</small>}<ChevronRight aria-hidden="true"/></button>
+  <button type="button" aria-current={selected?'true':undefined} aria-disabled={selectionDisabled||undefined} data-action="view.update" onClick={event=>{if(selectionDisabled){event?.preventDefault();return}onSelect?.(event)}}><span><strong>{label}</strong>{description&&<small>{description}</small>}</span>{badge&&<small className="a-collection-badge">{badge}</small>}<ChevronRight aria-hidden="true"/></button>
  </div>;
 }
-export function Collection({list,children,detailOpen=true,onBack,label='items'}){
+export function Collection({list,children,detailOpen=true,onBack,label='items',busy=false}){
  const listRef=useRef(null),detailRef=useRef(null),layout=useContext(SettingsLayoutContext);
  useEffect(()=>{if(detailOpen&&layout.compact){detailRef.current?.focus({preventScroll:true});}},[detailOpen,layout.compact]);
  const back=()=>{onBack?.();requestAnimationFrame(()=>listRef.current?.querySelector('button[aria-current=true],button')?.focus({preventScroll:true}));};
- return <div className={'a-collection'+(detailOpen?' detail-open':'')}><div className="a-collection-list" ref={listRef}>{list}</div><div className="a-collection-detail" ref={detailRef} tabIndex={-1}>
+ return <div className={'a-collection'+(detailOpen?' detail-open':'')} aria-busy={busy||undefined}><div className="a-collection-list" ref={listRef}>{list}</div><div className="a-collection-detail" ref={detailRef} tabIndex={-1}>
  {onBack&&!layout.compact&&<button type="button" className="a-link a-collection-back" data-action="view.update" onClick={back}><ArrowLeft/>Back to {label}</button>}{children}</div></div>;
 }
 export {moveItem} from './reorder-list';

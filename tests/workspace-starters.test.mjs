@@ -6,6 +6,7 @@ import {createServer} from 'vite';
 
 const server=await createServer({configFile:false,server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
 const {StarterSettings}=await server.ssrLoadModule('/src/workspace-starters.jsx');
+const {CollectionRow}=await server.ssrLoadModule('/src/settings-collections.jsx');
 const {SettingsDraftProvider,useSettingsDrafts}=await server.ssrLoadModule('/src/settings-drafts.jsx');
 const {SettingsLayoutContext}=await server.ssrLoadModule('/src/settings-layout.jsx');
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
@@ -26,12 +27,20 @@ const edit=(root,label,value)=>act(async()=>control(root,label).props.onChange({
 const click=(root,label)=>act(async()=>button(root,label).props.onClick());
 const submit=(root,copy=false)=>act(async()=>root.root.findByType('form').props.onSubmit({preventDefault(){},nativeEvent:{submitter:{value:copy?'copy':''}}}));
 
-async function fixture({selected='builtin',items=[builtin,custom],save,compact=false,failReload=false}={}){
+async function fixture({selected='builtin',items=[builtin,custom],save,remove,list,compact=false,failReload=false}={}){
  let root,guard,listReads=0,updateState,catalog={items:structuredClone(items),bundles:[{value:'work',label:'Work'},{value:'other',label:'Other'}]};
  const calls=[],routes=[],focus=[];
  const dispatch=async(action,args,meta)=>{
-  if(action==='workspace.starters.list'){if(failReload&&listReads++)throw Error('List unavailable');return ok(catalog)}
+  if(action==='workspace.starters.list'){
+   listReads++;if(failReload&&listReads>1)throw Error('List unavailable');
+   return list?list(catalog,listReads):ok(catalog);
+  }
   calls.push(structuredClone({action,args,meta}));
+  if(action==='workspace.starters.remove'&&remove){
+   const response=await remove(args,meta);
+   if(response?.accepted)catalog={...catalog,items:catalog.items.filter(row=>row.id!==args.id)};
+   return response;
+  }
   assert.equal(action,'workspace.starters.save','Copy must save the edited draft, not duplicate or remove the stored definition');
   const response=save?await save(args,meta,calls.length):ok({...args.starter,id:args.id||'saved-copy',revision:args.id?args.expectedRevision+1:1,builtIn:false});
   if(response?.accepted&&response.result?.id){
@@ -288,5 +297,84 @@ test('compact actions target the editor form and retain accessible field labels'
   for(const label of ['Starter name','Description','Workspace bundle default','Agent instructions']){
    const input=control(f.root,label);assert.ok(input.props.id);
   }
+ }finally{await f.clean()}
+});
+
+test('starter row selection remains explicitly disabled through delete and its catalog refresh',async()=>{
+ let finishDelete,finishList;
+ const f=await fixture({selected:'custom',
+  remove:()=>new Promise(resolve=>{finishDelete=()=>resolve(ok({removed:true}))}),
+  list:(catalog,count)=>count===2?new Promise(resolve=>{finishList=()=>resolve(ok(catalog))}):ok(catalog)});
+ const row=()=>f.root.root.findByProps({'data-collection-id':'builtin'}).findByType('button');
+ try{
+  await click(f.root,'Delete this starter');await click(f.root,'Delete starter');
+  assert.equal(row().props['aria-disabled'],true,'A row must not appear available while its handler refuses selection');
+  const before=f.routes.length;
+  await act(async()=>row().props.onClick({preventDefault(){}}));
+  assert.equal(f.routes.length,before,'No selection intent is queued while deleting');
+  await act(async()=>finishDelete());
+  assert.equal(row().props['aria-disabled'],true,'The confirmed delete does not unlock selection before catalog refresh');
+  assert.equal(f.root.root.findByProps({className:'a-collection'}).props['aria-busy'],true);
+  const duringRefresh=f.routes.length;
+  await act(async()=>row().props.onClick({preventDefault(){}}));
+  assert.equal(f.routes.length,duringRefresh,'The post-remove gap must also refuse selection');
+  const routesBeforeRefresh=f.routes.length;
+  await act(async()=>finishList());
+  assert.equal(f.routes.length,routesBeforeRefresh,'Refresh must not replay the attempted selection');
+  assert.notEqual(row().props['aria-disabled'],true);
+  await act(async()=>row().props.onClick());
+  assert.equal(f.routes.at(-1).workspaceStarterEditor.id,'builtin');
+  assert.deepEqual(f.calls.map(call=>call.action),['workspace.starters.remove']);
+ }finally{await f.clean()}
+});
+
+test('uncertain starter save visibly locks row selection without discarding draft or replaying',async()=>{
+ const f=await fixture({selected:'custom',save:async()=>{throw Error('Unconfirmed save')}});
+ try{
+  await edit(f.root,'Description','Keep my unsent edit');await submit(f.root);
+  const row=f.root.root.findByProps({'data-collection-id':'builtin'}).findByType('button');
+  assert.equal(row.props['aria-disabled'],true);
+  await act(async()=>row.props.onClick({preventDefault(){}}));
+  assert.equal(control(f.root,'Description').props.value,'Keep my unsent edit');
+  assert.equal(f.calls.length,1);
+  assert.ok(button(f.root,'Check the same save'));
+  assert.equal(f.guard.hasUnsaved(),true);
+ }finally{await f.clean()}
+});
+
+test('collection selection lock is focusable and independent of its checkbox lock',async()=>{
+ let root;const selected=[];
+ const render=selectionDisabled=>React.createElement(CollectionRow,{id:'row',label:'Visible details',disabled:true,
+  checked:true,onCheck:()=>assert.fail('Checkbox must stay disabled'),selectionDisabled,onSelect:event=>selected.push(event)});
+ try{
+  await act(async()=>root=create(render(false)));
+  assert.equal(root.root.findByType('input').props.disabled,true);
+  assert.notEqual(root.root.findByType('button').props['aria-disabled'],true);
+  const event={preventDefault(){assert.fail('Available selection must not be cancelled')}};
+  await act(async()=>root.root.findByType('button').props.onClick(event));
+  assert.deepEqual(selected,[event],'Required/installed checkbox rows retain accessible details');
+  await act(async()=>root.update(render(true)));
+  const button=root.root.findByType('button');let prevented=0;
+  assert.equal(button.props['aria-disabled'],true);
+  assert.notEqual(button.props.disabled,true,'Busy selection remains in the focus order');
+  await act(async()=>button.props.onClick({preventDefault(){prevented++}}));
+  assert.equal(prevented,1);assert.equal(selected.length,1);
+ }finally{await act(async()=>root?.unmount())}
+});
+
+test('a same-render starter selection cannot overtake the synchronous save owner',async()=>{
+ let finish;
+ const f=await fixture({selected:'custom',save:args=>new Promise(resolve=>{finish=()=>resolve(ok({...args.starter,id:'custom',revision:8,builtIn:false}))})});
+ try{
+  const choose=f.root.root.findByProps({'data-collection-id':'builtin'}).findByType('button').props.onClick;
+  await act(async()=>{
+   f.root.root.findByType('form').props.onSubmit({preventDefault(){},nativeEvent:{submitter:{value:''}}});
+   choose();
+  });
+  assert.equal(f.calls.length,1);
+  assert.equal(control(f.root,'Starter name').props.value,'My starter');
+  assert.deepEqual(f.routes,[]);
+  await act(async()=>finish());
+  assert.equal(f.routes.at(-1).workspaceStarterEditor.id,'custom');
  }finally{await f.clean()}
 });

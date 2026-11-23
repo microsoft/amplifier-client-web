@@ -1,6 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {activityFor,relativeActivity,compactParent,parentPath,pinnedWorkspaceSubtitle} from '../src/navigation-presentation.js';
+import {revealNavigationTitles} from '../src/navigation-title.js';
+
+test('title reveal measures only overflowing labels and refreshes stale geometry',()=>{
+ const properties=new Map(),title={scrollWidth:420},viewport={firstElementChild:title,clientWidth:160,dataset:{},
+  style:{setProperty:(key,value)=>properties.set(key,value)}};
+ const empty={firstElementChild:null};
+ const event={currentTarget:{querySelectorAll:selector=>{assert.equal(selector,'[data-scroll-title]');return [viewport,empty]}}};
+ revealNavigationTitles(event);
+ assert.equal(viewport.dataset.overflow,'true');assert.equal(properties.get('--title-overflow'),'-260px');
+ assert.equal(properties.get('--title-duration'),`${260/28}s`);
+ title.scrollWidth=100;revealNavigationTitles(event);
+ assert.equal(viewport.dataset.overflow,'false');assert.equal(properties.get('--title-overflow'),'0px');
+ assert.equal(properties.get('--title-duration'),'3s');
+ title.scrollWidth=161;revealNavigationTitles(event);
+ assert.equal(viewport.dataset.overflow,'false','Subpixel/one-pixel noise does not animate a fitting title');
+});
 
 test('navigation distinguishes unresolved input, active work, errors, and new replies',()=>{
  assert.equal(activityFor({status:'working',approvals:[{status:'pending'}]}).kind,'attention');

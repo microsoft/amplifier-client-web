@@ -140,6 +140,12 @@
 @media(pointer:coarse){#amp-one .a-adaptive-home button{min-height:44px}}
 @media(forced-colors:active){#amp-one .a-work-card-cta.a-primary{background:ButtonFace;color:ButtonText;border:1px solid ButtonText}#amp-one .a-work-view-switch button[aria-pressed=true]{outline:1px solid Highlight}}
 /* Truncate the actual text box; reveal the full label on hover/keyboard focus. */
+#amp-one [data-scroll-title]{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#amp-one [data-scroll-title]>span{display:inline-block;min-width:100%;white-space:nowrap}
+#amp-one :is(.a-nav-chat-select,.a-workspace-select):is(:hover,:focus-visible) [data-scroll-title][data-overflow=true]{text-overflow:clip}
+#amp-one :is(.a-nav-chat-select,.a-workspace-select):is(:hover,:focus-visible) [data-scroll-title][data-overflow=true]>span{animation:a-chat-title-pan var(--title-duration,4s) linear .8s 1 both}
+@keyframes a-chat-title-pan{0%,15%{transform:translateX(0)}85%,100%{transform:translateX(var(--title-overflow,0px))}}
+@media(prefers-reduced-motion:reduce){#amp-one :is(.a-nav-chat-select,.a-workspace-select):is(:hover,:focus-visible) [data-scroll-title][data-overflow=true]>span{animation:none}}
 #amp-one.a-approachable-shell .a-quiet-sidebar [data-scroll-title]>span{display:block;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #amp-one.a-approachable-shell .a-quiet-sidebar :is(.a-nav-chat-select,.a-workspace-select):is(:hover,:focus-visible) [data-scroll-title]>span{display:inline-block;min-width:100%;max-width:none;overflow:visible}
 #amp-one.a-approachable-shell .a-nav-main,#amp-one.a-approachable-shell .a-quiet-sidebar :is(.a-nav-chat-select,.a-workspace-select){justify-content:flex-start;padding:9px 10px;gap:12px}
