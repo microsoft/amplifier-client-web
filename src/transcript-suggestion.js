@@ -82,8 +82,8 @@ export function suggestionDispositionText(disposition){
 // for non-ready attempts too; revisiting reads the original ID, never a new call.
 // Transport is deliberately injected: this controller never sends a draft.
 export function createSuggestionController({readState,canUse=()=>true,readStatus,now=Date.now,requestId=()=>crypto.randomUUID()}){
- let scope=null,current=null,epoch=0,candidate=null,request=null,restoring=null;
- const spent=new Set(),ready=new Map(),attempts=new Map();
+ let scope=null,current=null,epoch=0,incarnation=0,candidate=null,request=null,restoring=null;
+ const spent=new Set(),ready=new Map(),attempts=new Map(),withdrawals=new Map();
  const alive=saved=>saved.expiresAt===null||saved.expiresAt>now();
  const retentionMatches=(saved,result)=>saved.retention===(result.retention??null)&&(saved.expiresAt===null?result.expiresAt===null:result.expiresAt!==null);
  const remember=key=>{spent.add(key);while(spent.size>128)spent.delete(spent.values().next().value)};
@@ -106,7 +106,7 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
   // semantic witness still invalidates visible stale text; only a new response
   // or explicit configuration/source selection can allocate inference again.
   const attemptKey=witness&&JSON.stringify([nextScope,deliveryScope(state,session),session.id,witness.lastMessageId,configRevision,recipient,session.nextMessageRevision??0,session.interruptionRevision??0]);
-  if(nextScope!==scope){scope=nextScope;spent.clear();ready.clear();attempts.clear();suspend()}
+  if(nextScope!==scope){incarnation++;scope=nextScope;spent.clear();ready.clear();attempts.clear();withdrawals.clear();suspend()}
   for(const map of [ready,attempts])for(const [savedKey,saved]of map)if(Object.hasOwn(state?.conversationOrganization?.archived||{},saved.args.sessionId)||state?.sessions?.some(row=>row.id===saved.args.sessionId&&row.archived))map.delete(savedKey);
   if(current&&current.sessionId===state?.selectedSessionId&&(current.key!==key||!eligible&&!retainReady)){
    ready.delete(current.key);
@@ -129,6 +129,10 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
   nextRequest(){
    if(!current?.eligible||!current.witness||!canUse()||request||spent.has(current.attemptKey)||candidate)return null;
    remember(current.attemptKey);request={key:current.attemptKey,epoch,expiresAt:now()+60000,args:{sessionId:current.witness.sessionId,requestId:requestId(),expectedLastMessageId:current.witness.lastMessageId}};
+   const captured=incarnation,capturedScope=scope;let claimed=false;
+   const currentOwner=()=>incarnation===captured&&suggestionScope(readState())===capturedScope;
+   withdrawals.set(request.args.requestId,{current:currentOwner,claim:()=>{if(claimed||!currentOwner())return false;claimed=true;return true}});
+   while(withdrawals.size>128)withdrawals.delete(withdrawals.keys().next().value);
    retain({...request,status:'pending'});
    return request.args;
   },
@@ -144,6 +148,7 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
    return saved?{status:saved.status==='ready'&&!available()?(ready.has(current.key)&&restoring?'pending':'uncertain'):saved.status,reason:saved.reason}:spent.has(current.attemptKey)?{status:'uncertain'}:null;
   },
   requestCurrent(args){return !!request&&request.args===args&&request.epoch===epoch&&current.eligible&&canUse()&&suggestionEligible(readState())&&suggestionWitness(readState())?.key===current.witness.key},
+  withdrawal(args){return withdrawals.get(args?.requestId)||null},
   unavailable(args){if(request?.args===args){retain({...request,status:'uncertain'});request=null}},
   receive(args,result){
    if(!this.requestCurrent(args)||result?.requestId!==args.requestId||result?.sessionId!==args.sessionId)return false;
@@ -220,6 +225,6 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
   },
   invalidate,
   suspend,
-  reset(){invalidate();scope=null;current=null;spent.clear();ready.clear();attempts.clear()},
+  reset({preserveWithdrawal=false}={}){invalidate();if(!preserveWithdrawal)incarnation++;scope=null;current=null;spent.clear();ready.clear();attempts.clear();withdrawals.clear()},
  };
 }

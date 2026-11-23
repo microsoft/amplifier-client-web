@@ -34,15 +34,19 @@ export function useTranscriptSuggestion({state,suggestionsSupported,readState,ac
   const leave=()=>owner.suspend();
   const blur=()=>{owner.suspend();setFocused(false)},focus=()=>setFocused(document.hasFocus());
   document.addEventListener('visibilitychange',hide);window.addEventListener('pagehide',leave);window.addEventListener('blur',blur);window.addEventListener('focus',focus);
-  return()=>{document.removeEventListener('visibilitychange',hide);window.removeEventListener('pagehide',leave);window.removeEventListener('blur',blur);window.removeEventListener('focus',focus);owner.reset()};
+  return()=>{document.removeEventListener('visibilitychange',hide);window.removeEventListener('pagehide',leave);window.removeEventListener('blur',blur);window.removeEventListener('focus',focus);owner.reset({preserveWithdrawal:true})};
  },[owner]);
  useEffect(()=>{
   if(!eligible)return;
-  let active=true,timer,deadlineTimer,args=null,terminal=false;
+  let active=true,timer,deadlineTimer,args=null,withdrawal=null,terminal=false;
   const deadline=Date.now()+16000;
-  const canCancel=()=>live.current.connected&&live.current.suggestionsSupported&&scope===suggestionScope(live.current.readState());
+  const canCancel=()=>live.current.connected&&live.current.suggestionsSupported&&scope===suggestionScope(live.current.readState())&&withdrawal?.current();
   const cancel=()=>{
-   if(args&&canCancel())void act('session.suggestion.cancel',{sessionId:args.sessionId,requestId:args.requestId},{feedback:false,suggestionIsCurrent:canCancel}).catch(()=>{});
+   // A lost acknowledgement clears preview authority, not our obligation to
+   // withdraw the exact possibly-admitted attempt. Never replay an uncertain
+   // cancellation or send it through another principal/host binding.
+   if(!args||!canCancel()||!withdrawal.claim())return;
+   void act('session.suggestion.cancel',{sessionId:args.sessionId,requestId:args.requestId},{feedback:false,suggestionIsCurrent:canCancel}).catch(()=>{});
   };
   const current=()=>active&&!!args&&owner.requestCurrent(args);
   const poll=async(action,requestArgs)=>{
@@ -56,22 +60,24 @@ export function useTranscriptSuggestion({state,suggestionsSupported,readState,ac
     // results are uncertain, not evidence of an empty or successful attempt.
     terminal=received&&result.status!=='pending';
     refresh(value=>value+1);
-    if(!received){owner.unavailable(args);refresh(value=>value+1);return}
+    if(!received){owner.unavailable(args);cancel();refresh(value=>value+1);return}
     if(result.status==='pending'){
      if(Date.now()<deadline)timer=setTimeout(()=>poll('session.suggestion.status',{sessionId:args.sessionId,requestId:args.requestId}),350);
      else{owner.unavailable(args);refresh(value=>value+1);cancel()}
     }
-   }catch{owner.unavailable(args);refresh(value=>value+1)/* No automatic retry of an uncertain request. */}
+   }catch{owner.unavailable(args);cancel();refresh(value=>value+1)/* No automatic retry of an uncertain request. */}
   };
   if(owner.attempted()){
    args=owner.resumeRequest();
+   withdrawal=owner.withdrawal(args);
    if(args)void poll('session.suggestion.status',{sessionId:args.sessionId,requestId:args.requestId});
    else void owner.restore().then(()=>{if(active)refresh(value=>value+1)});
   }else{
    args=owner.nextRequest();
+   withdrawal=owner.withdrawal(args);
    if(args){refresh(value=>value+1);void poll('session.suggestion.request',args)}
   }
-  if(args)deadlineTimer=setTimeout(()=>{if(!current()||terminal)return;owner.unavailable(args);clearTimeout(timer);cancel();terminal=true;refresh(value=>value+1)},16000);
+  if(args)deadlineTimer=setTimeout(()=>{if(!active||terminal)return;owner.unavailable(args);clearTimeout(timer);cancel();terminal=true;refresh(value=>value+1)},16000);
   return()=>{active=false;clearTimeout(timer);clearTimeout(deadlineTimer);if(args&&!terminal)cancel()};
  },[owner,trigger,eligible,config?.revision,act,generation]);
  const ghost=owner.candidate();

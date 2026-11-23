@@ -12,6 +12,8 @@ const output=process.env.AMPLIFIER_TEST_ARTIFACTS||'/tmp/transcript-suggestion-b
 const positional=process.argv.slice(2).filter(arg=>arg!=='--activation-only');
 const artifact=positional[0]?await readClientArtifact(positional[0],positional[1]):null;
 const activationOutcomes=new Map();
+const acknowledgementModes=new Map();
+let failedSettingsReads=0,nextSetupChange=null;
 let state={revision:1,settings:{workspace:'/fixture',suggestedMessages:true,suggestedMessagesRevision:0},runtime:{available:true},view:{setupJourney:'done',scheme:'system',navPinned:true},sessions:[],workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:null,selectedWorkspaceId:'project',setup:{providers:[{id:'fixture',module:'provider-fixture',enabled:true,config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false},attention:{items:[],sessions:{}}};
 const catalogMetadata={info:{config_fields:[]},configSchema:{fields:[{id:'reasoning_effort',choices:['low','medium','high'],requires_model:true}]}};
 const suggestionCatalog=['settings.update','providers.suggestionModels','providers.configureSuggestions','session.suggestion.request','session.suggestion.status','session.suggestion.cancel'].map(name=>({name}));
@@ -85,9 +87,14 @@ try{
    await route.fulfill({json:{accepted:true,result:{settings:{suggestedMessages:state.settings.suggestedMessages,suggestedMessagesRevision:state.settings.suggestedMessagesRevision},scope:'installation-owner'},state:snapshot(owner)}});
    await Promise.all(context.pages().map(p=>p.evaluate(next=>window.emitFixtureState?.(next),snapshot(p)).catch(()=>{})));return;
   }
-  if(body.action==='providers.suggestionModels')return route.fulfill({json:{accepted:true,result:{suggestionModels:suggestionConfig,providers:[{id:'fixture',displayName:'Fixture account',module:'provider-fixture',sharedCatalogKey:'global-fixture-key'}]}}});
+  if(body.action==='providers.suggestionModels'){
+   if(failedSettingsReads>0){failedSettingsReads--;return route.fulfill({json:{accepted:false,error:'Fixture settings read failed'}})}
+   return route.fulfill({json:{accepted:true,result:{suggestionModels:suggestionConfig,providers:[{id:'fixture',displayName:'Fixture account',module:'provider-fixture',sharedCatalogKey:'global-fixture-key'}]}}});
+  }
   if(body.action==='providers.configureSuggestions'){
    if(rejectSetup)return route.fulfill({json:{accepted:false,error:'Fixture setup rejected'}});
+   if(nextSetupChange){suggestionConfig={...suggestionConfig,...nextSetupChange};nextSetupChange=null}
+   if(body.args.expectedSuggestionModelsRevision!==suggestionConfig.revision)return route.fulfill({status:409,json:{accepted:false,code:'suggestion_configuration_changed',error:'Suggestion setup changed. Review the current sharing choice.'}});
    suggestionConfig={...suggestionConfig,...body.args,revision:'consumer-config-'+state.revision};return route.fulfill({json:{accepted:true,result:{suggestionModels:suggestionConfig,configurationChanged:true}}});
   }
   if(body.action.startsWith('session.suggestion.')){
@@ -96,6 +103,9 @@ try{
     attempt=body.args;const sourceKey=sourceFor(attempt.sessionId),reused=cachedResults.has(sourceKey);
     if(!reused){modelCalls++;const status=activationOutcomes.get(attempt.sessionId)||(attempt.sessionId==='empty'?'empty':'ready');cachedResults.set(sourceKey,{status,suggestion:status==='ready'?'Try the next step.':null,sourceKey,configRevision:suggestionConfig.revision,expiresAt:status==='ready'?null:Date.now()+60000,retention:status==='ready'?'source':null})}
     attemptResults.set(attempt.requestId,{...cachedResults.get(sourceKey),reused});
+    const ack=acknowledgementModes.get(attempt.sessionId);
+    if(ack==='lost')return route.abort('connectionreset');
+    if(ack==='truncated')return route.fulfill({contentType:'application/json',body:'{"accepted":true,"result":'});
    }
    const saved=attemptResults.get(body.args.requestId),result={...saved,requestId:body.args.requestId,sessionId:body.args.sessionId};
    if(saved?.status==='pending'&&activationOutcomes.has(body.args.sessionId)){
@@ -147,7 +157,7 @@ try{
  assert.deepEqual(suggestionActions(),[]);assert.deepEqual(writes(),[]);
  if(process.argv.includes('--activation-only')){
   const {checkSuggestionActivation}=await import('./suggestion-activation-journey.mjs');
-  report.activation=await checkSuggestionActivation({page,expect,assert,state,calls,snapshot,activationOutcomes,output,configureFixture:patch=>{if(patch.config)suggestionConfig={...suggestionConfig,...patch.config};if('rejectSetup'in patch)rejectSetup=patch.rejectSetup;if('rejectPreference'in patch)rejectPreference=patch.rejectPreference}});
+  report.activation=await checkSuggestionActivation({page,expect,assert,state,calls,snapshot,activationOutcomes,output,acknowledgementModes,configureFixture:patch=>{if(patch.config)suggestionConfig={...suggestionConfig,...patch.config};if('rejectSetup'in patch)rejectSetup=patch.rejectSetup;if('rejectPreference'in patch)rejectPreference=patch.rejectPreference;if('failedSettingsReads'in patch)failedSettingsReads=patch.failedSettingsReads;if(patch.nextSetupChange)nextSetupChange=patch.nextSetupChange}});
   assert.deepEqual(errors,[]);assert.deepEqual(external,[]);report.status='PASS';
   console.log('PASS: focused suggestion setup/close activation, old-chat hydration, private exact terminal reconciliation and draft priority in production App (synthetic host).');
  }else{

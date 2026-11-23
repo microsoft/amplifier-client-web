@@ -1,6 +1,6 @@
 // Shared focused journey for source and compiled App through the maintained HTTP
 // fixture. Outcomes are synthetic; no provider or installed host is exercised.
-export async function checkSuggestionActivation({page,expect,assert,state,calls,snapshot,activationOutcomes,output,configureFixture}){
+export async function checkSuggestionActivation({page,expect,assert,state,calls,snapshot,activationOutcomes,output,configureFixture,acknowledgementModes}){
  const emit=async()=>{state.revision++;await page.evaluate(next=>window.emitFixtureState(next),snapshot())};
  const dispatch=(action,args)=>page.evaluate(({action,args})=>window.amplifier.dispatch(action,args),{action,args});
  const requests=()=>calls.filter(row=>row.action==='session.suggestion.request');
@@ -8,7 +8,7 @@ export async function checkSuggestionActivation({page,expect,assert,state,calls,
  const composer=page.getByRole('textbox',{name:'Message Amplifier',exact:true}),status=page.locator('[data-part="suggestion-status"]'),ghost=page.getByRole('button',{name:'Use suggested message'});
  const session=id=>({id,title:'Existing '+id,sessionKind:'root',workspace:'/fixture',workspaceId:'project',status:'idle',historyManaged:true,historyLoaded:true,messages:[{id:'answer-'+id,role:'assistant',text:'An already completed public response.'}],workers:[]});
  state.settings={...state.settings,suggestedMessages:false};
- state.sessions=['current','old','ready','failure','pending-deadline','pending-return'].map(session);
+ state.sessions=['current','old','ready','failure','pending-deadline','pending-return','lost-ack','truncated-ack'].map(session);
  state.selectedSessionId='current';state.view={...state.view,panel:'settings',settingsExpanded:['chat-input'],draft:'',draftDocument:null};
  activationOutcomes.set('current','pending');activationOutcomes.set('old','unsupported');activationOutcomes.set('failure','failed');activationOutcomes.set('pending-deadline','pending');activationOutcomes.set('pending-return','pending');
  await emit();
@@ -57,8 +57,23 @@ export async function checkSuggestionActivation({page,expect,assert,state,calls,
  const hiddenReads=statuses().length;await page.clock.fastForward(1000);assert.equal(statuses().length,hiddenReads,'No status polling while hidden');
  await page.evaluate(()=>{delete document.hidden;document.dispatchEvent(new Event('visibilitychange'))});await expect(status).toContainText('was cancelled');
  assert.equal(statuses().at(-1).args.requestId,pendingReturn.requestId);assert.equal(requests().length,6);
+ for(const [id,ack]of [['lost-ack','lost'],['truncated-ack','truncated']]){
+  acknowledgementModes.set(id,ack);activationOutcomes.set(id,'pending');
+  await dispatch('session.select',{id});await expect(status).toContainText('could not be confirmed');
+  const original=requests().find(row=>row.args.sessionId===id).args;
+  await expect.poll(()=>calls.filter(row=>row.action==='session.suggestion.cancel'&&row.args.requestId===original.requestId).length).toBe(1);
+  await page.clock.fastForward(16001);assert.equal(requests().filter(row=>row.args.sessionId===id).length,1);
+  await dispatch('view.update',{patch:{panel:'settings',settingsExpanded:['chat-input']}});await dispatch('view.update',{patch:{panel:null}});
+  await expect(status).toContainText('was cancelled');assert.equal(statuses().at(-1).args.requestId,original.requestId);
+  assert.equal(calls.filter(row=>row.action==='session.suggestion.cancel'&&row.args.requestId===original.requestId).length,1);
+ }
  await page.setViewportSize({width:1280,height:900});
  await dispatch('view.update',{patch:{panel:'settings',settingsExpanded:['chat-input']}});
+ const beforeRecoveryRequests=requests().length,beforeCatalogs=calls.filter(row=>row.action==='providers.models').length;
+ configureFixture({failedSettingsReads:1});state.configurationRevision=(state.configurationRevision||0)+1;await emit();
+ const retry=page.getByRole('button',{name:'Retry suggestion setup',exact:true});await expect(retry).toBeVisible();
+ await retry.click();await expect(retry).toHaveCount(0);await expect(setting).toBeChecked();
+ assert.equal(requests().length,beforeRecoveryRequests);assert.equal(calls.filter(row=>row.action==='providers.models').length,beforeCatalogs,'Setup-read retry is not model discovery/inference');
  await setting.click();await expect(setting).not.toBeChecked();
  configureFixture({config:{enabled:false,transcriptMode:'full'}});state.configurationRevision=(state.configurationRevision||0)+1;await emit();
  const setup=page.getByRole('group',{name:'Set up suggested messages'}),start=page.getByRole('button',{name:'Set up suggested messages',exact:true});
@@ -76,8 +91,21 @@ export async function checkSuggestionActivation({page,expect,assert,state,calls,
  await expect(setting).not.toBeChecked();await expect(page.locator('[data-part="suggestion-saved-choice"]')).toContainText('haiku-fixture');
  const saved=configWrites().at(-1).args;assert.equal(saved.transcriptMode,undefined,'Compact setup preserves full saved sharing');assert.equal(saved.prompt,undefined);
  configureFixture({rejectPreference:false});
+ await setting.click();await expect(setting).toBeChecked();
+ configureFixture({config:{enabled:false,transcriptMode:'last_n',revision:'disabled-recent'}});state.configurationRevision++;await emit();
+ await expect(start).toBeVisible();await expect(setting).toBeChecked();
+ await start.click();await setup.getByLabel('Model',{exact:true}).selectOption('sonnet-fixture');
+ await expect(setup).toContainText('Recent visible conversation');
+ configureFixture({nextSetupChange:{transcriptMode:'full',humanTurns:11,revision:'concurrent-full'}});
+ await setup.getByRole('button',{name:'Save setup and enable'}).click();
+ await expect(setup.getByRole('alert')).toContainText('changed elsewhere');await expect(setup).toContainText('Full visible conversation');
+ await expect(setup.getByLabel('Model',{exact:true})).toHaveValue('sonnet-fixture');
+ const writesAfterConflict=configWrites().length;await page.clock.fastForward(1000);assert.equal(configWrites().length,writesAfterConflict);
+ await setup.getByRole('button',{name:'Save setup and enable'}).click();await expect(setup).toHaveCount(0);await expect(setting).toBeChecked();
+ const confirmed=configWrites().at(-1).args;assert.equal(confirmed.enabled,true);assert.equal(confirmed.expectedSuggestionModelsRevision,'concurrent-full');assert.equal(confirmed.transcriptMode,undefined);
+ await expect(page.locator('[data-part="suggestion-saved-choice"]')).toContainText('sonnet-fixture');
  await page.setViewportSize({width:390,height:844});await page.screenshot({path:output+'/setup-split-outcome-mobile.png'});
  const setupGeometry=await page.locator('[data-part="suggestion-settings"]').evaluate(node=>({client:node.clientWidth,scroll:node.scrollWidth}));assert.ok(setupGeometry.scroll<=setupGeometry.client+1);
  assert.equal(calls.filter(row=>['conversation.send','conversation.configure','session.create'].includes(row.action)).length,0);
- return {enableOnViewedChatWaitsForSettingsClose:true,loadingThenEmpty:true,sameExactEmptyAttempt:true,oldChatWaitsForHistory:true,unsupportedReviewTargetsChatInput:true,sameExactFailedAttemptAfterDraft:true,readyRestoresOnFocusWithoutInference:true,hungRequestStopsLoading:true,pendingHiddenNoPollingExactCancelledReturn:true,explicitFirstSetupCancelNoWrite:true,failedSetupRetainsEdits:true,splitSaveExactSavedModel:true,fullSharingPreserved:true,manualIdsStayAdvanced:true,mobileNoHorizontalOverflow:{composer:geometry,setup:setupGeometry},requestCount:requests().length,synthetic:true};
+ return {enableOnViewedChatWaitsForSettingsClose:true,loadingThenEmpty:true,sameExactEmptyAttempt:true,oldChatWaitsForHistory:true,unsupportedReviewTargetsChatInput:true,sameExactFailedAttemptAfterDraft:true,readyRestoresOnFocusWithoutInference:true,hungRequestStopsLoading:true,pendingHiddenNoPollingExactCancelledReturn:true,lostAndTruncatedAcknowledgementsCancelExactAttemptOnce:true,failedSetupReadRetryRecoversWithoutInference:true,ownerOnHostDisabledSetupEnables:true,sharingAfterRenderCASConflictKeepsModelThenExplicitFullConsent:true,explicitFirstSetupCancelNoWrite:true,failedSetupRetainsEdits:true,splitSaveExactSavedModel:true,fullSharingPreserved:true,manualIdsStayAdvanced:true,mobileNoHorizontalOverflow:{composer:geometry,setup:setupGeometry},requestCount:requests().length,synthetic:true};
 }

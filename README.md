@@ -53,6 +53,12 @@ host settings nor your choice.
 Host-setup success and a failed synced-preference save are reported separately.
 Preference saves use a setting-specific revision so another client's newer Off
 choice wins over a delayed setup-and-enable operation.
+Setup/model/instruction saves also carry the displayed suggestion-configuration
+revision. A concurrent sharing/account change rejects the save atomically,
+keeps staged edits and refreshes current setup for explicit review—never a
+silent Recent-to-Full change or an automatic mutation retry. A failed setup read
+has a read-only retry and can recover on a fresh connection; neither runs a
+suggestion or discovers models.
 There is no automatic model selection or fallback; a configured connection is
 not a claim that every provider or model supports this feature.
 The saved connection/model card has a **Change** action. Optional recommendations
@@ -76,6 +82,10 @@ the already-viewed eligible chat immediately. The composer shows **Loading a
 suggested message…**, **No suggestion this time**, or a safe unavailable/failure
 explanation with setup review—not a chat-working badge. Returning to a retained
 non-ready attempt reads its exact original ID, without a new inference request.
+If an admission acknowledgement is lost or malformed, the client withdraws that
+exact possibly-admitted attempt once rather than treating an HTTP abort as
+provider cancellation. Late output cannot restore preview authority; returning
+still reconciles the original receipt. Withdrawal does not undo provider effects.
 Reopening or reloading an eligible conversation
 can ask the host for its current source-bound result, including a cached empty
 outcome, without duplicate model work. The host owns durable private suggestion

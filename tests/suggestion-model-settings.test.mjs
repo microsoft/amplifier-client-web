@@ -92,8 +92,8 @@ test('older full catalog cannot replace a newer deferred shared generation',asyn
 const button=(root,name)=>root.root.findAllByType('button').find(node=>node.children.join('')===name);
 const toggle=root=>root.root.find(node=>node.type==='input'&&node.props.type==='checkbox'&&!node.props['aria-label']);
 const startSetup=root=>button(root,'Set up suggested messages').props.onClick();
-async function everyday({saved={...config},saveResult,storageFails=false}={}){
- const state=frame();state.client.historyScope=crypto.randomUUID().replaceAll('-','').repeat(2);state.settings={suggestedMessages:false,suggestedMessagesRevision:0};
+async function everyday({saved={...config},saveResult,storageFails=false,enabled=false}={}){
+ const state=frame();state.client.historyScope=crypto.randomUUID().replaceAll('-','').repeat(2);state.settings={suggestedMessages:enabled,suggestedMessagesRevision:0};
  globalThis.localStorage={getItem(){throw Error('Forbidden browser preference read')},setItem(){throw Error('Forbidden browser preference write')}};
  publishSuggestionModels(suggestionScope(state),{suggestionModels:saved,providers:[{id:'anthropic',displayName:'Global account',sharedCatalogKey:'global-key'}]},0);
  const calls=[];let root;
@@ -121,7 +121,7 @@ test('missing setup cancel/rejection keeps browser choice off; Save setup and en
    await renderAct(async()=>startSetup(h.root));assert.equal(h.state.settings.suggestedMessages,false);
    if(mode==='cancel'){await renderAct(async()=>button(h.root,'Cancel setup').props.onClick());assert.deepEqual(h.calls,[]);continue}
    await renderAct(async()=>button(h.root,'Save setup and enable').props.onClick());
-   assert.deepEqual(h.calls.filter(row=>row.action==='providers.configureSuggestions'),[{action:'providers.configureSuggestions',args:{enabled:true,provider:'anthropic',model:'haiku-fixture',effort:'low',scope:'global',configurationTarget:{kind:'global'}}}]);
+   assert.deepEqual(h.calls.filter(row=>row.action==='providers.configureSuggestions'),[{action:'providers.configureSuggestions',args:{enabled:true,provider:'anthropic',model:'haiku-fixture',effort:'low',expectedSuggestionModelsRevision:'config',scope:'global',configurationTarget:{kind:'global'}}}]);
    assert.equal(h.state.settings.suggestedMessages,mode==='success');
    if(mode==='rejected')assert.ok(h.root.root.findAllByProps({role:'alert'}).some(node=>node.children.join('').includes('No setup permission')));
   }finally{await h.close()}
@@ -157,7 +157,7 @@ test('host-wide Off saves without a present provider or model and preserves unre
   const allow=root.root.find(node=>node.type==='input'&&node.props.type==='checkbox');
   await renderAct(async()=>allow.props.onChange({target:{checked:false}}));
   assert.equal(button(root,'Save setup').props.disabled,false);await renderAct(async()=>button(root,'Save setup').props.onClick());
-  assert.deepEqual(calls.filter(row=>row.action==='providers.configureSuggestions'),[{action:'providers.configureSuggestions',args:{enabled:false,scope:'global',configurationTarget:{kind:'global'}}}]);
+  assert.deepEqual(calls.filter(row=>row.action==='providers.configureSuggestions'),[{action:'providers.configureSuggestions',args:{enabled:false,expectedSuggestionModelsRevision:'config',scope:'global',configurationTarget:{kind:'global'}}}]);
  }finally{await renderAct(async()=>root?.unmount())}
 });
 test('editing setup while host is already disabled still saves the chosen model and tuning',async()=>{
@@ -207,5 +207,84 @@ test('optional per-connection recommendation is offered without rewriting explic
   await render();assert.equal(field(root,'Model').props.value,'saved-custom');assert.ok(button(root,'Use recommended model'));assert.deepEqual(calls,[]);
   await renderAct(async()=>button(root,'Use recommended model').props.onClick());assert.equal(field(root,'Model').props.value,'short-current');assert.deepEqual(calls,[]);
   state.modelCatalogs['company-key']={...state.modelCatalogs['company-key'],stale:true};await render();assert.equal(button(root,'Use recommended model'),undefined);
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+test('explicit setup makes a disabled host available when the owner preference is already On; a newer Off still wins',async()=>{
+ for(const offRace of [false,true]){
+  let release;const h=await everyday({enabled:true,saved:{...config,enabled:false},saveResult:args=>new Promise(resolve=>{release=()=>resolve({accepted:true,result:{suggestionModels:{...config,...args}}})})});
+  try{
+   await renderAct(async()=>startSetup(h.root));
+   const confirm=button(h.root,'Save setup and enable');assert.ok(confirm,'Setup confirmation must enable host availability even while preference is On');
+   let pending;await renderAct(async()=>{pending=confirm.props.onClick()});
+   if(offRace){h.state.settings={suggestedMessages:false,suggestedMessagesRevision:1};await h.render()}
+   await renderAct(async()=>{release();await pending});
+   assert.equal(h.calls.find(row=>row.action==='providers.configureSuggestions').args.enabled,true);
+   assert.equal(h.state.settings.suggestedMessages,!offRace);
+  }finally{await h.close()}
+ }
+});
+test('compact staged model consent uses current saved sharing, not the stale whole-config draft',async()=>{
+ const h=await everyday({saved:{...config,enabled:false}});try{
+  await renderAct(async()=>startSetup(h.root));await renderAct(async()=>field(h.root,'Model').props.onChange({target:{value:'other-fixture'}}));
+  await renderAct(async()=>publishSuggestionModels(suggestionScope(h.state),{suggestionModels:{...config,enabled:false,transcriptMode:'full',humanTurns:9,revision:'external-full'}},0));
+  const setup=h.root.root.findByProps({'data-part':'suggestion-host-setup'});
+  assert.match(JSON.stringify(setup.findByProps({className:'a-suggestion-consent'}).findAllByType('p').map(row=>row.children)),/Full visible conversation/);
+  assert.equal(field(h.root,'Model').props.value,'other-fixture');
+ }finally{await h.close()}
+});
+test('a failed initial setup read has an explicit read-only retry, coalesced without model calls or a render loop',async()=>{
+ const state=frame(),calls=[];let root,reads=0,release;
+ const act=async(action,args)=>{calls.push({action,args});if(++reads===1)return {accepted:false};return new Promise(resolve=>{release=()=>resolve({accepted:true,result:{suggestionModels:config,providers:[{id:'anthropic',sharedCatalogKey:'global-key'}]}})})};
+ const render=()=>renderAct(async()=>{const element=React.createElement(SuggestionSettings,{state,act,navigate(){}});if(root)root.update(element);else root=create(element)});
+ try{
+  await render();await render();assert.equal(calls.length,1);
+  const retry=button(root,'Retry suggestion setup');assert.ok(retry,'A failed read needs a recovery control');
+  await renderAct(async()=>{void retry.props.onClick();void retry.props.onClick()});assert.equal(calls.length,2);
+  await renderAct(async()=>release());await render();assert.ok(button(root,'Change'));assert.equal(calls.length,2);
+  assert.ok(calls.every(row=>row.action==='providers.suggestionModels'));
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+test('same-owner reconnect recovers a failed settings read once without discovering models or starting suggestions',async()=>{
+ const state=frame(),calls=[];let root,read=0;
+ const act=async(action,args)=>{calls.push({action,args});return ++read===1?{accepted:false}:{accepted:true,result:{suggestionModels:config,providers:[{id:'anthropic',sharedCatalogKey:'global-key'}]}}};
+ const element=()=>React.createElement(SuggestionSettings,{state,act,navigate(){}});
+ try{
+  await renderAct(async()=>{root=create(element())});assert.ok(button(root,'Retry suggestion setup'));
+  await renderAct(async()=>window.dispatchEvent(new Event('amplifier-reconnected')));assert.ok(button(root,'Change'));assert.equal(calls.length,2);
+  await renderAct(async()=>window.dispatchEvent(new Event('amplifier-reconnected')));await renderAct(async()=>root.update(element()));assert.equal(calls.length,2);
+  assert.ok(calls.every(row=>row.action==='providers.suggestionModels'));
+ }finally{await renderAct(async()=>root?.unmount())}
+});
+test('compact account/model save CAS binds displayed sharing, rejects an after-render race, refreshes without overwriting edits, then needs explicit confirmation',async()=>{
+ const state=frame();state.settings={suggestedMessages:false,suggestedMessagesRevision:0};
+ let saved={...config,enabled:false,transcriptMode:'last_n'},root,release;
+ const providers=[{id:'anthropic',sharedCatalogKey:'global-key'},{id:'company',displayName:'Company AI',sharedCatalogKey:'company-key'}];
+ state.modelCatalogs['company-key']={phase:'ready',supported:true,provenance:'configured',models:['company-short']};
+ publishSuggestionModels(suggestionScope(state),{suggestionModels:saved,providers},0);
+ const calls=[];const act=async(action,args)=>{
+  calls.push({action,args});
+  if(action==='providers.suggestionModels')return {accepted:true,result:{suggestionModels:saved,providers}};
+  if(action==='providers.configureSuggestions')return new Promise(resolve=>{release=()=>{
+   if(args.expectedSuggestionModelsRevision!==saved.revision){resolve({accepted:false,code:'suggestion_configuration_changed',error:'Suggestion setup changed.'});return}
+   saved={...saved,...args,revision:'confirmed'};resolve({accepted:true,result:{suggestionModels:saved,providers}});
+  }});
+  return {accepted:true};
+ };
+ const render=()=>renderAct(async()=>{const element=React.createElement(SuggestionSetup,{state,act,navigate(){},compact:true});if(root)root.update(element);else root=create(element)});
+ try{
+  await render();await renderAct(async()=>field(root,'Connection').props.onChange({target:{value:'company'}}));
+  await renderAct(async()=>field(root,'Model').props.onChange({target:{value:'company-short'}}));
+  assert.match(JSON.stringify(root.toJSON()),/Recent visible conversation/);
+  let pending;await renderAct(async()=>{pending=button(root,'Save setup and enable').props.onClick()});
+  saved={...saved,transcriptMode:'full',humanTurns:12,revision:'full-from-other-tab'};
+  await renderAct(async()=>{release();await pending});
+  assert.equal(saved.provider,'anthropic');assert.equal(saved.transcriptMode,'full');assert.equal(saved.enabled,false);
+  assert.equal(field(root,'Connection').props.value,'company');assert.equal(field(root,'Model').props.value,'company-short');
+  assert.match(JSON.stringify(root.toJSON()),/Full visible conversation/);assert.match(JSON.stringify(root.toJSON()),/Your edits are kept/);
+  assert.equal(calls.filter(row=>row.action==='providers.configureSuggestions').length,1,'Conflict does not autosave or retry a mutation');
+  await renderAct(async()=>{pending=button(root,'Save setup and enable').props.onClick()});await renderAct(async()=>{release();await pending});
+  const args=calls.filter(row=>row.action==='providers.configureSuggestions').at(-1).args;
+  assert.equal(args.expectedSuggestionModelsRevision,'full-from-other-tab');assert.equal(args.transcriptMode,undefined);assert.equal(args.humanTurns,undefined);
+  assert.equal(saved.provider,'company');assert.equal(saved.transcriptMode,'full');assert.equal(saved.humanTurns,12);
  }finally{await renderAct(async()=>root?.unmount())}
 });

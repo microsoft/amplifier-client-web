@@ -154,11 +154,12 @@ if(process.argv.includes('--preflight')){
   assert.equal(saved.model,'other-model');assert.equal(saved.effort,'high');assert.equal(saved.scope,'global');assert.equal(saved.prompt,undefined,'Model form cannot overwrite separately edited prompt');
   await page.getByText('Custom instruction',{exact:true}).click();
   const prompt=page.getByRole('textbox',{name:'Instruction for suggested messages'});await expect(prompt).toHaveValue('Default fixture prompt.');
+  const expectedInstructionRevision=(await snapshot()).configRevision;
   await prompt.fill('é'.repeat(8193));await expect(page.getByRole('button',{name:'Save instruction',exact:true})).toBeDisabled();
   await prompt.fill('An experimental prompt.');await page.evaluate(()=>window.suggestionFixture.rerender());await expect(prompt).toHaveValue('An experimental prompt.');
   await page.evaluate(()=>window.suggestionFixture.failSave(true));await page.getByRole('button',{name:'Save instruction'}).click();await expect(page.getByRole('alert')).toContainText('Fixture save failure');await expect(prompt).toHaveValue('An experimental prompt.');
   await page.evaluate(()=>window.suggestionFixture.failSave(false));await page.getByRole('button',{name:'Save instruction'}).click();await expect(page.getByText('Instruction saved. Applies to the next suggestion request.',{exact:true})).toBeVisible();
-  assert.deepEqual((await calls('providers.configureSuggestions')).at(-1).args,{prompt:'An experimental prompt.',scope:'global',configurationTarget:{kind:'global'}});
+  assert.deepEqual((await calls('providers.configureSuggestions')).at(-1).args,{prompt:'An experimental prompt.',expectedSuggestionModelsRevision:expectedInstructionRevision,scope:'global',configurationTarget:{kind:'global'}});
   await page.getByRole('button',{name:'Restore default',exact:true}).click();await expect(prompt).toHaveValue('Default fixture prompt.');await page.getByRole('button',{name:'Save instruction'}).click();
   assert.equal((await calls('providers.configureSuggestions')).at(-1).args.prompt,'Default fixture prompt.');
   assert.equal((await snapshot()).calls.some(row=>['conversation.configure','conversation.send','providers.finishSetup','providers.save'].includes(row.action)),false);
