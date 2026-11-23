@@ -19,3 +19,12 @@ test('packaged Reference CSS matches the shared appearance foundation',()=>{
  for(const selector of ['.a-message-delivery','.a-delivery-confirm','.a-delivery-content'])assert.ok(css.includes(selector),`packaged delivery recovery retains ${selector}`);
  assert.ok(!/@import\b/.test(css));
 });
+test('packaged application CSS includes bounded navigation title motion and reduced-motion override',()=>{
+ const html=readFileSync(join(root,'index.html'),'utf8');
+ const paths=[...html.matchAll(/<link\b[^>]*rel="stylesheet"[^>]*href="([^"]+)"[^>]*>/g)].map(match=>match[1]);
+ const css=paths.map(path=>readFileSync(join(root,path),'utf8')).join('\n');
+ assert.match(css,/@keyframes\s+a-chat-title-pan\b/);
+ assert.match(css,/\[data-overflow=(?:"true"|true)\]/);
+ assert.match(css,/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+ assert.ok(css.includes('--title-overflow')&&css.includes('--title-duration'));
+});
