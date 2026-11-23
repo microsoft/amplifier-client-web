@@ -25,6 +25,6 @@ test('packaged application CSS includes bounded navigation title motion and redu
  const css=paths.map(path=>readFileSync(join(root,path),'utf8')).join('\n');
  assert.match(css,/@keyframes\s+a-chat-title-pan\b/);
  assert.match(css,/\[data-overflow=(?:"true"|true)\]/);
- assert.match(css,/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+ assert.match(css,/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[^{}]*\[data-scroll-title\][^{}]*\{[^{}]*animation\s*:\s*none\b/);
  assert.ok(css.includes('--title-overflow')&&css.includes('--title-duration'));
 });

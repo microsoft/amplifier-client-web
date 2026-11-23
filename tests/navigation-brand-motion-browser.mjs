@@ -35,7 +35,7 @@ function Fixture(){
     <Label id="workspace-long" kind="workspace" text={'A long workspace name with the important final words. '.repeat(2)}/>
     <Label id="chat-short" text="Short"/>
    </div>
-   <div className="a-landing-collection" style={{width:220}}><Label id="wrapped" text={'A wrapped landing title. '.repeat(4)}/></div>
+   <div className="a-work-browser"><div className="a-landing-collection" style={{width:220}}><Label id="wrapped" text={'A wrapped landing title. '.repeat(4)}/></div></div>
   </main>
  </div>;
 }
@@ -60,6 +60,9 @@ try{
    await page.setViewportSize({width,height:900});
    await page.evaluate(({surface})=>window.configure({surface,name:'A long custom instance name for navigation'}),{surface});
    await expect(page.locator('#amp-one')).toHaveAttribute('data-work-surface',surface);
+   await expect(brand).toHaveAttribute('title','A long custom instance name for navigation');
+   if(width>600)await expect(brand.locator('span')).toBeVisible();
+   else await expect(brand.locator('span')).toBeHidden();
    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
    const geometry=await brand.evaluate(node=>{
     const rect=el=>{const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}};
@@ -107,7 +110,7 @@ try{
    assert.equal(await page.evaluate(()=>window.calls.length),1,'Title reveal remains passive');
    // Negative controls remove only the repaired boundaries, not test oracles.
    await page.setViewportSize({width:320,height:900});
-   const style=await brand.getAttribute('style');await brand.evaluate(node=>{node.style.minWidth='0';node.style.width='21px'});
+   const style=await brand.getAttribute('style');await brand.evaluate(node=>{node.style.minWidth='0'});
    assert.ok((await brand.boundingBox()).width<44,'Removing the minimum recreates the undersized native target');
    await brand.evaluate((node,style)=>style===null?node.removeAttribute('style'):node.setAttribute('style',style),style);
    assert.ok((await brand.boundingBox()).width>=44);
