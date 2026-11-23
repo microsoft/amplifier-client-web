@@ -2,19 +2,24 @@
 // creates an external chat or launches the deliberately nonexistent command.
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {mkdir,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {chromium,expect} from '@playwright/test';
-import {openSettingsPage} from './browser-settings.mjs';
 import './composer-test-helpers.mjs';
 
 const root=process.argv[2]&&resolve(process.argv[2]),expectedClient=process.argv[3];
+const expectedHost=process.argv[4],buildReceiptPath=process.argv[5];
 const out=process.env.AMPLIFIER_TEST_ARTIFACTS||'output/external-agent-project-settings';
 const report={scope:'rendered external-agent settings against real isolated host; no external process',checkpoints:[],actions:[],saves:[],reads:[]};
 const errors=[],cleanupErrors=[];
-let home,browser,page,stop,finishFixture,stopped=false,failure,serverLog='',manifest;
+let home,browser,page,stop,finishFixture,stopped=false,homeRemoved=false,failure,serverLog='',manifest;
+const allowed=new Set(['externalAgents.save','externalAgents.get','externalAgents.list','settings.open','view.update','shell.report','theme.list','appearance.preferences.read']);
+const validActions=()=>report.actions.filter(action=>action==='externalAgents.save').length===2
+ &&report.actions.filter(action=>action==='externalAgents.get').length===2
+ &&report.actions.every(action=>allowed.has(action));
 const command=request=>{
  if(request.method()!=='POST'||new URL(request.url()).pathname!=='/api/actions')return null;
  const body=request.postDataJSON();return body?.action==='shell.command'?{...body,action:body.args.action,args:body.args.args}:body;
@@ -27,19 +32,31 @@ async function actionResponse(name,activate){
  return {sent:command(response.request()),result};
 }
 async function closeSettings(){
- await page.getByRole('button',{name:'Close settings',exact:true}).click();
+ await page.getByRole('dialog',{name:'Settings',exact:true}).getByRole('button',{name:'Close panel',exact:true}).click();
  await expect(page.locator('.a-settings-experience')).toBeHidden();
 }
 async function settings(){
- await openSettingsPage(page,'external-agents',{activate:(_label,control,options)=>control.click(options)});
+ // Enter the exact supported destination without mounting unrelated provider
+ // pages. All edits/save/reopen checks below use the rendered controls.
+ const receipt=await page.evaluate(()=>window.amplifier.dispatch('settings.open',{page:'external-agents',surface:'dialog'}));
+ assert.equal(receipt.accepted,true);
+ await expect(page.locator('.a-settings-experience[data-settings-page="external-agents"]')).toBeVisible();
  return page.getByRole('region',{name:'External agents',exact:true});
 }
 async function directories(section){
- const details=section.locator('details').filter({has:section.getByText('Working directories',{exact:true})});
+ const details=section.locator('details').filter({has:page.getByText('Working directories',{exact:true})});
  if(!await details.evaluate(node=>node.open))await details.locator('summary').click();
 }
 try{
  await mkdir(out,{recursive:true});assert.ok(root,'Pass the exact paired Unified source root');assert.match(expectedClient||'',/^[a-f0-9]{40}$/);
+ assert.match(expectedHost||'',/^[a-f0-9]{40}$/);assert.ok(buildReceiptPath,'Pass the existing build execution receipt');
+ const receiptBytes=await readFile(buildReceiptPath),buildReceipt=JSON.parse(receiptBytes);
+ assert.equal(buildReceipt.server,expectedHost);assert.match(buildReceipt.serverTree||'',/^[a-f0-9]{40}$/);
+ assert.equal(buildReceipt.client.revision,expectedClient);assert.equal(buildReceipt.status,'completed');assert.equal(buildReceipt.returncode,0);
+ // The qualification wrapper owns the Git/source-inventory join for this
+ // root and binds this invocation to it. A shared-input manifest is not that join.
+ report.host={root,revision:expectedHost,tree:buildReceipt.serverTree,buildReceiptPath:resolve(buildReceiptPath),
+  buildReceiptSha256:createHash('sha256').update(receiptBytes).digest('hex'),sourceVerification:'requires the paired runner source-inventory join for this root and invocation'};
  manifest=JSON.parse(await readFile(join(root,'amplifier_web/static/client-component.json'),'utf8'));
  assert.equal(manifest.source.revision,expectedClient);
  const {fixturePython}=await import(pathToFileURL(join(root,'tests/web/fixture-python.mjs')));
@@ -124,17 +141,16 @@ try{
  report.checkpoints.push('Chat, messages, Plan, private draft and composer identity preserved; no runtime calls');
  assert.equal(report.actions.filter(action=>action==='externalAgents.save').length,2);
  assert.equal(report.actions.filter(action=>action==='externalAgents.get').length,2);
- const allowed=new Set(['externalAgents.save','externalAgents.get','externalAgents.list','view.update','shell.report','theme.list','appearance.preferences.read']);
  assert.deepEqual(report.actions.filter(action=>!allowed.has(action)),[],'No external chat creation, send or runtime actions');
  assert.deepEqual(errors,[]);
 }catch(error){failure=error;throw error}
 finally{
  if(finishFixture&&stop){try{await finishFixture({label:'External project Settings',close:[['browser',()=>browser?.close()]],stop})}catch(error){cleanupErrors.push(String(error.stack||error))}}
  else if(browser)try{await browser.close()}catch(error){cleanupErrors.push(String(error.stack||error))}
- if(home&&stopped){try{await rm(home,{recursive:true,force:true})}catch(error){cleanupErrors.push(String(error.stack||error))}}
- report.remainingHome=home&&!stopped?home:null;
- const passed=!failure&&!errors.length&&!cleanupErrors.length;
- await mkdir(out,{recursive:true});await writeFile(out+'/report.json',JSON.stringify({...report,passed,expectedClient,build:manifest?.build,source:manifest?.source,errors,cleanupErrors,serverLog,failure:failure?String(failure.stack||failure):null},null,2)+'\n');
+ if(home&&stopped){try{await rm(home,{recursive:true,force:true});homeRemoved=true}catch(error){cleanupErrors.push(String(error.stack||error))}}
+ report.remainingHome=home&&!homeRemoved?home:null;
+ const passed=!failure&&!errors.length&&!cleanupErrors.length&&validActions();
+ await mkdir(out,{recursive:true});await writeFile(out+'/report.json',JSON.stringify({...report,passed,expectedClient,expectedHost,build:manifest?.build,source:manifest?.source,errors,cleanupErrors,serverLog,failure:failure?String(failure.stack||failure):null},null,2)+'\n');
  if(!passed&&!failure)throw Error('Settings fixture finalization failed: '+JSON.stringify({errors,cleanupErrors}));
 }
 console.log('PASS: real-host external-agent project setting default, save/reopen, opt-out and chat/draft preservation.');
