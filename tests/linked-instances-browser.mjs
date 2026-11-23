@@ -59,8 +59,9 @@ try{
  const attachErrors=page=>page.on('pageerror',error=>report.pageErrors.push(error.message));
  const a=await context.newPage(),b=await context.newPage(),old=await context.newPage();
  for(const p of [a,b,old])attachErrors(p);
- const incoming=()=>({grantId,instanceId:offerId,direction:'incoming',scope:'status',origin:peerOrigin,revoked});
- const outgoing=()=>({grantId,instanceId:joinerId,direction:'outgoing',scope:'status',origin:null,revoked});
+ const incoming=()=>({grantId,instanceId:joinerId,direction:'incoming',scope:'status',origin:null,revoked});
+ // The offerer's local revocation doesn't change the joiner's stored grant.
+ const outgoing=()=>({grantId,instanceId:offerId,direction:'outgoing',scope:'status',origin:peerOrigin,revoked:false});
  async function install(page,origin,side){
   await page.route('**/api/linked-instances/v1/*',async route=>{
    const req=route.request(),action=new URL(req.url()).pathname.split('/').at(-1),body=req.postDataJSON();
@@ -70,21 +71,21 @@ try{
    assert.equal(req.method(),'POST');
    calls.push({side,action,body});
    if(side==='old')return error('not_found',404);
-   if(action==='list')return send({instanceId:side==='A'?offerId:joinerId,origins:side==='A'?[peerOrigin]:[],links:linked?[side==='A'?outgoing():incoming()]:[]});
+   if(action==='list')return send({instanceId:side==='A'?offerId:joinerId,origins:side==='A'?[peerOrigin]:[],links:linked?[side==='A'?incoming():outgoing()]:[]});
    if(action==='offer'&&side==='A'){
     assert.deepEqual(Object.keys(body).sort(),['commandId','origin']);assert.match(body.commandId,/^[0-9a-f]{32}$/);assert.equal(body.origin,peerOrigin);
     return send({code,expiresAt:Date.now()/1000+(expired?-1:600),qrPayload:code,qrPngBase64:png});
    }
    if(action==='join'&&side==='B'){
     assert.equal(body.code,code);assert.match(body.commandId,/^[0-9a-f]{32}$/);
-    if(joinInterrupted){joinInterrupted=false;return error('link_join_unconfirmed',409);}
-    linked=true;return send(incoming());
+    if(joinInterrupted){joinInterrupted=false;return error('link_join_unconfirmed',503);}
+    linked=true;return send(outgoing());
    }
    if(action==='status'&&side==='B'){
     assert.equal(body.instanceId,offerId);
-    return offline?error('link_unavailable',502):revoked?error('link_revoked',403):send({instanceId:offerId,generationId:'synthetic-boot',availability:'online'});
+    return offline?error('link_unavailable',503):revoked?error('link_revoked',403):send({instanceId:offerId,generationId:'synthetic-boot',availability:'online'});
    }
-   if(action==='revoke'&&side==='A'){assert.equal(body.grantId,grantId);revoked=true;return send(outgoing());}
+   if(action==='revoke'&&side==='A'){assert.equal(body.grantId,grantId);revoked=true;return send(incoming());}
    assert.fail('Unexpected fixture call: '+side+'/'+action);
   });
  }
@@ -157,6 +158,7 @@ try{
  await b.getByRole('button',{name:'Linked instances',exact:true}).click();
  await b.getByRole('button',{name:'Check the same request'}).click();
  await expect(b.getByText('Amplifier verified the invitation and linked the instance.')).toBeVisible();
+ await expect(b.getByText('This Amplifier can check its status')).toBeVisible();
  const joins=calls.filter(c=>c.action==='join');assert.equal(joins.length,2);assert.deepEqual(joins[0],joins[1]);
  assert.equal(joins[0].side,'B');
  report.cases.push('Explicit paste, real keyboard fallback, camera denial, mocked native upload, no URL navigation or auto-Join, exact command reconciliation.');
@@ -169,13 +171,15 @@ try{
  await a.getByRole('button',{name:'Done'}).click();
  await a.getByRole('button',{name:'Refresh links'}).click();
  await expect(a.getByText('Can check this Amplifier’s status')).toBeVisible();
+ await expect(a.getByRole('button',{name:'Check availability'})).toHaveCount(0);
  await a.getByRole('button',{name:'Revoke link'}).click();
  assert.equal(calls.filter(c=>c.action==='revoke').length,0);
  await a.getByRole('button',{name:'Confirm revoke'}).click();
  await expect(a.getByText('Amplifier revoked the link.')).toBeVisible();
+ await expect(a.getByText('Revoked',{exact:true})).toBeVisible();
  await b.getByRole('button',{name:'Check availability'}).click();
- await expect(b.getByText('Revoked',{exact:true})).toBeVisible();
- await expect(b.getByRole('button',{name:'Check availability'})).toHaveCount(0);
+ await expect(b.getByText('Access was revoked or no longer authorized at last check')).toBeVisible();
+ await expect(b.getByText('Revoked',{exact:true})).toHaveCount(0);
  expired=true;
  await a.getByRole('button',{name:'Create invitation'}).click();await a.getByRole('button',{name:'Create',exact:true}).click();
  await expect(a.getByText(/This invitation expired/)).toBeVisible();

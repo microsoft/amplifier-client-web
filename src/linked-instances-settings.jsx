@@ -146,6 +146,7 @@ export function LinkedInstancesSettings({active=true}){
    return;
   }
   setMode(null);setOffer(null);setConfirm(null);
+  setChecks(previous=>{const next={...previous};delete next[response.instanceId];return next});
   const text=route==='join'?'Amplifier verified the invitation and linked the instance.':'Amplifier revoked the link.';
   try{await refresh(signal);if(!signal.aborted)setResult({text});}
   catch{if(!signal.aborted)setResult({error:true,text:text+' Could not refresh the list. Use Refresh links.'});}
@@ -158,15 +159,17 @@ export function LinkedInstancesSettings({active=true}){
   return run('Checking availability…',async signal=>{
    try{
     const status=await linkedInstancesRequest('status',{instanceId:link.instanceId},signal);
-    if(!signal.aborted)setChecks(previous=>({...previous,[link.grantId]:status.availability==='online'?'Online at last check':'Offline at last check'}));
+    if(!signal.aborted)setChecks(previous=>({...previous,[link.instanceId]:status.availability==='online'?'Online at last check':'Offline at last check'}));
    }catch(error){
     if(!signal.aborted){
      if(error.code==='link_revoked'){
-      setChecks(previous=>({...previous,[link.grantId]:'Access was revoked'}));
+      // A remote denial is a status observation, not a local revoke
+      // receipt. The server may still list the saved outgoing grant.
+      setChecks(previous=>({...previous,[link.instanceId]:'Access was revoked or no longer authorized at last check'}));
       try{await refresh(signal);}catch{}
       throw Object.assign(Error(),{displayText:'Amplifier reported that access was revoked.'});
      }
-     setChecks(previous=>({...previous,[link.grantId]:error.code==='link_unavailable'?'Unreachable at last check':'Could not check availability'}));
+     setChecks(previous=>({...previous,[link.instanceId]:error.code==='link_unavailable'?'Unreachable at last check':'Could not check availability'}));
      throw Object.assign(Error(),{displayText:linkingErrors[error.code]||'Availability was not confirmed. Check the connection and try again.'});
     }
    }
@@ -185,11 +188,11 @@ export function LinkedInstancesSettings({active=true}){
    {list.links.length===0?<p>No linked instances yet.</p>:<ul className="a-link-list">
     {list.links.map(link=><li key={link.grantId}>
      <div><strong>{link.origin||'Amplifier '+link.instanceId.slice(0,8)}</strong>
-      <p>{link.revoked?'Revoked':link.direction==='outgoing'?'Can check this Amplifier’s status':'This Amplifier can check its status'}</p>
-      {!link.revoked&&link.direction==='incoming'&&<p>{checks[link.grantId]||'Availability not checked'}</p>}
+      <p>{link.revoked?'Revoked':link.direction==='incoming'?'Can check this Amplifier’s status':'This Amplifier can check its status'}</p>
+      {!link.revoked&&link.direction==='outgoing'&&<p>{checks[link.instanceId]||'Availability not checked'}</p>}
      </div>
      {!link.revoked&&<div className="a-link-actions">
-      {link.direction==='incoming'&&<button type="button" className="a-soft" disabled={!!busy||pending} onClick={()=>check(link)}>Check availability</button>}
+      {link.direction==='outgoing'&&<button type="button" className="a-soft" disabled={!!busy||pending} onClick={()=>check(link)}>Check availability</button>}
       <button type="button" className="a-soft a-danger" disabled={!!busy||pending} onClick={()=>setConfirm(link.grantId)}>Revoke link</button>
      </div>}
      {!link.revoked&&confirm===link.grantId&&<div>

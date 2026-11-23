@@ -1,7 +1,7 @@
 import {request} from './api.js';
 
 const routes=new Set(['list','offer','join','status','revoke']);
-export const LINK_INVITATION_MAX=4096;
+export const LINK_INVITATION_MAX=1100;
 export function linkInvitation(text){
  if(typeof text!=='string'||text.length>LINK_INVITATION_MAX)return null;
  const code=text.trim();
@@ -16,7 +16,9 @@ const valid={
  list:value=>identity(value.instanceId)&&Array.isArray(value.links)&&value.links.every(linkRecord)&&
   Array.isArray(value.origins)&&value.origins.every(origin=>typeof origin==='string'),
  offer:value=>!!linkInvitation(value.code)&&Number.isFinite(value.expiresAt),
- join:value=>linkRecord(value)&&value.direction==='incoming'&&!value.revoked,
+ // Direction follows the status request: the joiner sends it, the
+ // invitation creator receives it.
+ join:value=>linkRecord(value)&&value.direction==='outgoing'&&!value.revoked,
  revoke:value=>linkRecord(value)&&value.revoked,
  status:(value,body)=>value.instanceId===body.instanceId&&['online','offline'].includes(value.availability),
 };
