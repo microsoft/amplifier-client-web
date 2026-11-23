@@ -90,8 +90,13 @@ try{
  await expect(page.locator('#theme-name')).toHaveValue(saved.name);
  phase='editing';
  for(const field of fields)await page.locator('#'+field.id).fill(field.value);
- const afterFill=posts.length;phase='draft-filled';
- await page.locator('#theme-name').focus();await page.locator('#theme-css').focus();
+ // Establish a distinct delivered focus report before measuring the CSS report.
+ // The real reporter deduplicates identical payloads; rapid focus changes alone
+ // can coalesce and are not evidence that a new observation was sent.
+ phase='draft-filled';
+ const beforeName=posts.length;await page.locator('#theme-name').focus();
+ await expect.poll(()=>posts.slice(beforeName).filter(post=>post.body.controls?.some(control=>control.id==='theme-name'&&control.focused)).length).toBeGreaterThan(0);
+ const afterFill=posts.length;await page.locator('#theme-css').focus();
  await expect.poll(()=>posts.slice(afterFill).filter(post=>post.body.controls?.some(control=>control.id==='theme-css'&&control.focused)).length).toBeGreaterThan(0);
  const initial=await observe('unsaved draft');
  const automatic=posts.slice(afterFill).findLast(post=>post.body.controls?.some(control=>control.id==='theme-css'&&control.focused));
