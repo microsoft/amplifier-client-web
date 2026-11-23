@@ -225,21 +225,30 @@ try{
     const section=page.getByRole('region',{name,exact:true});
     await section.getByRole('button',{name:'Check delivery',exact:true}).click();
     const retry=section.getByRole('button',{name:name==='Original submission'?'Retry original submission':'Send again',exact:true});
-    const dismiss=section.getByRole('button',{name:'Dismiss warning',exact:true});
-    await separated(retry,dismiss,label+' '+name);
+    const saved=name==='Saved submission';
+    const secondary=section.getByRole('button',{name:saved?'Dismiss warning':'Close delivery item',exact:true});
+    await separated(retry,secondary,label+' '+name);
     await statusGap(section,label+' '+name+' status');
     await retry.click();
     const confirmation=section.locator('.a-delivery-confirm');
     await separated(confirmation.getByRole('button',{name:'Cancel',exact:true}),confirmation.getByRole('button',{name:'Send this message again',exact:true}),label+' retry confirmation');
     await confirmation.getByRole('button',{name:'Cancel',exact:true}).click();
-    await dismiss.click();
-    await expect(section.locator('summary')).toBeFocused();
-    await expect(section.getByRole('button',{name:'Check delivery',exact:true})).not.toBeVisible();
-    await section.locator('summary').click();
-    await expect(section.getByRole('button',{name:'Check delivery',exact:true})).toBeVisible();
+    if(saved){
+     await secondary.click();
+     await expect(section.locator('summary')).toBeFocused();
+     await expect(section.getByRole('button',{name:'Check delivery',exact:true})).not.toBeVisible();
+     await section.locator('summary').click();
+     await expect(section.getByRole('button',{name:'Check delivery',exact:true})).toBeVisible();
+    }else{
+     // Local Close retains a payload, rather than collapsing a saved warning.
+     // Its lifecycle is tested by the outbox owner; this fixture measures it
+     // without invoking its deliberately effect-refusing discard callback.
+     await expect(section.getByRole('button',{name:'Dismiss warning',exact:true})).toHaveCount(0);
+     await secondary.focus();await expect(secondary).toBeFocused();
+    }
    }
    const failed=page.getByRole('region',{name:'Failed submission',exact:true});
-   await separated(failed.getByRole('button',{name:'Discard unsent message',exact:true}),failed.getByRole('button',{name:'Dismiss warning',exact:true}),label+' discard');
+   await separated(failed.getByRole('button',{name:'Retry',exact:true}),failed.getByRole('button',{name:'Close delivery item',exact:true}),label+' retained failed submission');
    const feedback=page.getByRole('region',{name:'Feedback',exact:true});
    await separated(feedback.getByText('Synthetic report',{exact:true}),feedback.getByRole('button',{name:'Check delivery',exact:true}),label+' feedback');
    const copy=page.getByRole('region',{name:'Block copy',exact:true}),frame=copy.locator('.a-copy-frame');
@@ -268,6 +277,8 @@ try{
    await page.evaluate(()=>window.scrollTo(0,0));
    await page.screenshot({path:`${artifacts}/${label}.png`,fullPage:true});
    assert.ok((await page.evaluate(()=>window.calls)).every(call=>['conversation.delivery','session.select'].includes(call.action)),'Only explicit target selection or delivery checks; no send, draft, history, retry, discard or restart effect');
+   assert.deepEqual(await page.evaluate(()=>window.calls.filter(call=>call.action==='conversation.delivery').map(call=>call.args)),
+    [{sessionId:'synthetic',inputId:'original'},{sessionId:'synthetic',inputId:'saved'}],'Only the two explicit checks read their exact inputs');
    }
   }
   await page.close();

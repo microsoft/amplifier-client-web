@@ -120,7 +120,7 @@ async function runCase(fault){
  cases.push(result);
  const state=freshState(),shell=createShellHttpFixture(()=>state),calls=[],drafts=new Map();
  const wireState=()=>{const value=shell.state();return {...value,client:{...value.client,historyScope}}};
- let allowedSend=null,pendingSend=null,acceptedSend=false;
+ let allowedSend=null,pendingSend=null,acceptedSend=false,allowAgentCatalog=false,agentCatalogReads=0;
  const context=await browser.newContext({viewport:{width:1280,height:900},serviceWorkers:'block'});
  const page=await context.newPage();
  page.setDefaultTimeout(8000);page.setDefaultNavigationTimeout(15000);
@@ -210,6 +210,11 @@ async function runCase(fault){
    const envelope=request.postDataJSON();
    const body=envelope.action==='shell.command'?(envelope.args.command||envelope.args):envelope;
    calls.push(body);result.actionNames.push(body.action);
+   if(body.action==='externalAgents.list'&&allowAgentCatalog&&state.selectedSessionId===null){
+    assert.deepEqual(body.args,{});
+    assert.equal(++agentCatalogReads,1,'Only one passive catalog read belongs to this new-chat visit');
+    return route.fulfill({json:{accepted:true,result:{agents:[]}}});
+   }
    if(body.action==='conversation.send'&&allowedSend&&!pendingSend&&sends().length===1&&
       body.args.sessionId==='chat'&&body.args.text===allowedSend&&body.args.attachmentIds?.length===0&&
       !seed.some(row=>row.commandId===body.id)){
@@ -237,7 +242,11 @@ async function runCase(fault){
   await invariant('draft');await screenshot('desktop-clean');
   state.sessions[0].title='Unrelated state change';await emit();await invariant('unrelated-frame');
   await selectChat('other');await invariant('other-chat');
-  await selectChat(null);await invariant('new-chat-composer');
+  allowAgentCatalog=true;
+  await selectChat(null);
+  await expect(page.getByRole('combobox',{name:'Agent for new chat',exact:true})).toBeEnabled();
+  assert.equal(agentCatalogReads,1);allowAgentCatalog=false;
+  await invariant('new-chat-composer');
   await composer.fill('Separate new-chat draft');await expect(composer).toHaveDraft('Separate new-chat draft');
   await expect.poll(()=>drafts.get(null)?.draft).toBe('Separate new-chat draft');await settled();
   await selectChat('chat');await expect(composer).toHaveDraft(draft);await invariant('original-chat');

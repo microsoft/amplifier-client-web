@@ -10,6 +10,10 @@ const artifact=process.env.AMPLIFIER_TEST_ARTIFACTS||'/tmp/input-status';await m
 const now=Math.floor(Date.now()/1000);
 const input={id:'input',inputId:'one',role:'user',via:'text',text:'A short request.',createdAt:now-100,delivery:{status:'accepted'}};
 const state={revision:1,settings:{workspace:'/fixture'},runtime:{available:true},view:{navPinned:true},sessions:[{id:'chat',title:'Status fixture',sessionKind:'root',workspace:'/fixture',workspaceId:'project',status:'working',historyManaged:true,historyLoaded:true,messages:[input],workers:[],execution:{turns:[{id:'unrelated',inputId:'other',phase:'running',startedAt:now-999}],nodes:[]}}],workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:'chat',selectedWorkspaceId:'project',setup:{providers:[{id:'fixture',module:'provider-fixture',config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false},notificationMessages:[]};
+// A notification opens an existing chat. An absent target would render the new
+// chat picker and request its unrelated catalog instead of testing navigation.
+state.sessions.push({id:'other',title:'Notification target',sessionKind:'root',workspace:'/fixture',workspaceId:'project',
+ status:'idle',historyManaged:true,historyLoaded:true,messages:[],workers:[]});
 const shell=createShellHttpFixture(()=>state),calls=[],errors=[];let vite,browser,page;
 const emit=async()=>{const revision=++state.revision;await page.evaluate(s=>window.emitState(s),shell.state());await expect.poll(()=>page.evaluate(()=>window.amplifier.getState().revision)).toBeGreaterThanOrEqual(revision)};
 try{
@@ -32,7 +36,10 @@ try{
   if(path!=='/api/actions')return route.fulfill({json:{ok:true}});
   const body=route.request().postDataJSON();calls.push(body);
   if(body.action==='view.update')state.view={...state.view,...body.args.patch};
-  if(body.action==='session.select')state.selectedSessionId=body.args.id;
+  if(body.action==='session.select'){
+   assert.ok(state.sessions.some(row=>row.id===body.args.id),'Notification target is a real fixture conversation');
+   state.selectedSessionId=body.args.id;
+  }
   state.revision++;return route.fulfill({json:{accepted:true,state:shell.state()}});
  });
  await page.goto(vite.resolvedUrls.local[0]);
@@ -137,11 +144,16 @@ try{
  await page.evaluate(()=>window.fixtureNotifications[0].onclick());
  await expect.poll(()=>calls.filter(c=>c.action==='session.select').map(c=>c.args.id)).toEqual(['other']);
  await expect.poll(()=>calls.slice(clickStart).some(c=>c.action==='view.update'&&c.args.patch.mode==='text')).toBe(true);
- assert.ok(calls.slice(clickStart).every(c=>['session.select','view.update'].includes(c.action)));
+  await expect(messages).toHaveAttribute('data-session-id','other');
+  assert.ok(calls.slice(clickStart).every(c=>['session.select','view.update'].includes(c.action)),JSON.stringify(calls.slice(clickStart)));
  assert.deepEqual(calls.filter(c=>['conversation.send','conversation.retry','approval.respond','question.answer','question.cancel','question.supersede','message.react'].includes(c.action)),[]);
  await page.reload();await expect(page.locator('[data-part="app"]')).toBeVisible();
  assert.equal(await page.evaluate(()=>window.fixtureNotifications.length),0); // Existing attention is not replayed on opening.
  assert.deepEqual(errors,[]);
  await writeFile(artifact+'/input-status-browser.json',JSON.stringify({passed:true,widths:[1280,390,320],cases:['receipt-not-read','unrelated-busy','observed-timer','summary-accessible-phase-and-elapsed','keyboard-enter-space-disclosure','accessible-explanation-expanded-only','disclosure-focus-retained','draft-while-working','status-corrections','reload','touch-targets','native-saved-exact-evidence','native-saved-frozen-timer','native-saved-terminal','native-saved-no-fallback','native-saved-unbound-ambiguous-conflict','native-saved-malformed-evidence','native-saved-observation-peer-excluded','native-saved-copy-only','native-saved-reload','opt-in-decision-notice','no-replay-on-opt-in','visible-selected-chat-suppressed','no-replay-on-hiding','hidden-selected-chat-notice-before-render','generic-decision-body-with-preview','dedup','no-replay-on-foreground-or-reload','click-is-navigation-only','no-execution-or-approval'],calls,errors},null,2));
  console.log('Input status browser passed (synthetic peer, no provider or push).');
+}catch(error){
+ await writeFile(artifact+'/input-status-failure.json',JSON.stringify({error:String(error.stack||error),calls,errors,
+  selectedSessionId:state.selectedSessionId,sessionIds:state.sessions.map(row=>row.id)},null,2));
+ throw error;
 }finally{await browser?.close();await vite?.close()}
