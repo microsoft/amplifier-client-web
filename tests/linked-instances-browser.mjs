@@ -37,8 +37,10 @@ const code='amp-link-v1.'+Buffer.from('synthetic-invitation-for-a-only').toStrin
 const png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC';
 const peerOrigin='https://amplifier-a.example.test';
 const offerId='1'.repeat(32),joinerId='2'.repeat(32),grantId='3'.repeat(32);
+const extraGrant='4'.repeat(32),reverseGrant='5'.repeat(32),unrelatedGrant='6'.repeat(32);
 const calls=[];
 let server,browser,failure,linked=false,revoked=false,offline=false,joinInterrupted=true,expired=false;
+let ambiguous=false,legacyRows=false;
 try{
  await mkdir(out,{recursive:true});
  server=await createServer({configFile:false,root:fileURLToPath(new URL('../',import.meta.url)),
@@ -71,18 +73,28 @@ try{
    assert.equal(req.method(),'POST');
    calls.push({side,action,body});
    if(side==='old')return error('not_found',404);
-   if(action==='list')return send({instanceId:side==='A'?offerId:joinerId,origins:side==='A'?[peerOrigin]:[],links:linked?[side==='A'?incoming():outgoing()]:[]});
+   if(action==='list'){
+    const links=linked?[side==='A'?incoming():outgoing()]:[];
+    if(side==='B'&&legacyRows){
+     links.push({...outgoing(),grantId:extraGrant});
+     links.push({...outgoing(),grantId:reverseGrant,direction:'incoming'});
+     links.push({...outgoing(),grantId:unrelatedGrant,instanceId:'7'.repeat(32)});
+    }
+    return send({instanceId:side==='A'?offerId:joinerId,origins:side==='A'?[peerOrigin]:[],links});
+   }
    if(action==='offer'&&side==='A'){
     assert.deepEqual(Object.keys(body).sort(),['commandId','origin']);assert.match(body.commandId,/^[0-9a-f]{32}$/);assert.equal(body.origin,peerOrigin);
     return send({code,expiresAt:Date.now()/1000+(expired?-1:600),qrPayload:code,qrPngBase64:png});
    }
    if(action==='join'&&side==='B'){
     assert.equal(body.code,code);assert.match(body.commandId,/^[0-9a-f]{32}$/);
+    if(linked)return error('link_already_linked',409);
     if(joinInterrupted){joinInterrupted=false;return error('link_join_unconfirmed',503);}
     linked=true;return send(outgoing());
    }
    if(action==='status'&&side==='B'){
-    assert.equal(body.instanceId,offerId);
+    assert.deepEqual(body,{instanceId:offerId});
+    if(ambiguous)return error('link_ambiguous',409);
     return offline?error('link_unavailable',503):revoked?error('link_revoked',403):send({instanceId:offerId,generationId:'synthetic-boot',availability:'online'});
    }
    if(action==='revoke'&&side==='A'){assert.equal(body.grantId,grantId);revoked=true;return send(incoming());}
@@ -168,6 +180,57 @@ try{
  await expect(b.getByText('Unreachable at last check')).toBeVisible();
  offline=false;await b.getByRole('button',{name:'Check availability'}).click();
  await expect(b.getByText('Online at last check')).toBeVisible();
+ // A separate explicit repeat gets a definite refusal; existing access and
+ // the unknown-outcome recovery path must not change.
+ const beforeRepeat=calls.length;
+ await b.getByRole('button',{name:'Join with invitation'}).click();
+ await target.fill(code);
+ await join.click();
+ const conflict=b.getByRole('alert');
+ await expect(conflict).toContainText('a link in this direction already exists');
+ await expect(conflict).toContainText('revoke the existing link on both Amplifiers');
+ await expect(conflict).not.toContainText(code);
+ await expect(b.getByRole('button',{name:'Check the same request'})).toHaveCount(0);
+ await expect(target).toHaveCount(0);
+ await expect(b.getByText('Online at last check')).toBeVisible();
+ assert.deepEqual(calls.slice(beforeRepeat).map(c=>c.action),['join']);
+ assert.notEqual(calls.at(-1).body.commandId,joins[0].body.commandId);
+ report.cases.push('Definite repeat Join explains which direction to review on both Amplifiers, without replacement, replay, or revoke.');
+
+ // The refusal does not identify which host has duplicates. With one
+ // local grant, guide the user to ask the other owner, not revoke it.
+ ambiguous=true;
+ const beforeAmbiguous=calls.length;
+ await b.getByRole('button',{name:'Check availability'}).click();
+ await expect(conflict).toContainText(`Could not check ${peerOrigin}`);
+ await expect(b.getByText(/Only one matching link is listed here. Ask the other owner/)).toBeVisible();
+ await expect(b.getByText('Availability not checked: multiple links in this direction')).toHaveCount(1);
+ await expect(b.getByText('Online at last check')).toHaveCount(0);
+ await expect(b.getByText('Revoked',{exact:true})).toHaveCount(0);
+ legacyRows=true;
+ await b.getByRole('button',{name:'Refresh links'}).click();
+ const rows=b.getByRole('listitem').filter({hasText:peerOrigin});
+ await expect(rows).toHaveCount(4);
+ await expect(b.getByText('Availability not checked: multiple links in this direction')).toHaveCount(2);
+ await expect(b.getByText(/Compare these entries by Link ID/)).toHaveCount(1);
+ await expect(rows.getByText('Link ID:',{exact:false})).toHaveCount(2);
+ const primary=rows.filter({hasText:grantId}),extra=rows.filter({hasText:extraGrant});
+ await expect(primary).toContainText('Link ID:');
+ await expect(extra).toContainText('Link ID:');
+ await expect(rows.filter({hasText:'Can check this Amplifier’s status'})).not.toContainText('Link ID:');
+ await extra.getByRole('button',{name:'Check availability'}).click();
+ await expect(conflict).toContainText('More than one link is active in this direction');
+ await extra.getByRole('button',{name:'Revoke link'}).click();
+ await expect(extra.getByText(`Revoke status access for ${peerOrigin} (link ${extraGrant})?`)).toBeVisible();
+ await expect(primary.getByRole('button',{name:'Confirm revoke'})).toHaveCount(0);
+ await extra.getByRole('button',{name:'Cancel',exact:true}).click();
+ assert.deepEqual(calls.slice(beforeAmbiguous).map(c=>c.action),['status','list','status']);
+ legacyRows=false;ambiguous=false;
+ await b.getByRole('button',{name:'Refresh links'}).click();
+ await expect(rows).toHaveCount(1);
+ await b.getByRole('button',{name:'Check availability'}).click();
+ await expect(b.getByText('Online at last check')).toBeVisible();
+ report.cases.push('Ambiguous status clears stale online, distinguishes matching local grants from the reverse direction, and guides remote review without claiming revocation.');
  await a.getByRole('button',{name:'Done'}).click();
  await a.getByRole('button',{name:'Refresh links'}).click();
  await expect(a.getByText('Can check this Amplifier’s status')).toBeVisible();

@@ -7,6 +7,10 @@ import {LINK_INVITATION_MAX,linkInvitation,linkedInstancesRequest} from './linke
 import './linked-instances.css';
 
 const isUnconfirmed=error=>error?.code==='link_join_unconfirmed'||error?.unconfirmed||error?.status===408||error?.status>=500&&error?.accepted!==false;
+const isConflict=(error,code)=>error?.status===409&&error?.accepted===false&&error.code===code;
+const linkName=link=>link.origin||'Amplifier '+link.instanceId.slice(0,8);
+const repeatedLinkNotice='Not joined: a link in this direction already exists. In Linked instances, confirm the matching entries: “This Amplifier can check its status” here, and “Can check this Amplifier’s status” on the invitation creator. To pair again, revoke the existing link on both Amplifiers, then create a new invitation. Nothing was replaced.';
+const ambiguousAvailability='Availability not checked: multiple links in this direction';
 const linkingErrors={
  link_offer_expired:'This invitation expired. Create a new invitation on the other Amplifier.',
  link_offer_used:'This invitation has already been used. Refresh links, or create a new invitation on the other Amplifier.',
@@ -135,7 +139,17 @@ export function LinkedInstancesSettings({active=true}){
   }
  }
  async function createOrChange(route,args,signal){
-  const response=await mutate(route,args,signal);
+  let response;
+  try{response=await mutate(route,args,signal);}
+  catch(error){
+   // The refusal can come from either owner. It contains no verified peer
+   // identity, so don't identify a row from the pasted invitation.
+   if(!signal.aborted&&route==='join'&&isConflict(error,'link_already_linked')){
+    setMode(null);
+    error.displayText=repeatedLinkNotice;
+   }
+   throw error;
+  }
   if(signal.aborted)return;
   if(route==='offer'){
    setOffer(response);setCopyNote('');
@@ -169,6 +183,12 @@ export function LinkedInstancesSettings({active=true}){
       try{await refresh(signal);}catch{}
       throw Object.assign(Error(),{displayText:'Amplifier reported that access was revoked.'});
      }
+    if(isConflict(error,'link_ambiguous')){
+     // Status identifies the instance, not a particular grant or the host
+     // that saw duplicates. Leave every grant unchanged.
+     setChecks(previous=>({...previous,[link.instanceId]:ambiguousAvailability}));
+     throw Object.assign(Error(),{displayText:`Could not check ${linkName(link)}. More than one link is active in this direction. Refresh links before reviewing which entries are extra.`});
+    }
      setChecks(previous=>({...previous,[link.instanceId]:error.code==='link_unavailable'?'Unreachable at last check':'Could not check availability'}));
      throw Object.assign(Error(),{displayText:linkingErrors[error.code]||'Availability was not confirmed. Check the connection and try again.'});
     }
@@ -186,23 +206,34 @@ export function LinkedInstancesSettings({active=true}){
   {notSupported&&<p role="status">Linking is not available on this Amplifier.</p>}
   {list&&<>
    {list.links.length===0?<p>No linked instances yet.</p>:<ul className="a-link-list">
-    {list.links.map(link=><li key={link.grantId}>
-     <div><strong>{link.origin||'Amplifier '+link.instanceId.slice(0,8)}</strong>
+    {list.links.map(link=>{
+     const matching=list.links.filter(other=>!other.revoked&&other.instanceId===link.instanceId&&other.direction===link.direction);
+     const duplicate=!link.revoked&&matching.length>1;
+     const availability=checks[link.instanceId];
+     return <li key={link.grantId}>
+     <div><strong>{linkName(link)}</strong>
       <p>{link.revoked?'Revoked':link.direction==='incoming'?'Can check this Amplifier’s status':'This Amplifier can check its status'}</p>
-      {!link.revoked&&link.direction==='outgoing'&&<p>{checks[link.instanceId]||'Availability not checked'}</p>}
+      {duplicate&&<p className="a-caption">Link ID: <code>{link.grantId}</code></p>}
+      {!link.revoked&&link.direction==='outgoing'&&<>
+       <p>{availability||'Availability not checked'}</p>
+       {availability===ambiguousAvailability&&matching[0]===link&&<p className="a-caption">{duplicate
+        ?'Compare these entries by Link ID. Revoke only the links you’ve identified as extra.'
+        :'Only one matching link is listed here. Ask the other owner to review the entries for this Amplifier labeled “Can check this Amplifier’s status”.'}</p>}
+      </>}
      </div>
      {!link.revoked&&<div className="a-link-actions">
       {link.direction==='outgoing'&&<button type="button" className="a-soft" disabled={!!busy||pending} onClick={()=>check(link)}>Check availability</button>}
       <button type="button" className="a-soft a-danger" disabled={!!busy||pending} onClick={()=>setConfirm(link.grantId)}>Revoke link</button>
      </div>}
      {!link.revoked&&confirm===link.grantId&&<div>
-      <p>Revoke status access for {link.origin||'Amplifier '+link.instanceId.slice(0,8)}?</p>
+      <p>Revoke status access for {linkName(link)}{duplicate&&<> (link <code>{link.grantId}</code>)</>}?</p>
       <div className="a-link-actions">
        <button type="button" className="a-soft a-danger" disabled={!!busy||pending} onClick={()=>change('revoke',{grantId:link.grantId})}>Confirm revoke</button>
        <button type="button" className="a-soft" disabled={!!busy||pending} onClick={()=>setConfirm(null)}>Cancel</button>
       </div>
      </div>}
-    </li>)}
+    </li>;
+    })}
    </ul>}
    <div className="a-link-actions">
     <button type="button" className="a-primary" aria-expanded={mode==='offer'} disabled={!!busy||pending||!list.origins.length} onClick={()=>toggle('offer')}>Create invitation</button>
