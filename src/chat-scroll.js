@@ -174,6 +174,9 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
   // programmatic compensation under this owner, including its rounding goal.
   captureLayout(){
    if(disposed||!ready||restore)return null;
+   // A scrollbar/focus move can precede its native event. Classify it before
+   // fresh capture erases the old actual top and masks that newer reading choice.
+   scroll();
    capture();
    if(constrainedPosition&&!visibleMessage(pane,constrainedPosition.messageId))constrainedPosition=null;
    return layoutPosition={sessionId,position:constrainedPosition||snapshot};
