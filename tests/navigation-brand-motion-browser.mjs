@@ -49,7 +49,7 @@ try{
  vite=await createServer({configFile:false,root:fileURLToPath(new URL('../',import.meta.url)),server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{
   name:'navigation-brand-fixture',resolveId:id=>id==='/navigation-brand.jsx'?id:null,
   async load(id){if(id==='/navigation-brand.jsx')return (await transformWithEsbuild(fixture,'navigation-brand.jsx',{loader:'jsx',jsx:'automatic'})).code},
-  configureServer(server){server.middlewares.use('/navigation-brand',(_req,res)=>{res.setHeader('Content-Type','text/html');res.end('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}#amp-one{height:auto;min-height:100vh}main button{max-width:100%}main .a-nav-chat-label,main .a-workspace-label{display:block;min-width:0;max-width:100%}</style><div id="root"></div><script type="module" src="/navigation-brand.jsx"></script>')})}
+  configureServer(server){server.middlewares.use((req,res,next)=>{if(req.url!=='/navigation-brand')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}#amp-one{height:auto;min-height:100vh}main button{max-width:100%}main .a-nav-chat-label,main .a-workspace-label{display:block;min-width:0;max-width:100%}</style><div id="root"></div><script type="module" src="/navigation-brand.jsx"></script>')})}
  }]});await vite.listen();browser=await chromium.launch({headless:true});
  for(const coarse of [false,true]){
   const page=await browser.newPage({viewport:{width:1280,height:900},hasTouch:coarse});page.on('pageerror',e=>report.errors.push(e.message));
