@@ -47,7 +47,7 @@ async function scenario({wrongReady=false,ready=false,response}={}){
  const act=async(action,args)=>{calls.push({action,args});return response?response(action,args):{accepted:true,result:{...args,requestId:wrongReady?'wrong':args.requestId,status:wrongReady||ready?'ready':'pending',suggestion:wrongReady||ready?'Try this':null,configRevision:'config',sourceKey:'source'}}};
  function Probe(){suggestion=useTranscriptSuggestion({state,suggestionsSupported:true,readState:()=>state,act,recipient,blocked,canUse:()=>true});return null}
  const render=()=>renderAct(async()=>{if(root)root.update(React.createElement(Probe));else root=create(React.createElement(Probe))});
- return {calls,state,get ghost(){return suggestion?.ghost},get owner(){return suggestion?.owner},get generateInterface(){return suggestion?.generate},get status(){return suggestion?.status},get canGenerate(){return suggestion?.canGenerate},render,edit:reason=>renderAct(async()=>suggestion.supersede(reason)),configure:patch=>renderAct(async()=>configure(patch)),recipient:next=>{recipient=next},block:()=>{blocked=true},async close(){await renderAct(async()=>root?.unmount());Object.assign(globalThis,originals)}};
+ return {calls,state,get ghost(){return suggestion?.ghost},get disposition(){return suggestion?.disposition},get owner(){return suggestion?.owner},get generateInterface(){return suggestion?.generate},get status(){return suggestion?.status},get canGenerate(){return suggestion?.canGenerate},render,edit:reason=>renderAct(async()=>suggestion.supersede(reason)),configure:patch=>renderAct(async()=>configure(patch)),recipient:next=>{recipient=next},block:()=>{blocked=true},async close(){await renderAct(async()=>root?.unmount());Object.assign(globalThis,originals)}};
 }
 for(const change of ['hostInstanceId','historyScope']){
  test('changing '+change+' never sends the old request cancellation to its successor',async()=>{
@@ -130,7 +130,7 @@ test('pending beginDraft departure cancels and return never resumes inference',a
   assert.equal(h.calls.filter(row=>row.action==='session.suggestion.cancel'&&row.args.requestId===original.requestId).length,1);
   delete h.state.navigationPending;delete h.state.draftNavigationPending;await h.render();
   assert.equal(h.ghost,null);assert.equal(h.calls.filter(row=>row.action==='session.suggestion.request').length,1);
-  assert.equal(h.calls.filter(row=>row.action==='session.suggestion.status').length,0);
+  assert.deepEqual(h.calls.filter(row=>row.action==='session.suggestion.status').map(row=>row.args),[{sessionId:original.sessionId,requestId:original.requestId}],'Return reconciles the original cancelled attempt, not inference');
  }finally{await h.close()}
 });
 test('departure does not preserve ready through quotes, Stop, disablement or changed source',async()=>{
@@ -187,5 +187,31 @@ test('handled empty paste releases its input fence and returns the original cand
   await h.render();assert.ok(h.ghost);
   await renderAct(async()=>{await h.edit('editor-input');await h.edit('editor-input-end')});
   await h.render();assert.ok(h.ghost);assert.equal(h.calls.filter(row=>row.action==='session.suggestion.request').length,1);
+ }finally{await h.close()}
+});
+test('enable while Settings is open waits for close, then shows loading and the exact terminal disposition',async()=>{
+ for(const status of ['empty','failed','unsupported','timeout','cancelled','expired','duplicate_source','busy','disabled','missing_selection']){
+  let release;const h=await scenario({response:(action,args)=>action==='session.suggestion.request'?new Promise(resolve=>{release=()=>resolve({accepted:true,result:{...args,status,sourceKey:null,configRevision:null,reason:'private provider error must not be copied'}})}):Promise.resolve({accepted:true,result:{...args,status,sourceKey:null,configRevision:null}})});
+  try{
+   h.state.settings.suggestedMessages=false;h.state.view.panel='settings';await h.render();assert.equal(h.disposition,null);assert.equal(h.calls.length,0);
+   h.state.settings.suggestedMessages=true;await h.render();assert.equal(h.calls.length,0);
+   h.state.view.panel=null;await h.render();assert.equal(h.disposition.status,'pending');
+   const original=h.calls[0].args;await renderAct(async()=>release());assert.equal(h.disposition.status,status);assert.equal(h.disposition.reason,null);
+   h.state.view.workSurface='home';await h.render();h.state.view.workSurface='chat';await h.render();
+   assert.equal(h.disposition.status,status);assert.equal(h.calls.filter(row=>row.action==='session.suggestion.request').length,1);
+   assert.equal(h.calls.filter(row=>row.action==='session.suggestion.cancel').length,0,'Terminal receipt must not cause cancellation');
+   assert.deepEqual(h.calls.filter(row=>row.action==='session.suggestion.status').at(-1).args,{sessionId:original.sessionId,requestId:original.requestId});
+  }finally{await h.close()}
+ }
+});
+test('old chat waits for public history hydration, then loads on focus without a new completion',async()=>{
+ const h=await scenario({ready:true});try{
+  h.state.sessions[0].historyLoading=true;await h.render();assert.equal(h.calls.length,0);
+  await renderAct(async()=>{document.hasFocus=()=>false;window.dispatchEvent(new Event('blur'))});h.state.sessions[0].historyLoading=false;await h.render();assert.equal(h.calls.length,0);
+  document.hasFocus=()=>true;await renderAct(async()=>window.dispatchEvent(new Event('focus')));assert.ok(h.ghost);
+  const count=h.calls.filter(row=>row.action==='session.suggestion.request').length;
+  await renderAct(async()=>{document.hasFocus=()=>false;window.dispatchEvent(new Event('blur'))});
+  await renderAct(async()=>{document.hasFocus=()=>true;window.dispatchEvent(new Event('focus'))});
+  assert.ok(h.ghost);assert.equal(h.calls.filter(row=>row.action==='session.suggestion.request').length,count);
  }finally{await h.close()}
 });

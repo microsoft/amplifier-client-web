@@ -47,13 +47,19 @@ The suggestion provider/account and model are shown separately from the chat mod
 The same feature's **Advanced settings** holds explicit host setup across workspaces,
 model/effort choices, expert recent/full text sharing and a deeper custom instruction.
 Global Advanced and Privacy link to this one feature destination rather than owning
-duplicate editors. If host setup is missing, enabling opens a compact **Save setup
-and enable** flow; opening it alone changes neither host settings nor your choice.
+duplicate editors. If host setup is missing, **Set up suggested messages** opens a
+compact **Save setup and enable** confirmation; opening it alone changes neither
+host settings nor your choice.
 Host-setup success and a failed synced-preference save are reported separately.
 Preference saves use a setting-specific revision so another client's newer Off
 choice wins over a delayed setup-and-enable operation.
 There is no automatic model selection or fallback; a configured connection is
 not a claim that every provider or model supports this feature.
+The saved connection/model card has a **Change** action. Optional recommendations
+come from the selected module's purpose ranking for that exact catalog, with its
+live/configured/static provenance; an unknown module is never guessed from its
+name or model-family substrings. Manual model IDs stay in Advanced. A newer
+recommendation does not replace a saved explicit choice or sharing consent.
 
 The host sends bounded visible conversation text to the selected provider,
 including other participants' messages—not an agent's private context or an
@@ -65,7 +71,12 @@ READY response can remain in bounded private memory while its source and setting
 are unchanged; revisits still validate the original attempt without model work.
 Finite responses obey their original expiry. Failed, empty, cancelled or missing
 attempts do not trigger a client retry loop. Suggestions are automatic; there is no
-creation or regeneration control. Reopening or reloading an eligible conversation
+creation or regeneration control. Closing Settings after confirmed enable checks
+the already-viewed eligible chat immediately. The composer shows **Loading a
+suggested message…**, **No suggestion this time**, or a safe unavailable/failure
+explanation with setup review—not a chat-working badge. Returning to a retained
+non-ready attempt reads its exact original ID, without a new inference request.
+Reopening or reloading an eligible conversation
 can ask the host for its current source-bound result, including a cached empty
 outcome, without duplicate model work. The host owns durable private suggestion
 storage; ghosts are never stored as drafts or in a second persistent browser cache.

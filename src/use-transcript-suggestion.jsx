@@ -23,7 +23,7 @@ export function useTranscriptSuggestion({state,suggestionsSupported,readState,ac
  const trigger=JSON.stringify([witness?.key,config?.revision,recipient]);
  // READY survives temporary local text and navigation, not hard safety changes.
  // No status reads occur until the visible, editable composer is empty again.
- const retainReady=enabled&&connected&&config?.enabled===true&&!blocked&&suggestionEligible(state,{ignoreDeparture:true,ignoreDraft:true});
+ const retainReady=enabled&&connected&&config?.enabled===true&&!blocked&&suggestionEligible({...state,view:{...state?.view,panel:null,settingsCanvas:false}},{ignoreDeparture:true,ignoreDraft:true});
  owner.observe(state,config?.revision,eligible,{retainReady,recipient});
  const generation=owner.generation();
  useEffect(()=>{
@@ -35,7 +35,7 @@ export function useTranscriptSuggestion({state,suggestionsSupported,readState,ac
  },[owner]);
  useEffect(()=>{
   if(!eligible)return;
-  let active=true,timer,args=null,terminal=false;
+  let active=true,timer,deadlineTimer,args=null,terminal=false;
   const deadline=Date.now()+16000;
   const canCancel=()=>live.current.connected&&live.current.suggestionsSupported&&scope===suggestionScope(live.current.readState());
   const cancel=()=>{
@@ -45,13 +45,13 @@ export function useTranscriptSuggestion({state,suggestionsSupported,readState,ac
   const poll=async(action,requestArgs)=>{
    if(!current())return;
    try{
-    const receipt=await act(action,requestArgs,{feedback:false,suggestionIsCurrent:current});
+    const receipt=await act(action,requestArgs,{feedback:false,suggestionIsCurrent:current,signal:AbortSignal.timeout(16000)});
     if(!current())return;
     const result=receipt?.accepted&&receipt.result;
     const received=owner.receive(args,result);
-    // Only a verified ready response may suppress cleanup cancellation. An
-    // unrelated/malformed terminal string is not evidence about this attempt.
-    terminal=received&&result.status==='ready';
+    // Exact terminal receipts stop loading and cleanup; malformed or unrelated
+    // results are uncertain, not evidence of an empty or successful attempt.
+    terminal=received&&result.status!=='pending';
     refresh(value=>value+1);
     if(!received){owner.unavailable(args);refresh(value=>value+1);return}
     if(result.status==='pending'){
@@ -61,16 +61,21 @@ export function useTranscriptSuggestion({state,suggestionsSupported,readState,ac
    }catch{owner.unavailable(args);refresh(value=>value+1)/* No automatic retry of an uncertain request. */}
   };
   if(owner.attempted()){
-   void owner.restore().then(()=>{if(active)refresh(value=>value+1)});
+   args=owner.resumeRequest();
+   if(args)void poll('session.suggestion.status',{sessionId:args.sessionId,requestId:args.requestId});
+   else void owner.restore().then(()=>{if(active)refresh(value=>value+1)});
   }else{
    args=owner.nextRequest();
    if(args){refresh(value=>value+1);void poll('session.suggestion.request',args)}
   }
-  return()=>{active=false;clearTimeout(timer);if(args&&!terminal)cancel()};
+  if(args)deadlineTimer=setTimeout(()=>{if(!current()||terminal)return;owner.unavailable(args);clearTimeout(timer);cancel();terminal=true;refresh(value=>value+1)},16000);
+  return()=>{active=false;clearTimeout(timer);clearTimeout(deadlineTimer);if(args&&!terminal)cancel()};
  },[owner,trigger,eligible,config?.revision,act,generation]);
  const ghost=owner.candidate();
  useEffect(()=>{if(!ghost||ghost.expiresAt===null)return;const timer=setTimeout(()=>refresh(value=>value+1),Math.max(0,ghost.expiresAt-Date.now()+1));return()=>clearTimeout(timer)},[ghost?.expiresAt]);
- return {ghost,owner,supersede:reason=>{
+ const interested=enabled&&visible&&focused&&connected&&!blocked&&!composing&&!editing&&suggestionEligible(state);
+ const disposition=eligible?(owner.disposition()||(!witness?{status:'history_unavailable'}:null)):interested?{status:!config?'setup_unavailable':config.enabled!==true?'disabled':!witness?'awaiting_response':'missing_selection'}:null;
+ return {ghost,disposition,owner,supersede:reason=>{
   if(reason==='editor-input'){inputPending.current=true;setEditing(true);owner.suspend()}
   else if(reason==='editor-input-end'){if(!inputPending.current)return;inputPending.current=false;setEditing(false)}
   else if(reason==='editor-change'){inputPending.current=false;setEditing(false);owner.suspend()}

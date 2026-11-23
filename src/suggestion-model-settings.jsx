@@ -35,7 +35,7 @@ export function useSuggestionModels(state,act,verified=true){
 }
 const availableProviders=data=>(data.providers||[]).filter(row=>row.enabled!==false&&!row.authenticationRequired);
 const configured=(config,providers)=>config?.enabled===true&&!!config.model?.trim()&&providers.some(row=>row.id===config.provider);
-function SharingDisclosure(){return <><p className="a-caption">Uses conversation text, not unsent drafts. Provider charges may apply.</p><details className="a-suggestion-disclosure"><summary>About text sharing</summary><p>Visible messages from all participants go to the selected provider. An agent’s private context is not shared. Cached suggestions remain separate from your drafts.</p></details></>}
+function SharingDisclosure({config}){return <div className="a-suggestion-consent"><p className="a-caption">{config?.transcriptMode==='full'?'Full visible conversation (saved choice)':'Recent visible conversation'}, including other participants’ messages, goes to this AI. Not unsent drafts or an agent’s private context.</p><p className="a-caption">While on, eligible chats automatically make additional AI requests. Provider charges may apply even if you ignore a suggestion.</p></div>}
 
 // The everyday preference never edits host configuration on an already-set-up host.
 export function SuggestionSettings({state,act,navigate,verified=true}){
@@ -61,13 +61,15 @@ export function SuggestionSettings({state,act,navigate,verified=true}){
   }else setNotice('Setup saved. Choose an available connection and model before enabling.');
  }
  return <section className="a-suggestion-preferences" data-part="suggestion-settings">
-  <div className="a-settings-row"><div><h4>Suggested messages</h4><p>Show a suggested next message when the box is empty.</p></div><label className="a-suggestion-switch"><span className="a-sr-only">Show suggested messages</span><input id={toggleId} type="checkbox" checked={enabled} disabled={!scope||saving||!config&&!enabled} onChange={event=>toggle(event.target.checked)}/></label></div>
-  <p className="a-caption">Tab or Use suggestion adds editable text. Send when you’re ready.</p>
-  {selected&&config?.model?<p className="a-caption">{selected.displayName||selected.label||selected.name||selected.id} · {config.model} · Synced on this installation</p>:<p className="a-caption">Choose a connection and model to get started.</p>}
-  <SharingDisclosure/>
+  <div className="a-settings-row"><div><h4>Suggested messages</h4><p>Suggest a next message when the box is empty. Edit it, then send when you’re ready.</p></div>{(enabled||ready)&&<label className="a-suggestion-switch"><span className="a-sr-only">Show suggested messages</span><input id={toggleId} type="checkbox" checked={enabled} disabled={!scope||saving} onChange={event=>toggle(event.target.checked)}/></label>}</div>
+  <div className="a-suggestion-account" data-part="suggestion-saved-choice"><div><strong>{selected?.displayName||selected?.label||selected?.name||config?.provider||'Choose an AI connection'}</strong><p>{config?.model||'Choose a model'}</p>{config?.provider&&!selected&&<p className="a-caption">Saved connection is not currently available. No other account will be used.</p>}</div><button type="button" className="a-link" disabled={!scope||setupBusy||saving||!config} onClick={()=>setSetup({scope,epoch:identity.current.epoch,preferenceRevision:state.settings?.suggestedMessagesRevision??0,token:crypto.randomUUID(),change:true})}>Change</button></div>
+  <SharingDisclosure config={config}/>
+  <p className="a-caption">Your On/Off choice syncs across this installation owner’s clients, not other hosts. {enabled?'On is saved, not a guarantee of a suggestion. Close Settings to check this eligible chat.':'Suggestions are off.'}</p>
+  {!ready&&!setup&&<button type="button" className="a-primary" disabled={!scope||saving||!config} onClick={()=>toggle(true)}>Set up suggested messages</button>}
+  {setupBusy&&<button type="button" className="a-link" disabled={saving} onClick={()=>toggle(false)}>Keep suggestions off</button>}
   {!config&&<p role="status">Suggestion settings are unavailable on this host.</p>}
   {setup?.scope===scope&&setup.epoch===identity.current.epoch&&<div role="group" aria-label="Set up suggested messages"><h4>Set up suggested messages</h4>
-   <SuggestionSetup state={state} act={act} navigate={navigate} verified={verified} compact onBusy={setSetupBusy} onSaved={(result,receipt)=>finish(result,setup.token,receipt)} onCancel={()=>setSetup(null)}/>
+   <SuggestionSetup state={state} act={act} navigate={navigate} verified={verified} compact enableOnSave={!setup.change&&!enabled} onBusy={setSetupBusy} onSaved={(result,receipt)=>setup.change?setSetup(null):finish(result,setup.token,receipt)} onCancel={()=>setSetup(null)}/>
   </div>}
   <button type="button" className="a-link" onClick={()=>navigate('suggestion-advanced')}>Advanced settings</button>
   {error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}
@@ -76,7 +78,7 @@ export function SuggestionSettings({state,act,navigate,verified=true}){
 
 // One implementation serves host Advanced settings and the first-enable flow.
 // Drafts and asynchronous result ownership stay private to the exact account.
-export function SuggestionSetup({state,act,navigate,verified=true,compact=false,onSaved,onCancel,onBusy}){
+export function SuggestionSetup({state,act,navigate,verified=true,compact=false,enableOnSave=true,onSaved,onCancel,onBusy}){
  const data=useSuggestionModels(state,act,verified),scope=suggestionScope(state),config=data.suggestionModels;
  const [draft,setDraft]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const alive=useRef(true),sending=useRef(false),current=useRef(null),layout=useContext(SettingsLayoutContext),identity=useRef({scope,epoch:0}),reviewRoot=useRef(null);
@@ -89,16 +91,32 @@ export function SuggestionSetup({state,act,navigate,verified=true,compact=false,
  const matching=catalogKey&&setupEntry?.sharedCatalogKey===catalogKey?setupEntry:undefined;
  const hydrated=shared?.modelsDeferred&&!Array.isArray(shared.models)&&shared.phase==='ready'&&matching?.phase==='ready'&&Array.isArray(matching.models)&&!(shared.loadedAt!=null&&matching.loadedAt<shared.loadedAt);
  const entry=hydrated?{...shared,...matching,modelsDeferred:false}:shared||matching,needsCatalog=!entry||entry.modelsDeferred&&!Array.isArray(entry.models);
+ const proposed=chosen?.suggestionRecommendation;
+ const recommendation=entry?.phase==='ready'&&entry.supported!==false&&!entry.stale&&proposed?.basis==='provider-purpose'&&['provider-api','configured','static'].includes(proposed.provenance)&&proposed.provenance===entry.provenance&&entry.models?.some(row=>(typeof row==='string'?row:row.id)===proposed.model)?proposed:null;
  const choices=(providerFields(entry?.metadata||chosen,{model:value.model,default_model:value.model}).find(field=>field.id==='reasoning_effort')?.choices||[]).map(row=>typeof row==='object'?row.value:row);
  useEffect(()=>{
   const key=JSON.stringify([scope,config?.revision,value.provider,catalogKey]);
   if(!verified||!layout.active||!chosen||!needsCatalog||requested.current.has(key))return;
   requested.current.add(key);void refreshCatalog();
  },[scope,config?.revision,value.provider,catalogKey,needsCatalog,layout.active,verified]);
+ useEffect(()=>{
+  const key=JSON.stringify([scope,config?.revision,value.provider,catalogKey]),projection=key+':recommendation:'+entry?.loadedAt;
+  if(!verified||!layout.active||entry?.phase!=='ready'||needsCatalog||!requested.current.has(key)||requested.current.has(projection))return;
+  requested.current.add(projection);const epoch=current.current.epoch;let active=true;
+  // Discovery publishes asynchronously. Re-read only after its exact catalog is
+  // ready, once per loaded generation, rather than racing its acknowledgement.
+  void act('providers.suggestionModels',{}, {feedback:false}).then(receipt=>{
+   if(active&&alive.current&&current.current.scope===scope&&current.current.epoch===epoch&&receipt?.accepted)publishSuggestionModels(scope,receipt.result,state.configurationRevision??0);
+  }).catch(()=>{});
+  return()=>{active=false};
+ },[scope,config?.revision,value.provider,catalogKey,entry?.phase,entry?.loadedAt,needsCatalog,layout.active,verified]);
  async function refreshCatalog(refresh=false){
-  if(!chosen)return;setCatalogError('');
-  try{const receipt=await act('providers.models',{id:chosen.id,scope:'global',configurationTarget:{kind:'global'},...(refresh?{refresh:true}:{})},{feedback:false});if(receipt?.accepted!==true)throw Error(receipt?.error||'Could not request models for this connection.')}
-  catch(error){if(alive.current&&current.current.scope===scope)setCatalogError(error.message)}
+  if(!chosen)return;const epoch=current.current.epoch;setCatalogError('');
+  requested.current.add(JSON.stringify([scope,config?.revision,value.provider,catalogKey]));
+  try{
+   const receipt=await act('providers.models',{id:chosen.id,scope:'global',configurationTarget:{kind:'global'},...(refresh?{refresh:true}:{})},{feedback:false});if(receipt?.accepted!==true)throw Error(receipt?.error||'Could not request models for this connection.');
+  }
+  catch(error){if(alive.current&&current.current.scope===scope&&current.current.epoch===epoch)setCatalogError(error.message)}
  }
  const edit=patch=>{setDraft({scope,value:{...value,...patch}});setNotice('')};
  useSettingsDraft(compact?'suggestion-initial-setup':'suggestion-model',{label:'Suggested messages setup',dirty:!!privateDraft||busy,review:()=>navigate(compact?'chat-input':'suggestion-advanced'),reviewTarget:()=>reviewRoot.current?.querySelector('select,input'),discard:()=>{if(sending.current)return false;setDraft(null);onCancel?.()}});
@@ -107,7 +125,7 @@ export function SuggestionSetup({state,act,navigate,verified=true,compact=false,
  async function save(){
   if(sending.current||!valid)return;const epoch=current.current.epoch;sending.current=true;setBusy(true);onBusy?.(true);setError('');setNotice('');
   try{
-   const receipt=await act('providers.configureSuggestions',{enabled:compact?true:value.enabled,...(!disabling?{provider:value.provider,model:value.model.trim(),effort:value.effort||null,...(!compact?{transcriptMode:value.transcriptMode,humanTurns:Number(value.humanTurns)}:{})}:{}),scope:'global',configurationTarget:{kind:'global'}});
+   const receipt=await act('providers.configureSuggestions',{enabled:compact&&enableOnSave?true:value.enabled,...(!disabling?{provider:value.provider,model:value.model.trim(),effort:value.effort||null,...(!compact?{transcriptMode:value.transcriptMode,humanTurns:Number(value.humanTurns)}:{})}:{}),scope:'global',configurationTarget:{kind:'global'}});
    if(!alive.current||current.current.scope!==scope||current.current.epoch!==epoch)return;
    if(receipt?.accepted!==true||!receipt.result?.suggestionModels)throw Error(receipt?.error||'Setup save could not be confirmed. Your choices are kept.');
    publishSuggestionModels(scope,receipt.result,state.configurationRevision??0);setDraft(null);setNotice('Setup saved. Applies to the next suggestion request.');
@@ -119,10 +137,12 @@ export function SuggestionSetup({state,act,navigate,verified=true,compact=false,
   {!compact&&<p className="a-caption">Model setup across workspaces on this installation.</p>}
   {!config?<p role="status">Suggestion setup is unavailable on this host.</p>:<>
    {!compact&&<details className="a-suggestion-disclosure"><summary>Installation availability</summary><label><input type="checkbox" checked={value.enabled===true} disabled={busy} onChange={event=>edit({enabled:event.target.checked})}/>Make suggestion service available</label><p className="a-caption">Separate from Show suggested messages in your settings.</p></details>}
-   <div className="a-suggestion-field"><label htmlFor={id+'-provider'}>Connection</label>
+   <div className="a-suggestion-field"><label htmlFor={id+'-provider'}>AI connection</label>
    <ProviderSelect controlId={id+'-provider'} aria-label="Connection" providers={providers} disabled={busy} value={value.provider||''} onChange={provider=>edit({provider,model:'',effort:null})}/></div>
    <div className="a-suggestion-field"><label htmlFor={id+'-model'}>Model</label>
-   <ModelSelect key={value.provider} id={id+'-model'} label="Model" presentation="compact" value={value.model||''} entry={entry} state={state} act={act} disabled={busy||!chosen} onChange={model=>edit({model,effort:null})}/></div>
+   <ModelSelect key={value.provider} id={id+'-model'} label="Model" presentation="compact" allowManual={!compact} value={value.model||''} entry={entry} state={state} act={act} disabled={busy||!chosen} onChange={model=>edit({model,effort:null})}/></div>
+   {recommendation?<p className="a-caption">Module recommendation ({recommendation.provenance}): <strong>{recommendation.model}</strong>. Not a guarantee of availability, speed or cost. {value.model!==recommendation.model&&<button type="button" className="a-link" disabled={busy} onClick={()=>edit({model:recommendation.model,effort:null})}>Use recommended model</button>}</p>:<p className="a-caption">No model recommendation is available from this connection. Choose a model; saved choices are not changed automatically.</p>}
+   {compact&&<SharingDisclosure config={value}/>}
    {!providers.length&&<button type="button" className="a-link" onClick={()=>navigate('ai-connections')}>Connect an AI provider</button>}
    {!compact&&<details className="a-suggestion-disclosure"><summary>More options</summary>
     <div className="a-suggestion-field">
@@ -135,7 +155,7 @@ export function SuggestionSetup({state,act,navigate,verified=true,compact=false,
     <p className="a-caption">Higher effort and more text can increase usage.</p>
    </details>}
    <details className="a-suggestion-disclosure"><summary>Connection help</summary><div className="a-control-actions"><button type="button" className="a-link" disabled={busy||!chosen||entry?.phase==='working'} onClick={()=>refreshCatalog(true)}>Refresh models</button><button type="button" className="a-link" onClick={()=>navigate('ai-connections')}>AI connections</button></div>{catalogError&&<p role="status">{catalogError}</p>}</details>
-   <div className="a-control-actions"><button type="button" className="a-primary" disabled={busy||!valid||!compact&&!privateDraft} onClick={save}>{busy?'Saving…':compact?'Save setup and enable':'Save setup'}</button>
+   <div className="a-control-actions"><button type="button" className="a-primary" disabled={busy||!valid||!compact&&!privateDraft} onClick={save}>{busy?'Saving…':compact&&enableOnSave?'Save setup and enable':'Save setup'}</button>
     {compact?<button type="button" className="a-link" disabled={busy} onClick={onCancel}>Cancel setup</button>:privateDraft&&!busy&&<button type="button" className="a-link" onClick={()=>setDraft(null)}>Discard setup changes</button>}
    </div>
   </>}

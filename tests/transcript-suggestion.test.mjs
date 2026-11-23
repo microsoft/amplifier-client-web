@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import {createActionCatalogReader} from '../src/action-catalog.js';
 import assert from 'node:assert/strict';
-import {supportsTranscriptSuggestions,suggestionText,suggestionScope,suggestionWitness,suggestionEligible,suggestionOutboxPending,plainSuggestionTab,createSuggestionController} from '../src/transcript-suggestion.js';
+import {supportsTranscriptSuggestions,suggestionText,suggestionScope,suggestionWitness,suggestionEligible,suggestionOutboxPending,plainSuggestionTab,createSuggestionController,suggestionDispositionText} from '../src/transcript-suggestion.js';
 import {composerState,insertComposerSuggestion,composerMarkdown,composerDocument} from '../src/markdown-composer.js';
 import {undo,redo} from 'prosemirror-history';
 
@@ -35,6 +35,21 @@ test('late, malformed and failed catalog reads cannot grant actions to a replace
 });
 
 const frame=()=>({client:{hostInstanceId:'host',historyScope:'principal'},selectedSessionId:'s',view:{},sessions:[{id:'s',status:'idle',messages:[{id:'a',role:'assistant',text:'Done.'}]}]});
+test('safe disposition copy never renders arbitrary host reason or provider error prose',()=>{
+ assert.equal(suggestionDispositionText({status:'empty'}),'No suggestion this time.');
+ assert.equal(suggestionDispositionText({status:'failed',reason:'secret endpoint/key'}),'The selected connection could not load a suggestion.');
+ assert.match(suggestionDispositionText({status:'duplicate_source',reason:'prior_attempt_failed'}),/previous suggestion attempt failed/i);
+ assert.match(suggestionDispositionText({status:'unsupported',reason:'runtime_not_prepared'}),/not prepared/i);
+});
+test('future terminal receipts reconcile the exact attempt ID, stay spent and never become editable text',()=>{
+ for(const status of ['empty','unsupported','failed','timeout','cancelled','expired','duplicate_source','busy','disabled','missing_selection','stale']){
+  const h=harness(),args=h.request();assert.equal(h.controller.disposition().status,'pending');
+  assert.equal(h.controller.receive(args,{...h.result(args),status,suggestion:null}),true);
+  assert.equal(h.controller.disposition().status,status);assert.equal(h.controller.candidate(),null);assert.equal(h.request(),null);
+  h.controller.suspend();h.observe();assert.equal(h.controller.resumeRequest().requestId,args.requestId);
+  assert.equal(h.controller.nextRequest(),null);
+ }
+});
 test('controller observes unselected pre-client boot states without allocating work',()=>{
  for(const initial of [undefined,null,{}, {sessions:[]},{selectedSessionId:undefined,sessions:[]},{selectedSessionId:null,sessions:[]}]){
   let state=initial;
@@ -87,6 +102,13 @@ test('a fresh controller admits a host-cached source-bound result only for its e
 test('unavailable old attempt remains spent without caption workflow or replacement request',async()=>{
  const h=harness(),args=h.request();h.controller.receive(args,h.result(args));h.controller.suspend();h.status({status:'empty',reason:'prior_attempt_unavailable',suggestion:null});
  assert.equal(await h.controller.restore(),false);assert.equal(h.request(),null);
+});
+test('READY status restoration exposes the exact terminal outcome rather than leaving loading or a stale ghost',async()=>{
+ for(const status of ['empty','expired','failed','unsupported','cancelled']){
+  const h=harness(),args=h.request();h.controller.receive(args,h.result(args));h.controller.suspend();h.status({status,suggestion:null});
+  assert.equal(await h.controller.restore(),false);assert.equal(h.controller.disposition().status,status);
+  assert.equal(h.controller.nextRequest(),null);assert.equal(h.controller.resumeRequest().requestId,args.requestId);
+ }
 });
 test('source-bound READY LRU touches restored entries without inference on capacity eviction',async()=>{
  let state=frame(),sequence=0;
@@ -192,7 +214,7 @@ test('callbacks and acceptance recheck live state even before the next render',a
  const h=harness(),args=h.request();h.controller.receive(args,h.result(args));const ghost=h.controller.candidate(),claim=await ghost.validate();h.state.view.draft='typed';assert.equal(claim(),false);
 });
 test('responses must bind exact request, session and server last-message witness',()=>{
- for(const patch of [{requestId:'other'},{sessionId:'other'},{sourceKey:null},{configRevision:'other'},{suggestion:'bad\nline'},{status:'failed'}]){
+ for(const patch of [{requestId:'other'},{sessionId:'other'},{sourceKey:null},{configRevision:'other'},{suggestion:'bad\nline'},{status:'unrecognized'}]){
   const h=harness(),args=h.request();assert.equal(h.controller.receive(args,{...h.result(args),...patch}),false);assert.equal(h.controller.candidate(),null);
  }
 });
