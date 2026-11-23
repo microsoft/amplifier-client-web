@@ -7,14 +7,14 @@ import {ModelSelect} from './model-select';
 import {ProviderSelect} from './model-selection-fields.jsx';
 import {providerFields} from './setup-data.js';
 
-const stores=new Map(),empty={};
+const stores=new Map(),empty={},loading={loadState:'loading'};
 function store(scope){
  if(!stores.has(scope))stores.set(scope,{snapshot:empty,listeners:new Set(),pending:null,generation:0});
  return stores.get(scope);
 }
 export function publishSuggestionModels(scope,result,configurationRevision=0){
  if(!scope||!result?.suggestionModels)return;
- const saved=store(scope);saved.configurationRevision=configurationRevision;saved.snapshot={...saved.snapshot,...result};saved.listeners.forEach(fn=>fn());
+ const saved=store(scope);saved.configurationRevision=configurationRevision;saved.snapshot={...saved.snapshot,...result,loadState:'ready'};saved.listeners.forEach(fn=>fn());
 }
 export function clearSuggestionModels(){
  for(const saved of stores.values()){saved.generation++;saved.snapshot=empty;saved.pending=null;saved.listeners.forEach(fn=>fn())}
@@ -27,11 +27,13 @@ export function useSuggestionModels(state,act,verified=true){
   if(saved.pending)saved.generation++;
   const generation=saved.generation;
   saved.pendingRevision=revision;
+  const unavailable=()=>{if(generation!==saved.generation)return;saved.configurationRevision=revision;saved.snapshot={loadState:'unavailable'};saved.listeners.forEach(fn=>fn())};
   saved.pending=act('providers.suggestionModels',{}, {feedback:false}).then(receipt=>{
-   if(generation===saved.generation&&receipt?.accepted)publishSuggestionModels(scope,receipt.result,revision);
-  }).catch(()=>{}).finally(()=>{if(generation===saved.generation)saved.pending=null});
+   if(generation!==saved.generation)return;
+   if(receipt?.accepted&&receipt.result?.suggestionModels)publishSuggestionModels(scope,receipt.result,revision);else unavailable();
+  }).catch(unavailable).finally(()=>{if(generation===saved.generation)saved.pending=null});
  },[scope,act,saved,data,revision,verified]);
- return saved.configurationRevision===revision?data:empty;
+ return saved.configurationRevision===revision&&data!==empty?data:loading;
 }
 const availableProviders=data=>(data.providers||[]).filter(row=>row.enabled!==false&&!row.authenticationRequired);
 const configured=(config,providers)=>config?.enabled===true&&!!config.model?.trim()&&providers.some(row=>row.id===config.provider);
@@ -67,7 +69,7 @@ export function SuggestionSettings({state,act,navigate,verified=true}){
   <p className="a-caption">Your On/Off choice syncs across this installation owner’s clients, not other hosts. {enabled?'On is saved, not a guarantee of a suggestion. Close Settings to check this eligible chat.':'Suggestions are off.'}</p>
   {!ready&&!setup&&<button type="button" className="a-primary" disabled={!scope||saving||!config} onClick={()=>toggle(true)}>Set up suggested messages</button>}
   {setupBusy&&<button type="button" className="a-link" disabled={saving} onClick={()=>toggle(false)}>Keep suggestions off</button>}
-  {!config&&<p role="status">Suggestion settings are unavailable on this host.</p>}
+  {!config&&<p role="status">{data.loadState==='unavailable'?'Suggestion settings are unavailable on this host.':'Loading suggestion setup…'}</p>}
   {setup?.scope===scope&&setup.epoch===identity.current.epoch&&<div role="group" aria-label="Set up suggested messages"><h4>Set up suggested messages</h4>
    <SuggestionSetup state={state} act={act} navigate={navigate} verified={verified} compact enableOnSave={!setup.change&&!enabled} onBusy={setSetupBusy} onSaved={(result,receipt)=>setup.change?setSetup(null):finish(result,setup.token,receipt)} onCancel={()=>setSetup(null)}/>
   </div>}
@@ -135,7 +137,7 @@ export function SuggestionSetup({state,act,navigate,verified=true,compact=false,
  }
  return <section ref={reviewRoot} className="a-suggestion-form" data-part="suggestion-host-setup">
   {!compact&&<p className="a-caption">Model setup across workspaces on this installation.</p>}
-  {!config?<p role="status">Suggestion setup is unavailable on this host.</p>:<>
+  {!config?<p role="status">{data.loadState==='unavailable'?'Suggestion setup is unavailable on this host.':'Loading suggestion setup…'}</p>:<>
    {!compact&&<details className="a-suggestion-disclosure"><summary>Installation availability</summary><label><input type="checkbox" checked={value.enabled===true} disabled={busy} onChange={event=>edit({enabled:event.target.checked})}/>Make suggestion service available</label><p className="a-caption">Separate from Show suggested messages in your settings.</p></details>}
    <div className="a-suggestion-field"><label htmlFor={id+'-provider'}>AI connection</label>
    <ProviderSelect controlId={id+'-provider'} aria-label="Connection" providers={providers} disabled={busy} value={value.provider||''} onChange={provider=>edit({provider,model:'',effort:null})}/></div>

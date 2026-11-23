@@ -6,5 +6,5 @@ import {suggestionDispositionText} from './transcript-suggestion.js';
 export function SuggestionStatus({disposition,onReview}){
  const text=suggestionDispositionText(disposition);
  if(!text)return null;
- return <div className="a-suggestion-status" data-part="suggestion-status" data-status={disposition.status} role="status" aria-live="polite" aria-atomic="true"><span>{text}</span>{onReview&&disposition.status!=='pending'&&disposition.status!=='empty'&&<button type="button" className="a-link" onClick={onReview}>Review suggestion setup</button>}</div>;
+ return <div className="a-suggestion-status" data-part="suggestion-status" data-status={disposition.status} role="status" aria-live="polite" aria-atomic="true"><span>{text}</span>{onReview&&!['pending','empty','setup_loading'].includes(disposition.status)&&<button type="button" className="a-link" onClick={onReview}>Review suggestion setup</button>}</div>;
 }

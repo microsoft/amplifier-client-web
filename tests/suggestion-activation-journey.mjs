@@ -8,9 +8,9 @@ export async function checkSuggestionActivation({page,expect,assert,state,calls,
  const composer=page.getByRole('textbox',{name:'Message Amplifier',exact:true}),status=page.locator('[data-part="suggestion-status"]'),ghost=page.getByRole('button',{name:'Use suggested message'});
  const session=id=>({id,title:'Existing '+id,sessionKind:'root',workspace:'/fixture',workspaceId:'project',status:'idle',historyManaged:true,historyLoaded:true,messages:[{id:'answer-'+id,role:'assistant',text:'An already completed public response.'}],workers:[]});
  state.settings={...state.settings,suggestedMessages:false};
- state.sessions=['current','old','ready','failure','pending-deadline'].map(session);
+ state.sessions=['current','old','ready','failure','pending-deadline','pending-return'].map(session);
  state.selectedSessionId='current';state.view={...state.view,panel:'settings',settingsExpanded:['chat-input'],draft:'',draftDocument:null};
- activationOutcomes.set('current','pending');activationOutcomes.set('old','unsupported');activationOutcomes.set('failure','failed');activationOutcomes.set('pending-deadline','pending');
+ activationOutcomes.set('current','pending');activationOutcomes.set('old','unsupported');activationOutcomes.set('failure','failed');activationOutcomes.set('pending-deadline','pending');activationOutcomes.set('pending-return','pending');
  await emit();
  const setting=page.getByLabel('Show suggested messages',{exact:true});
  await expect(setting).not.toBeChecked();await expect(page.locator('[data-part="suggestion-saved-choice"]')).toContainText('Fixture account');
@@ -47,6 +47,11 @@ export async function checkSuggestionActivation({page,expect,assert,state,calls,
  await dispatch('session.select',{id:'pending-deadline'});await expect(status).toHaveText('Loading a suggested message…');
  await page.clock.fastForward(16001);await expect(status).toContainText('could not be confirmed');
  assert.equal(requests().length,5);await expect(ghost).toHaveCount(0);
+ await dispatch('session.select',{id:'pending-return'});await expect(status).toHaveText('Loading a suggested message…');await expect.poll(()=>requests().length).toBe(6);const pendingReturn=requests().at(-1).args;
+ await page.evaluate(()=>{Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'))});await expect(status).toHaveCount(0);
+ const hiddenReads=statuses().length;await page.clock.fastForward(1000);assert.equal(statuses().length,hiddenReads,'No status polling while hidden');
+ await page.evaluate(()=>{delete document.hidden;document.dispatchEvent(new Event('visibilitychange'))});await expect(status).toContainText('was cancelled');
+ assert.equal(statuses().at(-1).args.requestId,pendingReturn.requestId);assert.equal(requests().length,6);
  await page.setViewportSize({width:390,height:844});await dispatch('session.select',{id:'old'});await expect(status).toContainText('not available for suggestions');
  await page.screenshot({path:output+'/activation-unsupported-mobile.png'});
  const geometry=await page.locator('[data-part="composer"]').evaluate(node=>({client:node.clientWidth,scroll:node.scrollWidth}));assert.ok(geometry.scroll<=geometry.client+1);
@@ -72,5 +77,5 @@ export async function checkSuggestionActivation({page,expect,assert,state,calls,
  await page.setViewportSize({width:390,height:844});await page.screenshot({path:output+'/setup-split-outcome-mobile.png'});
  const setupGeometry=await page.locator('[data-part="suggestion-settings"]').evaluate(node=>({client:node.clientWidth,scroll:node.scrollWidth}));assert.ok(setupGeometry.scroll<=setupGeometry.client+1);
  assert.equal(calls.filter(row=>['conversation.send','conversation.configure','session.create'].includes(row.action)).length,0);
- return {enableOnViewedChatWaitsForSettingsClose:true,loadingThenEmpty:true,sameExactEmptyAttempt:true,oldChatWaitsForHistory:true,unsupportedReviewTargetsChatInput:true,sameExactFailedAttemptAfterDraft:true,readyRestoresOnFocusWithoutInference:true,hungRequestStopsLoading:true,explicitFirstSetupCancelNoWrite:true,failedSetupRetainsEdits:true,splitSaveExactSavedModel:true,fullSharingPreserved:true,manualIdsStayAdvanced:true,mobileNoHorizontalOverflow:{composer:geometry,setup:setupGeometry},requestCount:requests().length,synthetic:true};
+ return {enableOnViewedChatWaitsForSettingsClose:true,loadingThenEmpty:true,sameExactEmptyAttempt:true,oldChatWaitsForHistory:true,unsupportedReviewTargetsChatInput:true,sameExactFailedAttemptAfterDraft:true,readyRestoresOnFocusWithoutInference:true,hungRequestStopsLoading:true,pendingHiddenNoPollingExactCancelledReturn:true,explicitFirstSetupCancelNoWrite:true,failedSetupRetainsEdits:true,splitSaveExactSavedModel:true,fullSharingPreserved:true,manualIdsStayAdvanced:true,mobileNoHorizontalOverflow:{composer:geometry,setup:setupGeometry},requestCount:requests().length,synthetic:true};
 }

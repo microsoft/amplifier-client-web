@@ -76,7 +76,7 @@ const reasonCopies={
 // Never project provider prose, endpoint values or arbitrary diagnostic strings.
 export function suggestionDispositionText(disposition){
  const status=disposition?.status;
- return Object.hasOwn(reasonCopies,disposition?.reason)?reasonCopies[disposition.reason]:({pending:'Loading a suggested message…',empty:'No suggestion this time.',disabled:'Suggestions are unavailable on this installation.',setup_unavailable:'Suggestion setup could not be loaded.',history_unavailable:'A suggestion needs the settled public conversation text.',awaiting_response:'Suggestions become available after a completed reply.',missing_selection:'Choose an available AI connection and model in suggestion setup.',unsupported:'This connection or model is not available for suggestions.',failed:'The selected connection could not load a suggestion.',timeout:'The suggestion request timed out. It will not retry automatically.',cancelled:'The suggestion request was cancelled. It will not retry automatically.',expired:'The previous suggestion is no longer available.',stale:'The conversation changed. The previous suggestion is no longer available.',duplicate_source:'A previous attempt exists for this conversation. No new request was made.',busy:'The suggestion service was busy. No automatic retry.',uncertain:'The previous suggestion result could not be confirmed. It will not retry automatically.'})[status]||null;
+ return Object.hasOwn(reasonCopies,disposition?.reason)?reasonCopies[disposition.reason]:({pending:'Loading a suggested message…',empty:'No suggestion this time.',disabled:'Suggestions are unavailable on this installation.',setup_loading:'Loading suggestion setup…',setup_unavailable:'Suggestion setup could not be loaded.',history_unavailable:'A suggestion needs the settled public conversation text.',awaiting_response:'Suggestions become available after a completed reply.',missing_selection:'Choose an available AI connection and model in suggestion setup.',unsupported:'This connection or model is not available for suggestions.',failed:'The selected connection could not load a suggestion.',timeout:'The suggestion request timed out. It will not retry automatically.',cancelled:'The suggestion request was cancelled. It will not retry automatically.',expired:'The previous suggestion is no longer available.',stale:'The conversation changed. The previous suggestion is no longer available.',duplicate_source:'A previous attempt exists for this conversation. It will not retry automatically.',busy:'The suggestion service was busy. No automatic retry.',uncertain:'The previous suggestion result could not be confirmed. It will not retry automatically.'})[status]||null;
 }
 // One inference per response source/configuration. Keep bounded private receipts
 // for non-ready attempts too; revisiting reads the original ID, never a new call.
@@ -90,8 +90,13 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
  function retain(value){attempts.delete(current.key);attempts.set(current.key,value);while(attempts.size>32)attempts.delete(attempts.keys().next().value)}
  function retainDisposition(saved,status,reason=null){retain({key:current.attemptKey,epoch,expiresAt:saved.expiresAt,args:saved.args,sourceKey:saved.sourceKey,configRevision:saved.configRevision,status,reason:Object.hasOwn(reasonCopies,reason)?reason:null})}
  function suspend(){epoch++;candidate=null;restoring=null;if(request){remember(request.key);request=null}}
- function invalidate(){if(current?.key){ready.delete(current.key);const saved=attempts.get(current.key);if(saved)attempts.set(current.key,{...saved,status:'dismissed'})}suspend()}
- function observe(state,configRevision,eligible,{retainReady=false,recipient}={}){
+ function dismissSession(sessionId){
+  if(!sessionId)return;
+  for(const [key,saved]of ready)if(saved.args.sessionId===sessionId)ready.delete(key);
+  for(const [key,saved]of attempts)if(saved.args.sessionId===sessionId)attempts.set(key,{...saved,status:'dismissed'});
+ }
+ function invalidate(){dismissSession(current?.sessionId);suspend()}
+ function observe(state,configRevision,eligible,{retainReady=false,retainAttempt=false,recipient}={}){
   const nextScope=suggestionScope(state),witness=suggestionWitness(state),key=witness&&JSON.stringify([witness.key,configRevision,recipient]);
   const session=state?.sessions?.find(row=>row.id===state.selectedSessionId);
   // A display prefix/page arriving must not buy another paid attempt. The
@@ -102,7 +107,7 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
   for(const map of [ready,attempts])for(const [savedKey,saved]of map)if(Object.hasOwn(state?.conversationOrganization?.archived||{},saved.args.sessionId)||state?.sessions?.some(row=>row.id===saved.args.sessionId&&row.archived))map.delete(savedKey);
   if(current&&current.sessionId===state?.selectedSessionId&&(current.key!==key||!eligible&&!retainReady)){
    ready.delete(current.key);
-   if(!eligible&&!retainReady){const saved=attempts.get(current.key);if(saved)attempts.set(current.key,{...saved,status:'dismissed'})}
+   if(!eligible&&!retainReady&&!retainAttempt)dismissSession(current.sessionId);
   }
   if(current?.key!==key||current?.eligible!==eligible)suspend();
   current={key,attemptKey,witness,eligible,configRevision,sessionId:state?.selectedSessionId};
@@ -123,7 +128,7 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
   },
   resumeRequest(){
    const saved=attempts.get(current?.key);
-   if(!current?.eligible||!canUse()||!saved||saved.status==='ready'||saved.status==='dismissed')return null;
+   if(!current?.eligible||!canUse()||!saved||saved.status==='ready'&&ready.has(current.key)||saved.status==='dismissed')return null;
    request={...saved,epoch,args:{sessionId:saved.args.sessionId,requestId:saved.args.requestId}};
    return request.args;
   },

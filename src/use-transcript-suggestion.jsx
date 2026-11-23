@@ -24,7 +24,10 @@ export function useTranscriptSuggestion({state,suggestionsSupported,readState,ac
  // READY survives temporary local text and navigation, not hard safety changes.
  // No status reads occur until the visible, editable composer is empty again.
  const retainReady=enabled&&connected&&config?.enabled===true&&!blocked&&suggestionEligible({...state,view:{...state?.view,panel:null,settingsCanvas:false}},{ignoreDeparture:true,ignoreDraft:true});
- owner.observe(state,config?.revision,eligible,{retainReady,recipient});
+ // A transport/catalog verification gap grants no work or preview authority.
+ // Keep only the original private receipt identity for a status-only check
+ // after this same principal/source/configuration is verified again.
+ owner.observe(state,config?.revision,eligible,{retainReady,retainAttempt:!connected||suggestionsSupported===null,recipient});
  const generation=owner.generation();
  useEffect(()=>{
   const hide=()=>{if(document.hidden)owner.suspend();setVisible(!document.hidden)};
@@ -74,7 +77,7 @@ export function useTranscriptSuggestion({state,suggestionsSupported,readState,ac
  const ghost=owner.candidate();
  useEffect(()=>{if(!ghost||ghost.expiresAt===null)return;const timer=setTimeout(()=>refresh(value=>value+1),Math.max(0,ghost.expiresAt-Date.now()+1));return()=>clearTimeout(timer)},[ghost?.expiresAt]);
  const interested=enabled&&visible&&focused&&connected&&!blocked&&!composing&&!editing&&suggestionEligible(state);
- const disposition=eligible?(owner.disposition()||(!witness?{status:'history_unavailable'}:null)):interested?{status:!config?'setup_unavailable':config.enabled!==true?'disabled':!witness?'awaiting_response':'missing_selection'}:null;
+ const disposition=eligible?(owner.disposition()||(!witness?{status:'history_unavailable'}:null)):interested?{status:!config?(data.loadState==='unavailable'?'setup_unavailable':'setup_loading'):config.enabled!==true?'disabled':!witness?'awaiting_response':'missing_selection'}:null;
  return {ghost,disposition,owner,supersede:reason=>{
   if(reason==='editor-input'){inputPending.current=true;setEditing(true);owner.suspend()}
   else if(reason==='editor-input-end'){if(!inputPending.current)return;inputPending.current=false;setEditing(false)}

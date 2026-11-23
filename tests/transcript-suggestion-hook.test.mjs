@@ -215,3 +215,18 @@ test('old chat waits for public history hydration, then loads on focus without a
   assert.ok(h.ghost);assert.equal(h.calls.filter(row=>row.action==='session.suggestion.request').length,count);
  }finally{await h.close()}
 });
+test('pending setup read is loading, and only its refused/failed receipt means unavailable without a read loop',async()=>{
+ const originals={window:globalThis.window,document:globalThis.document};
+ globalThis.window=new EventTarget();globalThis.document=Object.assign(new EventTarget(),{hidden:false,hasFocus:()=>true});
+ const state={settings:{suggestedMessages:true},client:{hostInstanceId:crypto.randomUUID(),historyScope:'principal'},selectedSessionId:'s',view:{},sessions:[{id:'s',status:'idle',messages:[{id:'a',role:'assistant',text:'Done'}]}]};
+ let release,root,suggestion;const calls=[];
+ const act=async(action,args)=>{calls.push({action,args});return new Promise(resolve=>{release=resolve})};
+ function Probe(){suggestion=useTranscriptSuggestion({state,suggestionsSupported:true,readState:()=>state,act,blocked:false,canUse:()=>true});return null}
+ const render=()=>renderAct(async()=>{if(root)root.update(React.createElement(Probe));else root=create(React.createElement(Probe))});
+ try{
+  await render();assert.equal(suggestion.disposition.status,'setup_loading');assert.equal(calls.length,1);
+  await render();assert.equal(suggestion.disposition.status,'setup_loading');assert.equal(calls.length,1);
+  await renderAct(async()=>release({accepted:false}));assert.equal(suggestion.disposition.status,'setup_unavailable');
+  await render();assert.equal(calls.length,1);assert.equal(suggestion.ghost,null);
+ }finally{await renderAct(async()=>root?.unmount());Object.assign(globalThis,originals)}
+});
