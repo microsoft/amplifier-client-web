@@ -75,7 +75,7 @@ function harness(options={}){
  let scrollTop=options.scrollTop??0;
  Object.defineProperties(pane,{
   scrollTop:{get(){scrollTop=Math.min(Math.max(0,scrollTop),Math.max(0,geometry.scrollHeight-geometry.clientHeight));return scrollTop},
-   set(value){effects.scrollWrites++;scrollTop=Math.min(Math.max(0,Number(value)||0),Math.max(0,geometry.scrollHeight-geometry.clientHeight))}},
+   set(value){effects.scrollWrites++;const target=Number(value)||0;scrollTop=Math.min(Math.max(0,options.quantize?options.quantize(target):target),Math.max(0,geometry.scrollHeight-geometry.clientHeight))}},
   scrollHeight:{get(){return geometry.scrollHeight},set(value){geometry.scrollHeight=value}},
   clientHeight:{get(){return geometry.clientHeight},set(value){geometry.clientHeight=value}},
   offsetWidth:{get(){return geometry.offsetWidth},set(value){geometry.offsetWidth=value}},
@@ -95,7 +95,7 @@ function harness(options={}){
  });
  for(const row of rows){row.pane=pane;row.children=[];append(pane,row)}
  const following=options.following||{current:true};
- const controller=createChatScroll(pane,following,value=>away.push(value),{loadAnchor:options.loadAnchor});
+ const controller=createChatScroll(pane,following,value=>away.push(value),{loadAnchor:options.loadAnchor,readingReference:options.readingReference});
  return {pane,rows,geometry,following,controller,away,resizeObservers,mutationObservers,frames,view,document,storage,timers,effects,datasetWrites,
   settle(){controller.settleLayout()},
   flushFrames(){for(const [id,callback] of [...frames])if(frames.delete(id))callback()},
@@ -109,6 +109,143 @@ function message(id,contentTop,height=80,inputId){
   bottom:row.contentTop+row.height-row.pane.scrollTop});
  return row;
 }
+
+test('native rounding does not accumulate or replace the saved reading offset',()=>{
+ const row=message('reading',1800,1000),h=harness({messages:[row],scrollHeight:11000,quantize:Math.round});
+ h.controller.select('alpha');h.settle();h.scrollTo(1850);
+ for(const top of [1699.625,1599.25,1499]){
+  row.contentTop=top;h.controller.update();h.settle();
+  assert.equal(h.pane.scrollTop,Math.round(top+50));
+  // Our native scroll event and another layout report must not adopt rounding.
+  h.pane.dispatchEvent(new Event('scroll'));h.settle();
+  h.view.dispatchEvent(new Event('pagehide'));
+  assert.equal(JSON.parse(h.storage.get('amplifier.chat-reading.v1')).alpha.offset,-50);
+ }
+ assert.equal(row.getBoundingClientRect().top,-50,'The integral final displacement restores exactly');
+ h.controller.dispose();
+});
+
+test('quantized reading goal survives a bounded-window return',()=>{
+ const row=message('reading',100.578125,1000),h=harness({messages:[row],scrollHeight:2000,quantize:Math.round});
+ h.controller.select('alpha');h.settle();h.scrollTo(101);
+ row.contentTop+=100.71875;h.settle();
+ assert.equal(row.getBoundingClientRect().top,-0.703125);
+ h.controller.select('other',false);
+ assert.equal(JSON.parse(h.storage.get('amplifier.chat-reading.v1')).alpha.offset,-0.421875);
+ row.contentTop=80.859375;h.controller.select('alpha');h.settle();
+ assert.equal(h.pane.scrollTop,81);
+ assert.equal(row.getBoundingClientRect().top,-0.140625);
+ h.controller.dispose();
+ assert.equal(JSON.parse(h.storage.get('amplifier.chat-reading.v1')).alpha.offset,-0.421875);
+});
+
+test('new reading intent supersedes a native-rounding residual',()=>{
+ for(const intent of ['wheel','touchmove','keydown','external-scroll']){
+  const row=message('reading',100,1000),h=harness({messages:[row],scrollHeight:2000,quantize:Math.round});
+  h.controller.select('alpha');h.settle();h.scrollTo(150);
+  row.contentTop=99.625;h.settle();
+  const event=new Event(intent==='external-scroll'?'scroll':intent);
+  if(intent==='wheel')Object.defineProperty(event,'deltaY',{value:-1});
+  if(intent==='keydown'){
+   Object.defineProperty(event,'key',{value:'ArrowDown'});
+   h.pane.closest=()=>null;
+  }
+  if(intent==='external-scroll')h.pane.scrollTop=160;
+  h.pane.dispatchEvent(event);
+  const chosen=row.getBoundingClientRect().top;
+  row.contentTop+=1;h.settle();
+  assert.equal(row.getBoundingClientRect().top,chosen,intent+': newer reading choice wins');
+  h.controller.dispose();
+ }
+});
+
+test('history layout compensation owns its native scroll event and preserved source reference',()=>{
+ const reference={kind:'transcript-window',restoreCursor:'original-window'};
+ const row=message('reading',100.578125,1000),h=harness({messages:[row],scrollHeight:3000,
+  quantize:Math.round,readingReference:()=>reference});
+ h.controller.select('alpha');h.settle();h.scrollTo(101);
+ for(const shift of [100.71875,99.28125]){
+  const token=h.controller.captureLayout();
+  row.contentTop+=shift;
+  assert.equal(h.controller.restoreLayout(token),true);
+  h.pane.dispatchEvent(new Event('scroll'));h.settle();
+  h.view.dispatchEvent(new Event('pagehide'));
+  const saved=JSON.parse(h.storage.get('amplifier.chat-reading.v1')).alpha;
+  assert.equal(saved.offset,-0.421875);assert.deepEqual(saved.reference,reference);
+  assert.equal(h.controller.restoreLayout(token),false,'Consumed handoff cannot run twice');
+ }
+ assert.equal(row.getBoundingClientRect().top,-0.421875,'An integral combined prepend returns exactly');
+ h.controller.dispose();
+});
+
+test('history capture takes a fresh reading snapshot without discarding a retained rounding goal',()=>{
+ const row=message('reading',100,1000),h=harness({messages:[row],scrollHeight:3000,quantize:Math.round});
+ h.controller.select('alpha');h.settle();h.scrollTo(150);
+ // Capture is immediately before DOM replacement, not a stale earlier callback.
+ h.pane.scrollTop=170;
+ const token=h.controller.captureLayout();
+ row.contentTop+=100.25;h.controller.restoreLayout(token);
+ h.pane.dispatchEvent(new Event('scroll'));
+ const next=h.controller.captureLayout();
+ row.contentTop+=100.75;h.controller.restoreLayout(next);
+ assert.equal(row.getBoundingClientRect().top,-70);
+ h.controller.dispose();
+});
+
+test('history capture respects a newer external move before its native event',()=>{
+ const row=message('reading',100,1000),h=harness({messages:[row],scrollHeight:3000,quantize:Math.round});
+ h.controller.select('alpha');h.settle();h.scrollTo(150);
+ row.contentTop=99.625;h.settle(); // Retains the original -50 goal.
+ h.pane.scrollTop=170; // Native event has not arrived yet.
+ const token=h.controller.captureLayout();
+ row.contentTop+=100;
+ assert.equal(h.controller.restoreLayout(token),true);
+ assert.equal(h.pane.scrollTop,270);
+ assert.equal(row.getBoundingClientRect().top,-70.375,'The new reading choice wins over the old residual');
+ h.pane.dispatchEvent(new Event('scroll'));h.settle();
+ assert.equal(h.pane.scrollTop,270);
+ h.controller.dispose();
+});
+
+test('history restoration refuses a newer external move after capture before its native event',()=>{
+ const row=message('reading',100,1000),h=harness({messages:[row],scrollHeight:3000,quantize:Math.round});
+ h.controller.select('alpha');h.settle();h.scrollTo(150);
+ row.contentTop=99.625;h.settle();
+ const token=h.controller.captureLayout();
+ row.contentTop+=100;h.pane.scrollTop=270; // Focus move, native event still pending.
+ assert.equal(h.controller.restoreLayout(token),false);
+ assert.equal(h.pane.scrollTop,270);
+ assert.equal(row.getBoundingClientRect().top,-70.375);
+ h.pane.dispatchEvent(new Event('scroll'));h.settle();
+ assert.equal(h.pane.scrollTop,270);
+ h.controller.dispose();
+});
+
+test('new user intent and lifecycle boundaries reject a pending history-layout handoff',()=>{
+ for(const kind of ['wheel','touch','key','external-scroll','session','unready','submit','jump','latest','call','new-capture','removed','hidden','disposed']){
+  const row=message('reading',100,1000,'input'),h=harness({messages:[row],scrollHeight:3000,quantize:Math.round});
+  h.controller.select('alpha');h.settle();h.scrollTo(150);
+  const token=h.controller.captureLayout();
+  if(kind==='wheel'){const e=new Event('wheel');Object.defineProperty(e,'deltaY',{value:1});h.pane.dispatchEvent(e)}
+  if(kind==='touch')h.pane.dispatchEvent(new Event('touchmove'));
+  if(kind==='key'){const e=new Event('keydown');Object.defineProperty(e,'key',{value:'ArrowDown'});h.pane.closest=()=>null;h.pane.dispatchEvent(e)}
+  if(kind==='external-scroll')h.scrollTo(180);
+  if(kind==='session')h.controller.select('beta');
+  if(kind==='unready')h.controller.select('alpha',false);
+  if(kind==='submit')h.controller.submitted('input');
+  if(kind==='jump'){row.focus=()=>{};h.controller.jump('reading')}
+  if(kind==='latest')h.controller.reveal();
+  if(kind==='call')h.controller.setCall('new-call','alpha');
+  if(kind==='new-capture')h.controller.captureLayout();
+  if(kind==='removed')h.rows.length=0;
+  if(kind==='hidden')row.closest=selector=>selector==='[hidden]'?{}:null;
+  if(kind==='disposed')h.controller.dispose();
+  row.contentTop+=100.25;const before=h.pane.scrollTop;
+  assert.equal(h.controller.restoreLayout(token),false,kind);
+  assert.equal(h.pane.scrollTop,before,kind+': stale handoff does not move the pane');
+  if(kind!=='disposed')h.controller.dispose();
+ }
+});
 
 test('reports the existing 8px, 80px and one-pixel overflow boundaries',()=>{
  const h=harness();
