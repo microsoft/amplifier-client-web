@@ -204,6 +204,14 @@ test('saved target and dirty payload survive cross-client committed-theme prop r
   assert.equal(input(renderer.root,'theme-name').props.value,'My edited Ocean');
   assert.equal(input(renderer.root,'theme-css').props.value,'#amp-one{color:purple}');
   assert.equal(input(renderer.root,'theme-description').props.value,'My local description');
+  for(const [id,label] of [['theme-name','Appearance name'],['theme-description','Description'],['theme-css','Reference CSS delta']]){
+   assert.equal(input(renderer.root,id).props['data-private'],'true');
+   assert.equal(input(renderer.root,id).props['data-view-label'],label);
+  }
+  for(const label of ['Save as copy','Update saved appearance','Preview draft','Revert editor changes']){
+   const control=button(renderer.root,label);assert.ok(control&&!control.props.disabled);
+   assert.notEqual(control.props['data-private'],'true','Public actions remain observable');
+  }
   const privateDraft=JSON.parse(saved.getItem(testEditorKey));
   assert.equal(privateDraft.version,3);
   assert.equal(privateDraft.draft.name,'My edited Ocean');
