@@ -13,6 +13,7 @@ try{
  for(const spec of [
   {id:'J9-shaped',prefix:[1308.421875,1191.09375,16654.4375],anchorHeight:1323.421875,heldTop:20227,removals:2,expectedIntegerTotal:false},
   {id:'integer-total',prefix:[100.375,100.375,100.25,1499],anchorHeight:1000,heldTop:1850,removals:3,expectedIntegerTotal:true},
+  {id:'integer-total-owned-layout',prefix:[100.375,100.375,100.25,1499],anchorHeight:1000,heldTop:1850,removals:3,expectedIntegerTotal:true,ownedLayout:true},
  ]){
   const page=await browser.newPage({viewport:{width:1280,height:950},deviceScaleFactor:1});
   page.on('pageerror',error=>evidence.pageErrors.push(error.message));
@@ -61,10 +62,14 @@ try{
    }
    for(let index=0;index<spec.removals;index++){
     phase='eviction-'+index;
+    const layout=spec.ownedLayout?controller.captureLayout():null;
     const row=pane.querySelector('[data-message-id="prefix-'+index+'"]');
     const removed={id:row.dataset.messageId,height:row.getBoundingClientRect().height};
     row.remove();const next=document.createElement('section');next.style.height='100px';pane.append(next);
-    const afterMutation=geometry();controller.settleLayout();const synchronous=geometry();
+    const afterMutation=geometry();
+    if(spec.ownedLayout){if(controller.restoreLayout(layout)!==true)throw Error('Current layout handoff refused')}
+    else controller.settleLayout();
+    const synchronous=geometry();
     await paint();await new Promise(resolve=>setTimeout(resolve,30));
     steps.push({removed,afterMutation,synchronous,settled:geometry()});
    }
@@ -93,11 +98,12 @@ try{
   assert.equal(result.dropped,0);assert.equal(result.held.id,result.final.id);assert.equal(result.following,false);
   assert.equal(result.devicePixelRatio,1);assert.equal(result.zoom,'1');
  }
- const integral=evidence.cases.find(row=>row.spec.expectedIntegerTotal);
- assert.equal(integral.held.contentTop,1800);assert.equal(integral.held.offset,-50);
- assert.equal(integral.totalRemoved,301,'The cumulative displacement must be exactly integral');
- assert.equal(integral.exactTargetAttainable,true,'Original final reading offset must be physically attainable for the exact regression');
- assert.equal(integral.final.offset,integral.held.offset,'Programmatic restoration must not accumulate rounding into a new reading goal');
+ for(const integral of evidence.cases.filter(row=>row.spec.expectedIntegerTotal)){
+  assert.equal(integral.held.contentTop,1800);assert.equal(integral.held.offset,-50);
+  assert.equal(integral.totalRemoved,301,'The cumulative displacement must be exactly integral');
+  assert.equal(integral.exactTargetAttainable,true,'Original final reading offset must be physically attainable for the exact regression');
+  assert.equal(integral.final.offset,integral.held.offset,'Programmatic restoration must not accumulate rounding into a new reading goal');
+ }
  assert.deepEqual(evidence.pageErrors,[]);evidence.passed=true;
  console.log('PASS: integral cumulative eviction preserves exact reading goal; separate native-grid evidence retained.');
 }catch(error){failure=error;evidence.failure=String(error.stack||error);throw error}
