@@ -34,6 +34,8 @@ try{
    if(!native?.get||!native?.set)throw Error('Native scrollTop getter/setter unavailable');
    const geometry=()=>{const p=pane.getBoundingClientRect(),a=anchor.getBoundingClientRect(),top=native.get.call(pane);
     return {id:anchor.dataset.messageId,offset:a.top-p.top,contentTop:top+a.top-p.top,scrollTop:top,anchorHeight:a.height,paneTop:p.top,
+     firstVisible:[...pane.querySelectorAll('[data-message-id]')].find(row=>row.getBoundingClientRect().bottom>p.top)?.dataset.messageId,
+     anchorVisible:a.bottom>p.top&&a.top<p.top+pane.clientHeight,
      max:pane.scrollHeight-pane.clientHeight,rows:[...pane.querySelectorAll('[data-message-id]')].map(row=>row.dataset.messageId)};};
    const setters=[],scrolls=[],steps=[];let phase='initial',dropped=0;
    Object.defineProperty(pane,'scrollTop',{configurable:true,get(){return native.get.call(this)},set(target){
@@ -42,10 +44,21 @@ try{
    }});
    pane.addEventListener('scroll',()=>{if(scrolls.length<120)scrolls.push({phase,...geometry()});else dropped++});
    const following={current:true},controller=createChatScroll(pane,following);controller.select(spec.id);controller.setCall('synthetic-call',spec.id);
-   await paint();
+   await paint();await new Promise(resolve=>setTimeout(resolve,50));
+   // Initial observer callbacks must finish before the deliberate reading move.
+   // Observe a native scroll event after the controller's own handler, not an
+   // invented dispatch or a loop which repeatedly forces the desired position.
+   const nativeReading=new Promise((resolve,reject)=>{
+    const timeout=setTimeout(()=>{pane.removeEventListener('scroll',read);reject(Error('No native scrollback event'))},2000);
+    const read=()=>{clearTimeout(timeout);resolve(geometry())};pane.addEventListener('scroll',read,{once:true});
+   });
    phase='explicit-scrollback';pane.dispatchEvent(new WheelEvent('wheel',{deltaY:-100}));pane.scrollTop=spec.heldTop;
+   const readingEvent=await nativeReading;
    await paint();await new Promise(resolve=>setTimeout(resolve,30));
    const held=geometry();
+   if(held.scrollTop!==spec.heldTop||held.firstVisible!=='anchor'||!held.anchorVisible){
+    controller.dispose();return {spec,held,readingEvent,setters,scrolls,setupFailure:'The intended visible reading anchor was not established'};
+   }
    for(let index=0;index<spec.removals;index++){
     phase='eviction-'+index;
     const row=pane.querySelector('[data-message-id="prefix-'+index+'"]');
@@ -65,7 +78,7 @@ try{
    }
    const persisted=JSON.parse(storage.get('amplifier.chat-reading.v1')||'{}')[spec.id];
    controller.dispose();delete pane.scrollTop;
-   return {spec,held,steps,final,wanted,gridSamples,setters,scrolls,dropped,persisted,following:following.current,
+   return {spec,held,readingEvent,steps,final,wanted,gridSamples,setters,scrolls,dropped,persisted,following:following.current,
     devicePixelRatio,zoom:getComputedStyle(pane).zoom,fonts:document.fonts.status,
     totalRemoved:steps.reduce((sum,row)=>sum+row.removed.height,0),delta:final.offset-held.offset,
     exactTargetAttainable:gridSamples.some(row=>row.settled===wanted)};
@@ -74,11 +87,15 @@ try{
  }
  await writeFile(out+'/evidence.json',JSON.stringify(evidence,null,2)+'\n');
  for(const result of evidence.cases){
+  assert.equal(result.setupFailure,undefined,JSON.stringify(result));
+  assert.equal(result.held.scrollTop,result.spec.heldTop);
+  assert.equal(result.held.firstVisible,'anchor');assert.equal(result.held.anchorVisible,true);
   assert.equal(result.dropped,0);assert.equal(result.held.id,result.final.id);assert.equal(result.following,false);
   assert.equal(result.devicePixelRatio,1);assert.equal(result.zoom,'1');
  }
  const integral=evidence.cases.find(row=>row.spec.expectedIntegerTotal);
- assert.equal(Number.isInteger(integral.totalRemoved),true,'The cumulative displacement must be exactly integral');
+ assert.equal(integral.held.contentTop,1800);assert.equal(integral.held.offset,-50);
+ assert.equal(integral.totalRemoved,301,'The cumulative displacement must be exactly integral');
  assert.equal(integral.exactTargetAttainable,true,'Original final reading offset must be physically attainable for the exact regression');
  assert.equal(integral.final.offset,integral.held.offset,'Programmatic restoration must not accumulate rounding into a new reading goal');
  assert.deepEqual(evidence.pageErrors,[]);evidence.passed=true;
