@@ -66,7 +66,9 @@ try{
  await expect(plan().getByText('In progress',{exact:true})).toBeVisible();
  const composer=page.getByRole('textbox',{name:'Message Amplifier',exact:true});await composer.fill('Private retained composer draft');
  const handle=await composer.elementHandle();const before=await plan().innerText();
- await setPlan(report('Reported list'),{status:'failed'});await expect(plan()).toHaveText(before);
+ await setPlan(report('Reported list'),{status:'failed'});
+ await page.waitForFunction(()=>window.amplifier.getState().sessions.find(row=>row.id==='chat')?.status==='failed');
+ await expect(plan()).toHaveText(before,{useInnerText:true});
  await expect(plan()).not.toContainText('Failed');await expect(plan()).not.toContainText('Runtime claim');
  checkpoints.push('Reported statuses and collapsed summary do not infer execution state');
  // Only the explicit older-page action reads history. It must not freeze the
@@ -101,10 +103,16 @@ try{
  checkpoints.push('Narrow layout retains Plan within the viewport');
  assert.deepEqual(errors,[]);assert.deepEqual(routeErrors,[]);assert.equal(reads.length,1);
  assert.ok(calls.every(row=>['theme.list','view.update','shell.report'].includes(row.action)));
- console.log('PASS: last-reported Plan, explicit statuses, updates, history, child isolation, clear, reopen, draft and narrow placement.');
 }catch(error){failure=error;throw error}
 finally{
  closing=true;releaseHistory?.();
  const finalText=page&&!page.isClosed()?(await page.locator('body').innerText().catch(()=>'' )).slice(0,7000):'';
- try{await browser?.close()}finally{await vite?.close();await mkdir(out,{recursive:true});await writeFile(out+'/report.json',JSON.stringify({passed:!failure,checkpoints,calls,reads,errors,routeErrors,finalText,failure:failure?String(failure.stack||failure):null},null,2)+'\n')}
+ const cleanupErrors=[];
+ for(const [name,close] of [['browser',()=>browser?.close()],['vite',()=>vite?.close()]]){
+  try{await close()}catch(error){cleanupErrors.push({name,error:String(error.stack||error)})}
+ }
+ await mkdir(out,{recursive:true});
+ await writeFile(out+'/report.json',JSON.stringify({passed:!failure&&!cleanupErrors.length,assertionsPassed:!failure,cleanupErrors,checkpoints,calls,reads,errors,routeErrors,finalText,failure:failure?String(failure.stack||failure):null},null,2)+'\n');
+ if(cleanupErrors.length){if(failure)console.error(cleanupErrors);else throw Error('Fixture cleanup failed: '+JSON.stringify(cleanupErrors))}
 }
+console.log('PASS: last-reported Plan, explicit statuses, updates, history, child isolation, clear, reopen, draft and narrow placement.');
