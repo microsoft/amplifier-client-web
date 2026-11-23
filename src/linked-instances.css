@@ -1,0 +1,28 @@
+.a-link-code-entry { display:grid; gap:.5rem; min-width:0; }
+.a-link-code-entry > p { margin:0; }
+.a-link-code-controls { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem; }
+.a-link-code-frame { position:relative; flex:0 1 20rem; min-width:0; }
+.a-link-code-cells, .a-link-code-group { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.6rem; }
+.a-link-code-group { grid-template-columns:repeat(4,minmax(0,1fr)); gap:.18rem; }
+.a-link-code-cells span {
+ display:grid; min-width:0; min-height:2.75rem; place-items:center; box-sizing:border-box;
+ border:1px solid currentColor; border-radius:.35rem; font-family:ui-monospace,monospace; font-size:1.0625rem;
+}
+.a-link-code-frame:focus-within .a-link-code-cells [data-selected] { outline:2px solid currentColor; outline-offset:-3px; }
+.a-approachable-shell .a-link-code-frame input, .a-link-code-frame input {
+ position:absolute; inset:0; box-sizing:border-box; width:100%; height:100%; margin:0; padding:0;
+ border:0; background:transparent; opacity:0; cursor:text; font-size:16px;
+}
+.a-link-code-frame:focus-within { outline:2px solid currentColor; outline-offset:3px; border-radius:.35rem; }
+.a-link-code-frame:has(:disabled) { opacity:.55; }
+.a-linked-instances :is(.a-link-list,.a-link-offer,.a-link-join,.a-link-qr-reader) { display:grid; gap:.7rem; min-width:0; }
+.a-linked-instances :is(.a-link-offer,.a-link-join) { margin-block:.9rem; }
+.a-link-list { list-style:none; padding:0; }
+.a-link-list li { display:grid; gap:.5rem; padding:.7rem 0; border-block-end:1px solid var(--amp-border,#80808055); min-width:0; overflow-wrap:anywhere; }
+.a-link-list p,.a-link-offer p,.a-link-join p { margin:0; }
+.a-link-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; min-width:0; }
+.a-link-actions .a-link-invitation { flex:1 1 10rem; min-width:0; }
+.a-linked-instances :is(select,textarea,input[type=file]) { box-sizing:border-box; width:100%; min-width:0; }
+.a-linked-instances button { justify-self:start; }
+.a-link-qr-image { background:white; width:min(100%,16rem); image-rendering:pixelated; }
+.a-link-qr-reader video { width:min(100%,24rem); }

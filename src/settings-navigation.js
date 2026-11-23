@@ -3,6 +3,7 @@ export const chatSettingsPages={"conversation": "session-details", "runtime": "c
 export const settingsSections=[
  {id:'ai',title:'AI connections',scope:'Across workspaces on this Amplifier host',pages:[['ai-connections','AI connections'],['overview','AI connections']]},
  {id:'external-agents',title:'External agents',scope:'Connections on this Amplifier host',pages:[['external-agents','External agents']]},
+ {id:'linked-instances',title:'Linked instances',scope:'Connections between Amplifiers',pages:[['linked-instances','Linked instances']]},
  {id:'smart-tools',title:'Smart Tools',scope:'This Amplifier host',pages:[['smart-tools','Smart Tools']]},
  {id:'chat-input',title:'Chat & input',scope:'This browser on this host and account',pages:[['chat-input','Chat & input'],['suggestion-advanced','Suggested messages · Advanced settings']]},
  {id:'appearance',title:'Appearance',scope:'This interface',pages:[['appearance','Appearance']]},

@@ -1,6 +1,7 @@
 import {AccessMode} from './access-mode';
 import {ModelCapacitySettings} from './model-capacity-settings';
 import {ExternalAgentSettings} from './external-agent-settings';
+import {LinkedInstancesSettings} from './linked-instances-settings.jsx';
 import './external-agents.css';
 import {ConfigurationBoundary} from './configuration-scope';
 import {RegistrySettings} from './registry';
@@ -11,7 +12,7 @@ import {createPortal} from 'react-dom';
 import {SetupJourney,AssistedSettingsButton} from './setup-journey';
 import {ShellSlot,useShellContext} from './shell/runtime';
 import React,{useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react';
-import {SlidersHorizontal,Palette,AudioLines,Bell,Network,Layers,Plug,Download,Activity,Archive,Settings,ArrowLeft,X} from 'lucide-react';
+import {SlidersHorizontal,Palette,AudioLines,Bell,Network,Layers,Plug,Download,Activity,Archive,Settings,ArrowLeft,X,Link2} from 'lucide-react';
 import {settingsSections,settingsLocation,settingsUnread,settingsTitle,settingsParent} from './settings-navigation';
 import {AIConnections} from './ai-connections';
 import {PrivacySettings,AdvancedSettings} from './settings-everyday';
@@ -36,7 +37,7 @@ import {settingsTrail,settingsBaseNavigation,mergeSettingsNavigation} from './se
 import {SettingsDraftProvider,useSettingsDrafts} from './settings-drafts';
 import {InstanceBrandingSettings} from './instance-branding.jsx';
 
-const icons={ai:Network,'external-agents':Plug,privacy:Archive,workspaces:Layers,overview:SlidersHorizontal,appearance:Palette,voice:AudioLines,notifications:Bell,models:Network,bundles:Layers,'smart-tools':Plug,updates:Download,diagnostics:Activity,history:Archive,advanced:Settings};
+const icons={ai:Network,'external-agents':Plug,'linked-instances':Link2,privacy:Archive,workspaces:Layers,overview:SlidersHorizontal,appearance:Palette,voice:AudioLines,notifications:Bell,models:Network,bundles:Layers,'smart-tools':Plug,updates:Download,diagnostics:Activity,history:Archive,advanced:Settings};
 export function SettingsExperience({state,suggestionsSupported,session,act,dispatch,open,close=()=>act('view.update',{patch:{panel:null}}),navigationRef,appearance,instanceAccent}){
  useEffect(()=>{const legacy=state.view?.settingsExpanded?.find(page=>['conversation','runtime','outputs','publishing','loaded-modules','share-bundle','recall'].includes(page));if(legacy)act('view.update',{patch:{panel:'settings',settingsExpanded:[legacy]}})},[]);
  const shell=useShellContext();
@@ -100,6 +101,7 @@ export function SettingsExperience({state,suggestionsSupported,session,act,dispa
  else if(page==='suggestion-advanced')content=suggestionEditor(SuggestionAdvancedSettings);
  else if(page==='model-capacity')content=<ModelCapacitySettings act={dispatch||act} navigate={navigate}/>;
  else if(page==='external-agents')content=<ExternalAgentSettings act={dispatch||act} navigate={navigate}/>;
+ else if(page==='linked-instances')content=<LinkedInstancesSettings active={active===page&&!index} key={JSON.stringify([state.client?.hostInstanceId,state.client?.historyScope])}/>;
  else if(page==='advanced')content=<AdvancedSettings suggestionsSupported={suggestionsSupported} {...props} sections={sections} navigate={navigate}/>;
  else if(page==='appearance')content=<ShellSlot name="settings.appearance">{appearance}</ShellSlot>;
  else if(page==='instance-branding')content=<InstanceBrandingSettings {...props} act={dispatch||act} instanceAccent={instanceAccent}/>;
