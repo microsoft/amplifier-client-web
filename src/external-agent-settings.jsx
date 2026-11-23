@@ -9,7 +9,7 @@ function configuration(draft,saved){
  // Preserve exact launch arguments when editing only the name or directories.
  // A valid saved argument can itself contain a newline or be an empty string.
  const args=draft.arguments===saved?.arguments&&saved.args?saved.args:draft.arguments===''?[]:draft.arguments.split('\n').map(value=>value.replace(/\r$/,''));
- return {...(id?{id}:{}),label:label.trim(),command,args,...(cwd?{cwd}:{}),...(sessionCwd?{sessionCwd}:{})};
+ return {...(id?{id}:{}),label:label.trim(),command,args,...(cwd?{cwd}:{}),...(sessionCwd?{sessionCwd}:{}),...(sessionCwd&&draft.includeChatWorkspace?{includeChatWorkspace:true}:{})};
 }
 
 export function ExternalAgentSettings({act,navigate=()=>{}}){
@@ -64,6 +64,10 @@ export function ExternalAgentSettings({act,navigate=()=>{}}){
      <p className="a-caption">Leave blank to inherit the app’s launch directory.</p>
      <label htmlFor="external-agent-session-cwd">Agent workspace (optional)</label><input id="external-agent-session-cwd" value={draft.sessionCwd} onChange={e=>change('sessionCwd',e.target.value)} autoComplete="off" spellCheck={false}/>
      <p className="a-caption">Leave the agent workspace blank to use this chat’s workspace. For a remote instance, it must exist on that instance.</p>
+     {draft.sessionCwd&&<>
+      <label><input type="checkbox" checked={!!draft.includeChatWorkspace} onChange={e=>change('includeChatWorkspace',e.target.checked)}/> Also use the selected project in new chats</label>
+      {draft.includeChatWorkspace&&<p className="a-caption">The project must be accessible at the same path on the agent.</p>}
+     </>}
     </details>
    </fieldset>
    {draft.id&&<p className="a-caption">Changing the command, arguments, or directories requires a new chat. Existing chats keep their original connection binding. Removing this connection keeps saved history.</p>}
