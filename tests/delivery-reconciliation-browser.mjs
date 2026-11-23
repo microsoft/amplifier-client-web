@@ -208,7 +208,8 @@ try{
  await page.evaluate(value=>window.fixtureTransport.reconnect(value),wireState());
  const first=await readFor('chat','original');
  await expect(checking('original')).toBeDisabled();
- await expect(row('original').getByRole('button',{name:'Dismiss warning',exact:true})).toBeDisabled();
+ await expect(row('original').getByRole('button',{name:'Close delivery item',exact:true})).toBeEnabled();
+ await expect(row('original').getByRole('button',{name:'Dismiss warning',exact:true})).toHaveCount(0);
  for(let i=0;i<3;i++){state.sessions[0].title=`Pending read revision ${i}`;await emit();}
  assert.equal(recoveryCalls().length,1,'State updates must not poll');
  await screenshot('desktop-rechecking');
@@ -250,6 +251,9 @@ try{
  state.sessions[0].messages=[message('saved-only')];await emit();
  const saved=await readFor('chat','saved-only');
  assert.ok(!(await outbox()).some(entry=>entry.commandId==='saved-only'));
+ await expect(checking('saved-only')).toBeDisabled();
+ await expect(row('saved-only').getByRole('button',{name:'Dismiss warning',exact:true})).toBeDisabled();
+ await expect(row('saved-only').getByRole('button',{name:'Close delivery item',exact:true})).toHaveCount(0);
  await answer(saved,receipt(saved));
  await expect(warning('saved-only')).toHaveCount(0);
  await expect(row('saved-only').getByText('Synthetic saved request: saved-only',{exact:true})).toBeVisible();

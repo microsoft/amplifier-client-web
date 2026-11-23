@@ -74,7 +74,7 @@ try{
  await page.evaluate(value=>window.emitState(value),shell.state());
  await page.waitForFunction(()=>!document.querySelector('[data-activity-region="provider-models"][data-region-pending]'));
  assert.equal(await page.locator('#provider-model').evaluate(el=>el.tagName),'INPUT');
- assert.equal(await page.locator('#provider-model-options option[value="model-b"]').count(),1);
+ assert.equal(await page.locator('#provider-model-catalog option[value="model-b"]').count(),1);
  await page.locator('#provider-model').fill('custom-model-after-failure');await page.locator('#provider-id').click();
  await page.waitForFunction(()=>window.amplifier.getState().view.providerEditor.model==='custom-model-after-failure');
  await page.locator('#provider-id').fill('unsaved-name');

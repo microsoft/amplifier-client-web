@@ -14,7 +14,7 @@ let state={revision:1,settings:{workspace:'/fixture'},runtime:{available:true},
  view:{setupJourney:'done',workSurface:'chat',navPinned:true},sessions:[session],
  workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],
  selectedSessionId:session.id,selectedWorkspaceId:'project',canvas:{open:false}};
-const shell=createShellHttpFixture(()=>state),errors=[],evidence={checks:[],frames:[]};
+const shell=createShellHttpFixture(()=>state),errors=[],evidence={checks:[],frames:[],requests:[],actions:[],routeErrors:[]};
 const receipt={hostInstanceId:'fixture-shell-host',sessionId:session.id,generation:1,sourceCount:1,
  scope:'recent-events',windowKey:'fixture-work',historyComplete:false,itemCount:0,scannedBytes:0,scannedEvents:0};
 let server,browser,page,releaseEarlier,releaseSend,sendBody,earlierReads=0;
@@ -27,7 +27,10 @@ try{
  page.on('pageerror',error=>errors.push(error.message));
  await page.addInitScript(installFixtureEvents);
  await page.route('**/api/**',async route=>{
-  const path=new URL(route.request().url()).pathname,response=shell.response(route.request());
+  const path=new URL(route.request().url()).pathname;
+  evidence.requests.push({method:route.request().method(),path});
+  try{
+  const response=shell.response(route.request());
   if(response!==undefined)return route.fulfill({json:response});
   if(path==='/api/state')return route.fulfill({json:shell.state()});
   if(path==='/api/conversation/detail'){
@@ -41,12 +44,17 @@ try{
   if(path==='/api/outputs/media')return route.fulfill({json:{items:[],overflow:false,mediaRevision:0}});
   if(path==='/api/actions'&&route.request().method()==='GET')return route.fulfill({json:[]});
   if(path==='/api/actions'){
-   const envelope=route.request().postDataJSON(),body=envelope.action==='shell.command'?envelope.args:envelope;
+   const envelope=route.request().postDataJSON(),body=envelope.action==='shell.command'?(envelope.args.command||envelope.args):envelope;
+   evidence.actions.push(body);
    if(body.action==='conversation.send'){sendBody=body;await new Promise(resolve=>{releaseSend=resolve})}
    if(body.action==='view.update')state={...state,revision:state.revision+1,view:{...state.view,...body.args.patch}};
    return route.fulfill({json:{accepted:true,operationId:envelope.id,state:shell.state()}});
   }
   return route.fulfill({json:{ok:true}});
+  }catch(error){
+   evidence.routeErrors.push({path,error:String(error.stack||error)});
+   await route.abort('failed').catch(()=>{});
+  }
  });
  await page.goto(server.resolvedUrls.local[0]);
  await expect(page.getByText('Loading conversation…',{exact:true})).toBeVisible();
@@ -127,9 +135,21 @@ try{
  const sendReceipt=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/actions'&&response.request().postDataJSON()?.action==='conversation.send');
  releaseSend();await sendReceipt;
  evidence.checks.push('stream-only and unacknowledged local input stay readable without a loading row');
- assert.deepEqual(errors,[]);evidence.status='passed';
+ assert.deepEqual(errors,[]);assert.deepEqual(evidence.routeErrors,[]);evidence.status='passed';
  console.log(JSON.stringify({status:evidence.status,checks:evidence.checks,pageErrors:errors}));
-}catch(error){evidence.status='failed';evidence.error=error.message;throw error}
+}catch(error){
+ evidence.status='failed';evidence.error=error.message;
+ if(page&&!page.isClosed())evidence.failureState=await page.evaluate(()=>{
+  const state=window.amplifier?.getState?.(),session=state?.sessions?.find(row=>row.id===state.selectedSessionId);
+  return {body:document.body.innerText.slice(0,5000),fixture:window.fixtureEventState?.(),
+   mounted:!!document.querySelector('#amp-one'),selectedSessionId:state?.selectedSessionId,
+   pane:document.querySelector('[data-part=messages]')?.outerHTML.slice(0,3000),
+   session:session&&{id:session.id,historyLoading:session.historyLoading,historyLoaded:session.historyLoaded,
+    historyError:session.historyError,messageWindow:session.messageWindow,messageCount:session.messages?.length,
+    streaming:!!session.streaming,workProjection:session.workProjection}};
+ }).catch(error=>({inspectionError:String(error)}));
+ throw error;
+}
 finally{
  releaseEarlier?.();releaseSend?.();
  if(process.env.AMPLIFIER_TEST_ARTIFACTS){
