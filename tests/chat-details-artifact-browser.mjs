@@ -6,9 +6,8 @@ import {chromium,expect} from '@playwright/test';
 import {createShellHttpFixture} from './shell-http-fixture.mjs';
 import {readClientArtifact,startClientArtifactFixture} from './client-artifact-fixture.mjs';
 
-const artifact=await readClientArtifact(process.argv[2],process.argv[3]);
+const packageDirectory=process.argv[2],pairedRevision=process.argv[3];
 const expectedClient=process.argv[4];
-assert.match(expectedClient||'',/^[a-f0-9]{40}$/);assert.equal(artifact.manifest.source.revision,expectedClient);
 const out=process.env.AMPLIFIER_TEST_ARTIFACTS||'output/chat-details-artifact';
 const now=Date.now()/1000;
 const chat={id:'details-chat',title:'Activity example',sessionKind:'root',workspace:'/fixture',workspaceId:'project',
@@ -25,9 +24,12 @@ const shell=createShellHttpFixture(()=>state),streams=new Set(),calls=[],errors=
 const snapshot=()=>({...shell.state(),client:{...shell.state().client,build:{serverVersion:artifact.built.version,frontend:artifact.built}}});
 const emit=()=>{state.revision++;for(const stream of streams)stream.write('event: state\ndata: '+JSON.stringify(snapshot())+'\n\n')};
 const json=(response,value)=>{response.writeHead(200,{'Content-Type':'application/json'});response.end(JSON.stringify(value))};
-let browser,page,server,failure;
+const allowedCalls=()=>calls.every(row=>['theme.list','shell.report','view.update'].includes(row.action));
+let artifact,browser,page,server,failure;
 try{
  await mkdir(out,{recursive:true});
+ artifact=await readClientArtifact(packageDirectory,pairedRevision);
+ assert.match(expectedClient||'',/^[a-f0-9]{40}$/);assert.equal(artifact.manifest.source.revision,expectedClient);
  server=await startClientArtifactFixture(artifact,{errors,handleRequest:async(request,response)=>{
   const url=new URL(request.url,'http://fixture');
   if(url.pathname==='/api/events'){
@@ -55,6 +57,8 @@ try{
   }catch(error){errors.push(String(error.stack||error));response.writeHead(500);response.end('Synthetic fixture contract error');return true}
  }});
  browser=await chromium.launch({headless:true});page=await browser.newPage({viewport:{width:1440,height:1000}});
+ // Stabilize only display time; timers and the SSE lifecycle remain native.
+ await page.addInitScript(epoch=>{Date.now=()=>epoch},now*1000);
  page.on('pageerror',error=>errors.push(error.message));await page.goto(server.origin);
  const composer=page.getByRole('textbox',{name:'Message Amplifier',exact:true});await expect(composer).toBeVisible();
  assert.equal(await page.evaluate(()=>window.amplifier.getState().client.build.frontend.id),artifact.built.id);
@@ -86,14 +90,16 @@ try{
  await expect(page.locator('.a-chat-plan-composer')).toContainText('Reported in progress · Retained reported step');
  await expect(page.locator('[data-message-id="saved"]')).toBeVisible();
  await page.keyboard.press('Escape');await expect(details).toHaveCount(0);await expect(trigger).toBeFocused();
- assert.deepEqual(errors,[]);assert.ok(calls.every(row=>['theme.list','shell.report','view.update'].includes(row.action)));
+ assert.deepEqual(errors,[]);assert.ok(allowedCalls());
 }catch(error){failure=error;throw error}
 finally{
  for(const [name,close] of [['browser',()=>browser?.close()],['server',async()=>{for(const stream of streams)stream.end();await server?.close()}]]){
   try{await close()}catch(error){cleanupErrors.push({name,error:String(error.stack||error)})}
  }
- await mkdir(out,{recursive:true});await writeFile(out+'/report.json',JSON.stringify({passed:!failure&&!cleanupErrors.length,source:artifact.manifest.source,build:artifact.built,
-  lockedPairedServer:artifact.manifest.pairedServer,scope:'compiled client artifact with synthetic navigation activity; not host producer qualification',observations,calls,errors,cleanupErrors,failure:failure?String(failure.stack||failure):null},null,2)+'\n');
- if(cleanupErrors.length&&!failure)throw Error('Artifact fixture cleanup failed: '+JSON.stringify(cleanupErrors));
+ const passed=!failure&&!cleanupErrors.length&&!errors.length&&allowedCalls();
+ await mkdir(out,{recursive:true});await writeFile(out+'/report.json',JSON.stringify({passed,
+  requested:{packageDirectory,pairedRevision,expectedClient},source:artifact?.manifest.source,build:artifact?.built,
+  lockedPairedServer:artifact?.manifest.pairedServer,scope:'compiled client artifact with synthetic navigation activity; not host producer qualification',observations,calls,errors,cleanupErrors,failure:failure?String(failure.stack||failure):null},null,2)+'\n');
+ if(!passed&&!failure)throw Error('Artifact fixture finalization failed: '+JSON.stringify({errors,cleanupErrors,allowedCalls:allowedCalls()}));
 }
 console.log('PASS: compiled ChatDetails step timestamp and fallback labels preserve selection, sidebar order, Plan and draft.');
