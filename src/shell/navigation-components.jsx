@@ -157,7 +157,7 @@ export function ChatDetails({chat,model,now,close}){
  return <><div className="a-navigation-detail-heading"><MessageCircle/>Chat details</div><h3>{title}</h3>
   {chat.titlePreviewSource==='first-message'&&<p className="a-caption">Preview from the first message. Rename this chat to give it a permanent name.</p>}
   <div className="a-navigation-detail-status">{activity.waiting?.targets?.length?<DependencyWaitingContent activity={activity} act={act}/>:<><NavigationStatus activity={activity}/><strong>{activity.label}</strong></>}</div>
-  <dl><dt>Last activity</dt><dd>{relativeActivity(chat.recentActivityAt,now).long}</dd></dl>
+  <dl><dt>{activity.step?.label||(activity.kind==='working'?'Last conversation update':'Last activity')}</dt><dd>{relativeActivity(activity.step?.at??chat.recentActivityAt,now).long}</dd></dl>
   <CopyDetail label="Session ID" value={sessionIdentity(chat)}/>
   <dl><dt>Workspace</dt><dd>{managed?'No workspace':chat.workspaceName||chat.workspace?.split(/[\\/]/).filter(Boolean).at(-1)}</dd></dl>
   <CopyDetail label={managed?"Chat files":"Full workspace path"} value={chat.workspace||'Unavailable'}/>

@@ -659,3 +659,13 @@ test('inline automatic name reflects completed results and recoverable errors',a
  assert.equal(root.root.findByType('input').props.value,'New automatic name');
  await renderAct(async()=>root.unmount());
 });
+
+test('working chat details show the last observed step independently of sidebar order',async()=>{
+ const state=initial(),chat={...state.sessions[0],recentActivityAt:5};
+ state.navigationActivityById={[chat.id]:{kind:'working',label:'Working',step:{label:'Tool finished',at:595}}};
+ let root;
+ await renderAct(async()=>{root=create(React.createElement(ChatDetails,{chat,model:{state,draft:{}},now:600,close:()=>{}}))});
+ assert.match(JSON.stringify(root.toJSON()),/Tool finished/);
+ assert.match(JSON.stringify(root.toJSON()),/Just now/);
+ await renderAct(async()=>root.unmount());
+});
