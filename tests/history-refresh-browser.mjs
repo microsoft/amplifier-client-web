@@ -31,26 +31,26 @@ try{
   evidence.requests.push({method:route.request().method(),path});
   try{
   const response=shell.response(route.request());
-  if(response!==undefined)return route.fulfill({json:response});
-  if(path==='/api/state')return route.fulfill({json:shell.state()});
+  if(response!==undefined)return await route.fulfill({json:response});
+  if(path==='/api/state')return await route.fulfill({json:shell.state()});
   if(path==='/api/conversation/detail'){
    const query=new URL(route.request().url()).searchParams;
    assert.equal(query.get('sessionId'),session.id);assert.equal(query.get('part'),'messages');
    assert.equal(query.get('before'),'fixture-earlier');earlierReads++;
    await new Promise(resolve=>{releaseEarlier=resolve});
-   return route.fulfill({json:{items:[message('older-message','user','An earlier saved request.')],
-    mode:'cursor',before:null,hasEarlier:false,windowKey:'earlier-page'}}).catch(()=>{});
+   return await route.fulfill({json:{items:[message('older-message','user','An earlier saved request.')],
+    mode:'cursor',before:null,hasEarlier:false,windowKey:'earlier-page'}});
   }
-  if(path==='/api/outputs/media')return route.fulfill({json:{items:[],overflow:false,mediaRevision:0}});
-  if(path==='/api/actions'&&route.request().method()==='GET')return route.fulfill({json:[]});
+  if(path==='/api/outputs/media')return await route.fulfill({json:{items:[],overflow:false,mediaRevision:0}});
+  if(path==='/api/actions'&&route.request().method()==='GET')return await route.fulfill({json:[]});
   if(path==='/api/actions'){
    const envelope=route.request().postDataJSON(),body=envelope.action==='shell.command'?(envelope.args.command||envelope.args):envelope;
    evidence.actions.push(body);
    if(body.action==='conversation.send'){sendBody=body;await new Promise(resolve=>{releaseSend=resolve})}
    if(body.action==='view.update')state={...state,revision:state.revision+1,view:{...state.view,...body.args.patch}};
-   return route.fulfill({json:{accepted:true,operationId:envelope.id,state:shell.state()}});
+   return await route.fulfill({json:{accepted:true,operationId:envelope.id,state:shell.state()}});
   }
-  return route.fulfill({json:{ok:true}});
+  return await route.fulfill({json:{ok:true}});
   }catch(error){
    evidence.routeErrors.push({path,error:String(error.stack||error)});
    await route.abort('failed').catch(()=>{});
