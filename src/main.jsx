@@ -229,8 +229,7 @@ function App(){
   notifySnapshot.current(next);
   const previousSession=latest.current?.sessions?.find(s=>s.id===latest.current.selectedSessionId),nextSession=next.sessions?.find(s=>s.id===next.selectedSessionId);
   if(previousSession?.id===nextSession?.id&&Number(nextSession?.sharedHistoryOffset)<Number(previousSession?.sharedHistoryOffset)&&messagesPane.current){
-   const pane=messagesPane.current,top=pane.getBoundingClientRect().top,anchor=[...pane.querySelectorAll('[data-message-id]')].find(node=>node.getBoundingClientRect().bottom>top);
-   if(anchor){historyScrollAnchor.current={sessionId:nextSession.id,messageId:anchor.dataset.messageId,top:anchor.getBoundingClientRect().top};stickToBottom.current=false}
+   historyScrollAnchor.current=chatScroll.current?.captureLayout();stickToBottom.current=false;
   }
   serverState.current=next;conversationNavigation.current.remember(next);
   destinationHistory.current.observe(next,historyOptions);
@@ -745,7 +744,7 @@ function App(){
  },[state?.appearance?.namespace,state?.appearance?.generation,state?.appearance?.availability,state?.appearance?.composition?.id]);
  useEffect(()=>{const v=state?.view;if(!v)return;if(v.workerDraft!==undefined)setWorkerDraft(v.workerDraft);if(v.agentAction!==undefined)setAgentAction(v.agentAction);if(v.agentArgs!==undefined)setAgentArgs(v.agentArgs)},[state?.view?.workerDraft,state?.view?.agentAction,state?.view?.agentArgs]);
  const selectedSession=state?.sessions?.find(s=>s.id===state.selectedSessionId);
- const detail=useConversationDetail(selectedSession,()=>{stickToBottom.current=false;const pane=messagesPane.current;if(!pane)return;const top=pane.getBoundingClientRect().top,anchor=[...pane.querySelectorAll('[data-message-id]')].find(node=>node.getBoundingClientRect().bottom>top);if(anchor)historyScrollAnchor.current={sessionId:state.selectedSessionId,messageId:anchor.dataset.messageId,top:anchor.getBoundingClientRect().top}},dispatch);
+ const detail=useConversationDetail(selectedSession,()=>{stickToBottom.current=false;historyScrollAnchor.current=chatScroll.current?.captureLayout()},dispatch);
  useEffect(()=>{if(detail.jumpRequest){const frame=requestAnimationFrame(()=>detail.jumpRequest.id==='latest'?chatScroll.current?.reveal():chatScroll.current?.jump(detail.jumpRequest.id));return()=>cancelAnimationFrame(frame)}},[detail.jumpRequest]);
  const [preparation,setPreparation]=useState(null);
  const session=detail.session,view=state?.view||{},mode=view.mode||'chat',activity=sessionStatus(session),working=activity.busy;
@@ -836,7 +835,7 @@ function App(){
    return detail.earlier();
   });
  },[session?.id,session?.messageWindow,session?.sharedHistoryOffset,session?.historyLoading,detail.busy,act,shell.ready]);
- useLayoutEffect(()=>{const saved=historyScrollAnchor.current;if(!saved||!messagesPane.current)return;historyScrollAnchor.current=null;if(saved.sessionId!==session?.id)return;const pane=messagesPane.current,anchor=[...(pane?.querySelectorAll('[data-message-id]')||[])].find(node=>node.dataset.messageId===saved.messageId);if(anchor)pane.scrollTop+=anchor.getBoundingClientRect().top-saved.top},[session?.id,session?.sharedHistoryOffset,session?.messageWindow,session?.executionWindow,shell.ready]);
+ useLayoutEffect(()=>{const saved=historyScrollAnchor.current;historyScrollAnchor.current=null;if(saved)chatScroll.current?.restoreLayout(saved)},[session?.id,session?.sharedHistoryOffset,session?.messageWindow,session?.executionWindow,shell.ready]);
  // Initial Work and genuine retry notices occupy space above the transcript.
  // Preserve reading intent in the same commit when those notices change.
  useLayoutEffect(()=>{chatScroll.current?.settleLayout()},[session?.workProjection?.status,session?.id,shell.ready]);
