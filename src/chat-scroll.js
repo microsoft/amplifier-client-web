@@ -183,8 +183,12 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
   },
   restoreLayout(token){
    if(!token||token!==layoutPosition)return false;
+   if(disposed||!ready||token.sessionId!==sessionId||!visibleMessage(pane,token.position.messageId)){layoutPosition=null;return false}
+   // Focus/scrollbar movement may also occur between capture and React's
+   // commit. Its pending native event must not be masked by our compensation.
+   scroll();
+   if(token!==layoutPosition)return false;
    layoutPosition=null;
-   if(disposed||!ready||token.sessionId!==sessionId||!visibleMessage(pane,token.position.messageId))return false;
    view.cancelAnimationFrame(frame);frame=0;
    restorePosition(token.position);report();return true;
   },

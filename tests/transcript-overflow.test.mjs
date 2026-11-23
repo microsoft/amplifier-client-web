@@ -207,6 +207,20 @@ test('history capture respects a newer external move before its native event',()
  h.controller.dispose();
 });
 
+test('history restoration refuses a newer external move after capture before its native event',()=>{
+ const row=message('reading',100,1000),h=harness({messages:[row],scrollHeight:3000,quantize:Math.round});
+ h.controller.select('alpha');h.settle();h.scrollTo(150);
+ row.contentTop=99.625;h.settle();
+ const token=h.controller.captureLayout();
+ row.contentTop+=100;h.pane.scrollTop=270; // Focus move, native event still pending.
+ assert.equal(h.controller.restoreLayout(token),false);
+ assert.equal(h.pane.scrollTop,270);
+ assert.equal(row.getBoundingClientRect().top,-70.375);
+ h.pane.dispatchEvent(new Event('scroll'));h.settle();
+ assert.equal(h.pane.scrollTop,270);
+ h.controller.dispose();
+});
+
 test('new user intent and lifecycle boundaries reject a pending history-layout handoff',()=>{
  for(const kind of ['wheel','touch','key','external-scroll','session','unready','submit','jump','latest','call','new-capture','removed','hidden','disposed']){
   const row=message('reading',100,1000,'input'),h=harness({messages:[row],scrollHeight:3000,quantize:Math.round});
