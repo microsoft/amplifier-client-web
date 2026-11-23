@@ -75,7 +75,7 @@ function harness(options={}){
  let scrollTop=options.scrollTop??0;
  Object.defineProperties(pane,{
   scrollTop:{get(){scrollTop=Math.min(Math.max(0,scrollTop),Math.max(0,geometry.scrollHeight-geometry.clientHeight));return scrollTop},
-   set(value){effects.scrollWrites++;scrollTop=Math.min(Math.max(0,Number(value)||0),Math.max(0,geometry.scrollHeight-geometry.clientHeight))}},
+   set(value){effects.scrollWrites++;const target=Number(value)||0;scrollTop=Math.min(Math.max(0,options.quantize?options.quantize(target):target),Math.max(0,geometry.scrollHeight-geometry.clientHeight))}},
   scrollHeight:{get(){return geometry.scrollHeight},set(value){geometry.scrollHeight=value}},
   clientHeight:{get(){return geometry.clientHeight},set(value){geometry.clientHeight=value}},
   offsetWidth:{get(){return geometry.offsetWidth},set(value){geometry.offsetWidth=value}},
@@ -109,6 +109,55 @@ function message(id,contentTop,height=80,inputId){
   bottom:row.contentTop+row.height-row.pane.scrollTop});
  return row;
 }
+
+test('native rounding does not accumulate or replace the saved reading offset',()=>{
+ const row=message('reading',1800,1000),h=harness({messages:[row],scrollHeight:11000,quantize:Math.round});
+ h.controller.select('alpha');h.settle();h.scrollTo(1850);
+ for(const top of [1699.625,1599.25,1499]){
+  row.contentTop=top;h.controller.update();h.settle();
+  assert.equal(h.pane.scrollTop,Math.round(top+50));
+  // Our native scroll event and another layout report must not adopt rounding.
+  h.pane.dispatchEvent(new Event('scroll'));h.settle();
+  h.view.dispatchEvent(new Event('pagehide'));
+  assert.equal(JSON.parse(h.storage.get('amplifier.chat-reading.v1')).alpha.offset,-50);
+ }
+ assert.equal(row.getBoundingClientRect().top,-50,'The integral final displacement restores exactly');
+ h.controller.dispose();
+});
+
+test('quantized reading goal survives a bounded-window return',()=>{
+ const row=message('reading',100.578125,1000),h=harness({messages:[row],scrollHeight:2000,quantize:Math.round});
+ h.controller.select('alpha');h.settle();h.scrollTo(101);
+ row.contentTop+=100.71875;h.settle();
+ assert.equal(row.getBoundingClientRect().top,-0.703125);
+ h.controller.select('other',false);
+ assert.equal(JSON.parse(h.storage.get('amplifier.chat-reading.v1')).alpha.offset,-0.421875);
+ row.contentTop=80.859375;h.controller.select('alpha');h.settle();
+ assert.equal(h.pane.scrollTop,81);
+ assert.equal(row.getBoundingClientRect().top,-0.140625);
+ h.controller.dispose();
+ assert.equal(JSON.parse(h.storage.get('amplifier.chat-reading.v1')).alpha.offset,-0.421875);
+});
+
+test('new reading intent supersedes a native-rounding residual',()=>{
+ for(const intent of ['wheel','touchmove','keydown','external-scroll']){
+  const row=message('reading',100,1000),h=harness({messages:[row],scrollHeight:2000,quantize:Math.round});
+  h.controller.select('alpha');h.settle();h.scrollTo(150);
+  row.contentTop=99.625;h.settle();
+  const event=new Event(intent==='external-scroll'?'scroll':intent);
+  if(intent==='wheel')Object.defineProperty(event,'deltaY',{value:-1});
+  if(intent==='keydown'){
+   Object.defineProperty(event,'key',{value:'ArrowDown'});
+   h.pane.closest=()=>null;
+  }
+  if(intent==='external-scroll')h.pane.scrollTop=160;
+  h.pane.dispatchEvent(event);
+  const chosen=row.getBoundingClientRect().top;
+  row.contentTop+=1;h.settle();
+  assert.equal(row.getBoundingClientRect().top,chosen,intent+': newer reading choice wins');
+  h.controller.dispose();
+ }
+});
 
 test('reports the existing 8px, 80px and one-pixel overflow boundaries',()=>{
  const h=harness();

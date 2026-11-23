@@ -35,8 +35,8 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
  const positions=readingPositions(storage);
  let frame=0,disposed=false,sessionId=null,ready=false,restore=null,submitted=null,snapshot=null,saveTimer=0,initial=false,resuming=false;
  // Keep the desired reading offset separate from the actual geometry. A pane
- // can temporarily make it unreachable (for example, narrower top padding).
- // Reporting that clamped position must not turn it into a new reading choice.
+ // can make it unreachable through either clamping or native scroll rounding.
+ // Reporting the attained position must not turn a residual into a new choice.
  let constrainedPosition=null;
  // Ordinary fallback anchors can lie beyond the viewport when Work fills it.
  // Only a genuinely visible reading goal may outlive a clamped restoration.
@@ -88,7 +88,8 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
    const target=pane.scrollTop+box.top-pane.getBoundingClientRect().top-position.offset;
    const limit=Math.max(0,pane.scrollHeight-pane.clientHeight);
    pane.scrollTop=target;
-   if(!position.focus&&readingGoals.get(position)&&(target< -1&&pane.scrollTop<=1||target>limit+1&&Math.abs(pane.scrollTop-limit)<=1))constrainedPosition=position;
+   const quantized=target>=0&&target<=limit&&pane.scrollTop!==target;
+   if(!position.focus&&readingGoals.get(position)&&(quantized||target< -1&&pane.scrollTop<=1||target>limit+1&&Math.abs(pane.scrollTop-limit)<=1))constrainedPosition=position;
    if(position.focus){anchor.tabIndex=-1;anchor.focus({preventScroll:true})}
   }
   else pane.scrollTop=Math.min(position.top||0,pane.scrollHeight);
