@@ -508,9 +508,9 @@ export function AppearanceSettings({
    <summary>Advanced customization</summary>
    <p>Edit a Reference CSS delta and preview it locally. Drafts stay private to this browser tab. Save as copy adds an unselected library entry; updating an entry changes its appearance in profiles that select it.</p>
    {editing&&<p>Editing: <strong>{editing.name}</strong>. {editing.source==='saved'?'Updates preserve this library entry’s identity.':'Included appearances are read-only; save edits as a copy.'}</p>}
-   <label htmlFor="theme-name">Appearance name</label><input id="theme-name" maxLength={100} value={name||''} disabled={mutationBusy} onChange={event=>changeDraft({name:event.target.value})}/>
-   <label htmlFor="theme-description">Description</label><input id="theme-description" maxLength={240} value={description||''} disabled={mutationBusy} onChange={event=>changeDraft({description:event.target.value})}/>
-   <label htmlFor="theme-css">Reference CSS delta</label><textarea id="theme-css" spellCheck={false} className="a-css-editor" value={css||''} disabled={mutationBusy} onChange={event=>changeDraft({css:event.target.value})}/>
+   <label htmlFor="theme-name">Appearance name</label><input id="theme-name" data-private="true" data-view-label="Appearance name" maxLength={100} value={name||''} disabled={mutationBusy} onChange={event=>changeDraft({name:event.target.value})}/>
+   <label htmlFor="theme-description">Description</label><input id="theme-description" data-private="true" data-view-label="Description" maxLength={240} value={description||''} disabled={mutationBusy} onChange={event=>changeDraft({description:event.target.value})}/>
+   <label htmlFor="theme-css">Reference CSS delta</label><textarea id="theme-css" data-private="true" data-view-label="Reference CSS delta" spellCheck={false} className="a-css-editor" value={css||''} disabled={mutationBusy} onChange={event=>changeDraft({css:event.target.value})}/>
    {busyFor('save')&&<p role="status" aria-live="polite">Saving appearance…</p>}
    <div className="a-dialog-actions">
     <button type="button" className="a-primary" disabled={mutationBusy} data-action="theme.save" onClick={()=>void saveCopy()}><WorkingLabel active={busyFor('save')} working="Saving…">Save as copy</WorkingLabel></button>
