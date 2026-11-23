@@ -13,13 +13,17 @@ import './composer-test-helpers.mjs';
 const root=process.argv[2]&&resolve(process.argv[2]),expectedClient=process.argv[3];
 const expectedHost=process.argv[4],buildReceiptPath=process.argv[5];
 const out=process.env.AMPLIFIER_TEST_ARTIFACTS||'output/external-agent-project-settings';
-const report={scope:'rendered external-agent settings against real isolated host; no external process',checkpoints:[],actions:[],saves:[],reads:[]};
+const report={scope:'rendered external-agent settings against real isolated host; no external process',checkpoints:[],actions:[],appearanceReports:[],saves:[],reads:[]};
 const errors=[],cleanupErrors=[];
 let home,browser,page,stop,finishFixture,stopped=false,homeRemoved=false,failure,serverLog='',manifest;
-const allowed=new Set(['externalAgents.save','externalAgents.get','externalAgents.list','settings.open','view.update','shell.report','theme.list','appearance.preferences.read']);
+// Suggestion-model discovery reads the configured catalog, not model inference.
+// A fresh document also reports its own appearance storage/render state; allow
+// only ready reports without a preference-change command acknowledgement.
+const allowed=new Set(['externalAgents.save','externalAgents.get','externalAgents.list','settings.open','view.update','shell.report','theme.list','appearance.preferences.read','providers.suggestionModels','appearance.client.report']);
+const validAppearanceReports=()=>report.appearanceReports.every(row=>row.status==='ready'&&!row.commandAcknowledgement);
 const validActions=()=>report.actions.filter(action=>action==='externalAgents.save').length===2
  &&report.actions.filter(action=>action==='externalAgents.get').length===2
- &&report.actions.every(action=>allowed.has(action));
+ &&report.actions.every(action=>allowed.has(action))&&validAppearanceReports();
 const command=request=>{
  if(request.method()!=='POST'||new URL(request.url()).pathname!=='/api/actions')return null;
  const body=request.postDataJSON();return body?.action==='shell.command'?{...body,action:body.args.action,args:body.args.args}:body;
@@ -76,7 +80,13 @@ try{
  const base='http://127.0.0.1:'+meta.port,headers={Authorization:'Bearer last-plan-fixture-token'};
  browser=await chromium.launch({headless:true});page=await browser.newPage({viewport:{width:1400,height:1000},extraHTTPHeaders:headers});
  page.on('pageerror',error=>errors.push(error.message));
- page.on('request',request=>{const value=command(request);if(value)report.actions.push(value.action)});
+ page.on('request',request=>{
+  const value=command(request);if(!value)return;
+  report.actions.push(value.action);
+  if(value.action==='appearance.client.report')report.appearanceReports.push({
+   status:value.args?.status,commandAcknowledgement:Object.hasOwn(value.args||{},'commandId'),
+  });
+ });
  await page.goto(base);await showFixtureConversation(page);
  await expect(page.locator('.a-messages')).toHaveAttribute('aria-busy','false');await expect(page.locator('[data-message-id]')).toHaveCount(20);
  const snapshot=()=>page.evaluate(()=>{
@@ -142,6 +152,7 @@ try{
  assert.equal(report.actions.filter(action=>action==='externalAgents.save').length,2);
  assert.equal(report.actions.filter(action=>action==='externalAgents.get').length,2);
  assert.deepEqual(report.actions.filter(action=>!allowed.has(action)),[],'No external chat creation, send or runtime actions');
+ assert.ok(validAppearanceReports(),'Only document-ready appearance reports, not preference-change acknowledgements');
  assert.deepEqual(errors,[]);
 }catch(error){failure=error;throw error}
 finally{
