@@ -5,6 +5,7 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import {createShellHttpFixture,installFixtureEvents} from './shell-http-fixture.mjs';
 import {readClientArtifact,startClientArtifactFixture} from './client-artifact-fixture.mjs';
+import {shellScope,sameScope} from '../src/shell/resources.js';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const output=process.env.AMPLIFIER_TEST_ARTIFACTS||'/tmp/transcript-suggestion-boot';
@@ -34,6 +35,7 @@ const sourceFor=id=>JSON.stringify(['b'.repeat(64),suggestionConfig.revision,id,
 const heldSelections=[];
 const selectChat=id=>{state.selectedSessionId=id;const row=state.sessions.find(row=>row.id===id);state.view={...state.view,panel:null,workSurface:'chat',draft:row?.draft||'',draftDocument:null};state.revision++};
 const report={scope:'actual production App with maintained synthetic HTTP/shell/event adapters; no installed host, provider or physical focus acceptance'};
+report.shellScopeConflicts=[];
 if(artifact)report.artifact={source:artifact.manifest.source,pairedServer:artifact.manifest.pairedServer,build:artifact.built,assetsVerified:true};
 await mkdir(output,{recursive:true});
 try{
@@ -56,6 +58,16 @@ try{
   if(url.pathname==='/api/clients/attach'){
    if(!attached){heldAttach=route;attached=true;return}
    return route.fulfill({json:ownerShell.response(route.request())});
+  }
+  if(['/api/shell','/api/shell/resources'].includes(url.pathname)){
+   const demand=url.pathname==='/api/shell/resources'?route.request().postDataJSON():{clientId:url.searchParams.get('clientId'),demandId:Number(url.searchParams.get('demandId')),resources:JSON.parse(url.searchParams.get('navigationResources')),scope:JSON.parse(url.searchParams.get('scope'))};
+   // A valid old demand can arrive after synthetic selection/reconnect changes
+   // the server scope. Production shell_resources.py rejects this with 409;
+   // it must not crash Node outside this journey's finally/cleanup boundary.
+   if(demand.clientId===ownerShell.state().client.id&&Number.isSafeInteger(demand.demandId)&&demand.demandId>0&&Array.isArray(demand.resources)&&Array.isArray(demand.scope)&&demand.scope.length===5&&!sameScope(demand.scope,shellScope(state))){
+    if(report.shellScopeConflicts.length<16)report.shellScopeConflicts.push({demandId:demand.demandId,requested:demand.scope,current:shellScope(state)});
+    return route.fulfill({status:409,json:{error:'Shell scope changed; request the current client scope.'}});
+   }
   }
   const result=ownerShell.response(route.request());if(result!==undefined)return route.fulfill({json:result});
   if(url.pathname==='/api/state')return route.fulfill({json:snapshot(owner)});
