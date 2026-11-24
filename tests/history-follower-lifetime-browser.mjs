@@ -39,6 +39,14 @@ function installListenerLedger(){
   return result;
  };
  window.historyFollowerIds=pane=>[...(panes.get(pane)?.values()||[])].filter(entry=>inputTypes.every(type=>entry.types.has(type))).map(entry=>entry.id);
+ window.historyCommitWitness=()=>({
+  acceptedRevision:window.amplifier?.getState?.().revision,
+  // Unlike getState's live ref, getShellState is published by the App's effect.
+  committedViewRevisions:Object.values(window.amplifier?.getShellState?.()?.snapshots||{}).map(row=>row.viewRevision),
+  sessionId:document.querySelector('.a-messages')?.dataset.sessionId,
+  composerText:document.querySelector('[aria-label="Message Amplifier"]')?.textContent||'',
+  stopRendered:!!document.querySelector('button[data-action="conversation.stop"]'),
+ });
  window.historyDetailFetches=[];
  const fetch=window.fetch;
  window.fetch=function(input,options){
@@ -73,7 +81,7 @@ try{
  for(const kind of ['no-op','draft','status','chat-change','window-change']){
   const result={kind,checkpoints:[],reads:[],actions:[]};report.cases.push(result);
   const context=await browser.newContext({viewport:{width:1280,height:950}});
-  const page=await context.newPage();const held=[];
+  const page=await context.newPage();const held=[];let closing=false;
   let state={revision:1,settings:{workspace:'/fixture',suggestedMessages:false},runtime:{available:true},
    view:{setupJourney:'done',workSurface:'chat',navPinned:true,draft:''},sessions:[chat('one'),chat('two')],
    workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:'one',selectedWorkspaceId:'project',canvas:{open:false}};
@@ -98,7 +106,7 @@ try{
       assert.equal(args.part,'messages');assert.ok(['one','two'].includes(args.sessionId));
       if(args.sessionId==='one'&&args.before==='one-first')return await route.fulfill({json:{mode:'cursor',items:rows('one',0,20),hasEarlier:true,before:'one-second',windowKey:'one-page'}});
       assert.equal(args.before,args.sessionId==='two'?'two-first':kind==='window-change'?'one-replaced':'one-second');
-      await new Promise(resolve=>held.push(resolve));
+      if(!closing)await new Promise(resolve=>held.push(resolve));
       return await route.fulfill({json:{mode:'cursor',items:rows('oldest',0,1),hasEarlier:false,before:null,windowKey:'end'}});
      }
      if(url.pathname==='/api/actions'&&request.method()==='GET')return await route.fulfill({json:[]});
@@ -136,33 +144,54 @@ try{
    if(kind==='window-change')state={...state,sessions:state.sessions.map(row=>row.id==='one'?{...row,messageWindow:{...row.messageWindow,before:'one-replaced',windowKey:'replacement'}}:row)};
    const replacement=kind==='chat-change'||kind==='window-change';
    let interleave;
+   const expected={revision:state.revision,sessionId:state.selectedSessionId,kind};
+   const assertCommit=witness=>{
+    assert.equal(witness.acceptedRevision,expected.revision,'Snapshot accepted before tested movement');
+    assert.equal(witness.sessionId,expected.sessionId,'Selected chat committed to actual pane');
+    if(kind!=='chat-change')assert.ok(witness.committedViewRevisions.includes(expected.revision),'Actual App effect published this render');
+    if(kind==='draft')assert.equal(witness.composerText,'Private unsent test draft','Draft rendered before tested movement');
+    if(kind==='status')assert.equal(witness.stopRendered,true,'Working state rendered before tested movement');
+   };
    if(sourceMode){
     interleave=await page.evaluate(async({snapshot,replacement})=>{
      const pane=document.querySelector('.a-messages'),ids=window.historyFollowerIds(pane);
      pane.dispatchEvent(new WheelEvent('wheel',{deltaY:-120,bubbles:true}));
      window.historyPublishSync(snapshot); // same React graph, actual App commit
-     const after=window.historyFollowerIds(pane);
+     const after=window.historyFollowerIds(pane),commit=window.historyCommitWitness();
      pane.scrollTop=80;pane.dispatchEvent(new Event('scroll'));
      await Promise.resolve();await Promise.resolve();
-     return {before:ids,after,reads:window.historyDetailFetches.slice(),top:pane.scrollTop,replacement};
+     return {before:ids,after,commit,reads:window.historyDetailFetches.slice(),top:pane.scrollTop,replacement};
     },{snapshot:shell.state(),replacement});
    }else{
     // Compiled mode has no injected React copy or forced synchronous ordering.
     // Observe actual binding lifetime across a settled render, then use one wheel.
-    await page.evaluate(snapshot=>window.emitState(snapshot),shell.state());await paint();
+    await page.evaluate(snapshot=>window.emitState(snapshot),shell.state());
+    await expect.poll(async()=>{
+     const witness=await page.evaluate(()=>window.historyCommitWitness());
+     try{assertCommit(witness);return true}catch{return false}
+    }).toBe(true);
     interleave=await pane.evaluate(async(node,replacement)=>{
-     const after=window.historyFollowerIds(node);
+     const after=window.historyFollowerIds(node),commit=window.historyCommitWitness();
      node.scrollTop=200;node.dispatchEvent(new Event('scroll'));
      node.dispatchEvent(new WheelEvent('wheel',{deltaY:-120,bubbles:true}));
      node.scrollTop=80;node.dispatchEvent(new Event('scroll'));
      await Promise.resolve();await Promise.resolve();
-     return {after,reads:window.historyDetailFetches.slice(),top:node.scrollTop,replacement};
+     return {after,commit,reads:window.historyDetailFetches.slice(),top:node.scrollTop,replacement};
     },replacement);
    }
    result.interleave=interleave;
+   assertCommit(interleave.commit);
+   result.preTransactionBindingChanged=sourceMode&&JSON.stringify(interleave.before)!==JSON.stringify(before.ids);
+   const transactionBefore=sourceMode?interleave.before:before.ids;
+   assert.equal(transactionBefore.length,1);
    assert.equal(interleave.after.length,1);
-   if(replacement){assert.notDeepEqual(interleave.after,before.ids,'Genuine chat/window replacement must replace the follower')}
-   else assert.deepEqual(interleave.after,before.ids,'No-op/draft/status render must preserve the existing follower');
+   if(replacement){assert.notDeepEqual(interleave.after,transactionBefore,'Genuine chat/window replacement must replace the follower')}
+   else assert.deepEqual(interleave.after,transactionBefore,'No-op/draft/status render must preserve the existing follower');
+   if(!sourceMode||!replacement){
+    assert.equal(interleave.reads.length,2,'Current gesture invoked fetch inside the transaction, before any frame');
+    assert.equal(interleave.reads[1].sessionId,kind==='chat-change'?'two':'one');
+    assert.equal(interleave.reads[1].before,kind==='chat-change'?'two-first':kind==='window-change'?'one-replaced':'one-second');
+   }
    if(sourceMode&&replacement){
     assert.equal(interleave.reads.length,1,'Disposed input cannot transfer to the new binding');
     await paint();
@@ -178,13 +207,15 @@ try{
    await expect(pane).toHaveAttribute('aria-busy','true');
    await pane.evaluate(node=>{node.dispatchEvent(new Event('scroll'));node.dispatchEvent(new WheelEvent('wheel',{deltaY:-60,bubbles:true}));node.scrollTop=0;node.dispatchEvent(new Event('scroll'))});
    await paint();assert.equal(await page.evaluate(()=>window.historyDetailFetches.length),2,'One pending read, no recursive request');
-   if(kind==='draft')assert.equal(await page.evaluate(()=>window.amplifier.getState().view.draft),'Private unsent test draft');
-   if(kind==='status')assert.equal(await page.evaluate(()=>window.amplifier.getState().sessions.find(row=>row.id==='one').status),'working');
    result.checkpoints.push('binding survives irrelevant render or invalidates genuine replacement','one gesture requests exact current cursor once; pending duplicate suppressed');
    result.passed=true;
   }catch(error){result.error=String(error.stack||error);result.passed=false;throw error}
   finally{
+   closing=true;
    held.splice(0).forEach(resolve=>resolve());
+   // Await resumed fulfill handlers while their page is still alive. No filtering
+   // of target-closed errors and no late handler can change the finalized report.
+   try{await page.unrouteAll({behavior:'wait'})}catch(error){report.cleanupErrors.push(String(error))}
    try{await context.close()}catch(error){report.cleanupErrors.push(String(error))}
   }
  }
