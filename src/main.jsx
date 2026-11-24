@@ -170,6 +170,7 @@ function App(){
  const questionReviewState=useState({});
  const creatingSession=useRef(null),uploadQueue=useRef(Promise.resolve()),uploadCount=useRef(0),fileInput=useRef(null),messagesPane=useRef(null),stickToBottom=useRef(true),chatScroll=useRef(null),historyScrollAnchor=useRef(null),composerRef=useRef(null),root=useRef(null),latest=useRef(null),voiceClient=useRef(null),messagesEnd=useRef(null),draftTimer=useRef(),stagedDraft=useRef(null),stagedDraftPayload=useRef(null),lastNotify=useRef(new Set()),lastDraft=useRef(''),canvasVisibilityQueue=useRef(Promise.resolve()),commandQueue=useRef(Promise.resolve()),voiceControlQueue=useRef(Promise.resolve()),navigationQueue=useRef(Promise.resolve()),canvasDirtyBarrier=useRef(null),reviewQueue=useRef(Promise.resolve()),stateListeners=useRef(new Set()),seenEffects=useRef(new Set()),effectHandler=useRef(()=>{}),pendingView=useRef(createPendingView()),serverState=useRef(null),conversationNavigation=useRef(createConversationNavigation());
  const focusInteraction=useRef({touch:false});
+ const [referenceFocus,setReferenceFocus]=useState(null);
  useEffect(()=>{
   const supersede=event=>{focusInteraction.current={touch:event.type==='pointerdown'?event.pointerType!=='mouse':event.type==='keydown'?false:focusInteraction.current.touch}};
   for(const name of ['pointerdown','keydown','input','focusin','compositionstart'])document.addEventListener(name,supersede,true);
@@ -371,6 +372,7 @@ function App(){
   // acceptance. The same navigation queue and Settings/Canvas guards still own
   // the transition; rejection must not destroy the control that shows it.
   const navigationToken=openingDraft?conversationNavigation.current.beginDraft():selectedId&&!meta.chatLink&&!chatReference&&!handoffNavigation&&!canvasDirtyBarrier.current?conversationNavigation.current.begin(pendingView.current.apply(latest.current),selectedId,meta.navigationSession):null;
+  const referenceInteraction=chatReference?focusInteraction.current:null;
   const focusToken=selectedId&&!meta.chatLink&&!chatReference&&!handoffNavigation
    ?conversationNavigation.current.beginFocus(latest.current,selectedId,{interaction:focusInteraction.current,desktop:automaticReturnMode(window)==='desktop-send'&&!focusInteraction.current.touch}):null;
   if(navigationToken&&serverState.current){latest.current=conversationNavigation.current.apply(serverState.current);setState(pendingView.current.apply(latest.current))}
@@ -505,15 +507,9 @@ function App(){
    }
    else if(focusToken){conversationNavigation.current.settleFocus(focusToken,result.accepted===true);if(latest.current)setState(pendingView.current.apply(latest.current))}
    if(pending&&latest.current)setState(pendingView.current.apply(latest.current));
-   if(chatReference&&result.accepted===true)requestAnimationFrame(()=>{
-    if(meta.chatReferenceIntent!==archiveRevision.current||latest.current?.selectedSessionId!==args.id)return;
-    const messages=root.current?.querySelector('[data-part="messages"]');
-    if(messages?.dataset.sessionId!==args.id)return;
-    if(args.chatReference){
-     const heading=root.current?.querySelector('[data-part="session-heading"]');
-     if(heading?.dataset.sessionId===args.id)heading.focus({preventScroll:true});
-    }else{messages.setAttribute('tabindex','-1');messages.focus({preventScroll:true})}
-   });
+   if(chatReference&&result.accepted===true&&meta.chatReferenceIntent===archiveRevision.current){
+    setReferenceFocus({id:args.id,heading:!!args.chatReference,revision:meta.chatReferenceIntent,interaction:referenceInteraction});
+   }
    if(!handledActionResults.current.has(result)){handledActionResults.current.add(result);handleEffects(result.effects)}
    return result;
   }).catch(error=>{conversationNavigation.current.settleFocus(focusToken,false);if(stop&&!stopPostStarted)capabilityStopFence.current.settleStop(stop,'not-applied');if(navigationToken){conversationNavigation.current.settle(navigationToken);if(serverState.current){latest.current=conversationNavigation.current.apply(serverState.current);setState(pendingView.current.apply(latest.current))}}if(error.state&&validDeliveryState(error.state))acceptState(error.state);if(pending){pendingView.current.settle(pending);if(latest.current)setState(pendingView.current.apply(latest.current))}if(chatReference&&meta.chatReferenceIntent!==archiveRevision.current)error.navigationSuperseded=true;throw error}).finally(()=>{settleTracking();settleFeedback()});
@@ -1116,6 +1112,21 @@ function App(){
    !!state&&state.selectedSessionId===latest.current?.selectedSessionId&&shell.ready&&connected&&!historyPending&&!executionUnavailable&&!referencingDraft&&!suggestionComposing&&!dictating&&!callActive&&!voiceStarting&&!detail.focused&&
    !document.hidden&&document.hasFocus()&&![...document.querySelectorAll('[role="dialog"]')].some(node=>node.getClientRects().length);
   if(conversationNavigation.current.claimFocus(pendingView.current.apply(latest.current),{interaction:focusInteraction.current,editable}))editor.focus({preventScroll:true});
+ });
+ // A positive receipt can arrive before React commits the destination chat.
+ useLayoutEffect(()=>{
+  if(!referenceFocus)return;
+  const {id,heading,revision,interaction}=referenceFocus;
+  if(revision!==archiveRevision.current||interaction!==focusInteraction.current||id!==latest.current?.selectedSessionId){
+   setReferenceFocus(null);return;
+  }
+  const pane=messagesPane.current;
+  if(pane?.dataset.sessionId!==id)return;
+  const target=heading?root.current?.querySelector('[data-part="session-heading"]'):pane;
+  if(target?.dataset.sessionId!==id)return;
+  if(!heading)target.tabIndex=-1;
+  target.focus({preventScroll:true});
+  setReferenceFocus(null);
  });
  const browse=(surface,id=null)=>act('view.update',{patch:{...browsePatch(surface,id),navExpanded:false}});
  const visitHistory=async key=>{
