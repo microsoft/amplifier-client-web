@@ -23,54 +23,68 @@ export function useTranscriptSuggestion({state,suggestionsSupported,readState,ac
  const trigger=JSON.stringify([witness?.key,config?.revision,recipient]);
  // READY survives temporary local text and navigation, not hard safety changes.
  // No status reads occur until the visible, editable composer is empty again.
- const retainReady=enabled&&connected&&config?.enabled===true&&!blocked&&suggestionEligible(state,{ignoreDeparture:true,ignoreDraft:true});
- owner.observe(state,config?.revision,eligible,{retainReady,recipient});
+ const retainReady=enabled&&connected&&config?.enabled===true&&!blocked&&suggestionEligible({...state,view:{...state?.view,panel:null,settingsCanvas:false}},{ignoreDeparture:true,ignoreDraft:true});
+ // A transport/catalog verification gap grants no work or preview authority.
+ // Keep only the original private receipt identity for a status-only check
+ // after this same principal/source/configuration is verified again.
+ owner.observe(state,config?.revision,eligible,{retainReady,invalidateAttempt:config?.enabled===false||suggestionsSupported===false||!suggestionPreference(state),recipient});
  const generation=owner.generation();
  useEffect(()=>{
   const hide=()=>{if(document.hidden)owner.suspend();setVisible(!document.hidden)};
   const leave=()=>owner.suspend();
   const blur=()=>{owner.suspend();setFocused(false)},focus=()=>setFocused(document.hasFocus());
   document.addEventListener('visibilitychange',hide);window.addEventListener('pagehide',leave);window.addEventListener('blur',blur);window.addEventListener('focus',focus);
-  return()=>{document.removeEventListener('visibilitychange',hide);window.removeEventListener('pagehide',leave);window.removeEventListener('blur',blur);window.removeEventListener('focus',focus);owner.reset()};
+  return()=>{document.removeEventListener('visibilitychange',hide);window.removeEventListener('pagehide',leave);window.removeEventListener('blur',blur);window.removeEventListener('focus',focus);owner.reset({preserveWithdrawal:true})};
  },[owner]);
  useEffect(()=>{
   if(!eligible)return;
-  let active=true,timer,args=null,terminal=false;
+  let active=true,timer,deadlineTimer,args=null,withdrawal=null,terminal=false;
   const deadline=Date.now()+16000;
-  const canCancel=()=>live.current.connected&&live.current.suggestionsSupported&&scope===suggestionScope(live.current.readState());
+  const canCancel=()=>live.current.connected&&live.current.suggestionsSupported&&scope===suggestionScope(live.current.readState())&&withdrawal?.current();
   const cancel=()=>{
-   if(args&&canCancel())void act('session.suggestion.cancel',{sessionId:args.sessionId,requestId:args.requestId},{feedback:false,suggestionIsCurrent:canCancel}).catch(()=>{});
+   // A lost acknowledgement clears preview authority, not our obligation to
+   // withdraw the exact possibly-admitted attempt. Never replay an uncertain
+   // cancellation or send it through another principal/host binding.
+   if(!args||!canCancel()||!withdrawal.claim())return;
+   void act('session.suggestion.cancel',{sessionId:args.sessionId,requestId:args.requestId},{feedback:false,suggestionIsCurrent:canCancel}).catch(()=>{});
   };
   const current=()=>active&&!!args&&owner.requestCurrent(args);
   const poll=async(action,requestArgs)=>{
    if(!current())return;
    try{
-    const receipt=await act(action,requestArgs,{feedback:false,suggestionIsCurrent:current});
+    const receipt=await act(action,requestArgs,{feedback:false,suggestionIsCurrent:current,signal:AbortSignal.timeout(16000)});
     if(!current())return;
     const result=receipt?.accepted&&receipt.result;
     const received=owner.receive(args,result);
-    // Only a verified ready response may suppress cleanup cancellation. An
-    // unrelated/malformed terminal string is not evidence about this attempt.
-    terminal=received&&result.status==='ready';
+    // Exact terminal receipts stop loading and cleanup; malformed or unrelated
+    // results are uncertain, not evidence of an empty or successful attempt.
+    terminal=received&&result.status!=='pending';
     refresh(value=>value+1);
-    if(!received){owner.unavailable(args);refresh(value=>value+1);return}
+    if(!received){owner.unavailable(args);cancel();refresh(value=>value+1);return}
     if(result.status==='pending'){
      if(Date.now()<deadline)timer=setTimeout(()=>poll('session.suggestion.status',{sessionId:args.sessionId,requestId:args.requestId}),350);
      else{owner.unavailable(args);refresh(value=>value+1);cancel()}
     }
-   }catch{owner.unavailable(args);refresh(value=>value+1)/* No automatic retry of an uncertain request. */}
+   }catch{owner.unavailable(args);cancel();refresh(value=>value+1)/* No automatic retry of an uncertain request. */}
   };
   if(owner.attempted()){
-   void owner.restore().then(()=>{if(active)refresh(value=>value+1)});
+   args=owner.resumeRequest();
+   withdrawal=owner.withdrawal(args);
+   if(args)void poll('session.suggestion.status',{sessionId:args.sessionId,requestId:args.requestId});
+   else void owner.restore().then(()=>{if(active)refresh(value=>value+1)});
   }else{
    args=owner.nextRequest();
+   withdrawal=owner.withdrawal(args);
    if(args){refresh(value=>value+1);void poll('session.suggestion.request',args)}
   }
-  return()=>{active=false;clearTimeout(timer);if(args&&!terminal)cancel()};
+  if(args)deadlineTimer=setTimeout(()=>{if(!active||terminal)return;owner.unavailable(args);clearTimeout(timer);cancel();terminal=true;refresh(value=>value+1)},16000);
+  return()=>{active=false;clearTimeout(timer);clearTimeout(deadlineTimer);if(args&&!terminal)cancel()};
  },[owner,trigger,eligible,config?.revision,act,generation]);
  const ghost=owner.candidate();
  useEffect(()=>{if(!ghost||ghost.expiresAt===null)return;const timer=setTimeout(()=>refresh(value=>value+1),Math.max(0,ghost.expiresAt-Date.now()+1));return()=>clearTimeout(timer)},[ghost?.expiresAt]);
- return {ghost,owner,supersede:reason=>{
+ const interested=enabled&&visible&&focused&&connected&&!blocked&&!composing&&!editing&&suggestionEligible(state);
+ const disposition=eligible?(owner.disposition()||(!witness?{status:'history_unavailable'}:null)):interested?{status:!config?(data.loadState==='unavailable'?'setup_unavailable':'setup_loading'):config.enabled!==true?'disabled':!witness?'awaiting_response':'missing_selection'}:null;
+ return {ghost,disposition,owner,supersede:reason=>{
   if(reason==='editor-input'){inputPending.current=true;setEditing(true);owner.suspend()}
   else if(reason==='editor-input-end'){if(!inputPending.current)return;inputPending.current=false;setEditing(false)}
   else if(reason==='editor-change'){inputPending.current=false;setEditing(false);owner.suspend()}

@@ -12,7 +12,7 @@ export function ModelOriginNotice({entry}){
 
 // Only the host's exact connection entry supplies options. Saved/default IDs
 // are displayed separately and never promoted into discovery results.
-export function ModelSelect({id,label='Model',value='',onChange,onCommit,entry,models:provided,state,act,disabled=false,placeholder='Enter an exact model or deployment ID',editable=false,renderOptions,presentation='full'}){
+export function ModelSelect({id,label='Model',value='',onChange,onCommit,entry,models:provided,state,act,disabled=false,placeholder='Enter an exact model or deployment ID',editable=false,renderOptions,presentation='full',allowManual=true}){
  const loading=entry?.phase==='working'||entry?.phase==='queued',region=useRef(null),edited=useRef(false),identity=useRef(entry?.sharedCatalogKey);
  const [exactScope,setExactScope]=useState(null),scope=id+':'+(entry?.sharedCatalogKey??'');
  if(identity.current!==entry?.sharedCatalogKey){edited.current=false;identity.current=entry?.sharedCatalogKey}
@@ -43,8 +43,8 @@ export function ModelSelect({id,label='Model',value='',onChange,onCommit,entry,m
   {models.length>0&&<>{showFilter&&filter}<select id={manual?id+'-catalog':id} aria-label={manual?'Choose '+label.toLowerCase()+' from catalog':label} value={visibleModels.some(row=>row.id===value)?value:''} disabled={disabled} data-action="view.update" onChange={e=>{if(e.target.value){onChange(e.target.value);onCommit?.(e.target.value)}}}>
    <option value="">{compact||originNotice?'Choose a model…':'Choose a discovered model…'}</option>{visibleModels.map(row=><option key={row.id} value={row.id}>{row.name}</option>)}
   </select></>}
-  {manualFallback?input:!models.length&&<small role="status">Loading provider models…</small>}
-  {compact&&<details className="a-model-details"><summary>Model details</summary><ModelOriginNotice entry={entry}/>{value&&<ModelPricing model={models.find(row=>row.id===value)}/>}<p><button type="button" className="a-link" disabled={disabled||manual} onClick={()=>setExactScope(scope)}>Enter an exact model ID</button></p>{entry?.loadedAt!=null&&<small>Last refreshed: {new Date(entry.loadedAt*1000).toLocaleString()}</small>}</details>}
+  {allowManual&&manualFallback?input:!models.length&&<small role="status">{loading?'Loading provider models…':'Choose an available model, or review Advanced settings for an unverified exact ID.'}</small>}
+  {compact&&<details className="a-model-details"><summary>Model details</summary><ModelOriginNotice entry={entry}/>{value&&<ModelPricing model={models.find(row=>row.id===value)}/>}<p>{allowManual&&<button type="button" className="a-link" disabled={disabled||manual} onClick={()=>setExactScope(scope)}>Enter an exact model ID</button>}</p>{entry?.loadedAt!=null&&<small>Last refreshed: {new Date(entry.loadedAt*1000).toLocaleString()}</small>}</details>}
   {entry?.error&&<small className="a-danger" role="status">{entry.error}</small>}
   {entry?.phase==='error'&&!entry.error&&<small className="a-danger" role="status">Model list unavailable. Enter a model ID or refresh this connection.</small>}
   {entry?.stale&&<small role="status">Model list is stale. Refresh to check this connection.</small>}

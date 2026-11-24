@@ -17,6 +17,8 @@ import {hasEarlierWindow,conversationHistoryPending} from './history-window.js';
 import {ChatPages,chatPageTitles} from './chat-pages';
 import {MarkdownComposer} from './markdown-composer.jsx';
 import {useTranscriptSuggestion} from './use-transcript-suggestion.jsx';
+import {SuggestionStatus} from './suggestion-status.jsx';
+import {settingsPatch} from './settings-navigation.js';
 import {createActionCatalogReader} from './action-catalog.js';
 import {suggestionScope,suggestionOutboxPending,supportsTranscriptSuggestions} from './transcript-suggestion.js';
 import {clearSuggestionModels} from './suggestion-model-settings.jsx';
@@ -1103,7 +1105,7 @@ function App(){
  // may retain READY privately. Actual history loading and safety blockers clear it.
  const suggestionBlocked=!!(!shell.ready||!hasAppearanceIdentity(state?.appearance)||state?.appearance?.availability==='failed'||busy||uploading||availableAttachments.length||referencingDraft||dictating||callActive||voiceStarting||conversationHistoryPending(session,false,messages)||executionUnavailable||detail.focused||!connected||
   suggestionOutboxPending(outbox.entries,outboxSource,session?.id));
- const suggestion=useTranscriptSuggestion({state,suggestionsSupported,readState:()=>pendingView.current.apply(latest.current),act:dispatch,blocked:suggestionBlocked,connected,composing:suggestionComposing,
+ const suggestion=useTranscriptSuggestion({state:settingsState,suggestionsSupported,readState:()=>{const current=pendingView.current.apply(latest.current);return {...current,view:{...current?.view,settingsCanvas:canvasSettingsVisible}}},act:dispatch,blocked:suggestionBlocked,connected,composing:suggestionComposing,
   recipient:recipientAgentId,canUse:()=>!lastDraft.current&&!uploadCount.current&&!referenceDraftLock.current&&!dictationControl.current?.current&&!suggestionOutboxPending(outbox.current.current,deliveryScope(latest.current,session),session?.id)&&!pendingView.current.apply(latest.current)?.draftNavigationPending});
  suggestionFence.current=suggestion.owner;
  useLayoutEffect(()=>{
@@ -1225,6 +1227,7 @@ function App(){
      const digest=[...new Uint8Array(bytes)].map(n=>n.toString(16).padStart(2,'0')).join('');
      return digest===quote.sourceDigest?'Original revealed. Saved quotation is unchanged.':'Source changed since quoting. The earlier snapshot is retained.';
     }} onFiles={addFiles} disabled={executionUnavailable} readOnly={referencingDraft||!!state?.draftNavigationPending} pasteDisabled={historyPending}/>
+    <SuggestionStatus disposition={suggestion.disposition} onReview={()=>act('view.update',{patch:{...settingsPatch('chat-input'),toolbarMenuOpen:false}})}/>
     {visibleQuoteNotice(quoteNotice,session?.id)&&<small role="status">{visibleQuoteNotice(quoteNotice,session?.id)}</small>}
     {quoteReturn&&quoteReturn.sid===session?.id&&<button type="button" className="a-link" onClick={()=>{if(messagesPane.current)messagesPane.current.scrollTop=quoteReturn.top;const button=quoteReturn.button;setQuoteReturn(null);if(button?.isConnected&&button.getClientRects().length)button.focus({preventScroll:true});else composerRef.current?.focus({preventScroll:true});}}>Return to reading position</button>}
     </div>
