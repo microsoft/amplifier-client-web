@@ -128,6 +128,59 @@ test('accepted pages, return to latest and chat switches replace the effective w
  }finally{await act(async()=>root?.unmount());globalThis.fetch=original}
 });
 
+test('frozen cursor identity and all page metadata survive a new live publication until return to latest',async()=>{
+ let detail,root,calls=0,value={...source('window'),historyManaged:true,sharedHistoryOffset:100,
+  messageWindow:{mode:'cursor',hasEarlier:true,before:'live-first',revision:'live',windowKey:'live-window'},executionWindow:null};
+ const original=globalThis.fetch;
+ const page={mode:'cursor',items:[{id:'prior'}],hasEarlier:true,before:'saved-next',revision:'saved',
+  windowKey:'saved-window',coverage:{kind:'saved-web',historyComplete:false},unavailableRanges:[{start:2,end:3}]};
+ globalThis.fetch=async()=>{calls++;return response(page)};
+ function Probe(){detail=useConversationDetail(value);return detail.controls}
+ try{
+  await act(async()=>{root=create(React.createElement(Probe))});await act(async()=>detail.earlier());
+  const accepted=detail.session.messageWindow;
+  assert.equal(accepted.before,'saved-next');assert.equal(accepted.revision,'saved');assert.equal(accepted.windowKey,'saved-window');
+  assert.deepEqual(accepted.coverage,page.coverage);assert.deepEqual(accepted.unavailableRanges,page.unavailableRanges);
+  value={...value,status:'working',historyManaged:false,sharedHistoryOffset:0,
+   messages:[{id:'new-live',text:'A new live window'}],
+   messageWindow:{mode:'cursor',hasEarlier:true,before:'new-live-next',revision:'new',windowKey:'new-window'}};
+  await act(async()=>root.update(React.createElement(Probe)));
+  assert.equal(detail.session.messageWindow,accepted,'incoming live metadata cannot invalidate the unchanged saved reading page');
+  assert.deepEqual(detail.session.messages.map(row=>row.id),['prior','window-last']);assert.equal(detail.session.status,'working');assert.equal(calls,1);
+  await act(async()=>detail.latest(false));
+  assert.equal(detail.session.messageWindow,value.messageWindow);assert.notEqual(detail.session.messageWindow,accepted);
+  assert.deepEqual(detail.session.messages.map(row=>row.id),['new-live']);assert.equal(calls,1);
+ }finally{await act(async()=>root?.unmount());globalThis.fetch=original}
+});
+
+for(const [label,sourceOffset,pageOffset,steps] of [
+ ['absolute offset',10,7,[[true,3,7],[true,5,5],[false,5,10],[true,20,0]]],
+ ['zero absolute offset',0,7,[[true,3,0],[false,0,0],[true,0,0]]],
+ ['null absolute offset',null,7,[[true,3,7],[true,5,7],[false,5,7]]],
+]){
+ test(`legacy paged-window memo preserves ${label} arithmetic and dependency changes`,async()=>{
+  let detail,root,calls=0,value={...source('window'),historyManaged:true,sharedHistoryOffset:3,
+   messageWindow:{offset:20,before:'live-first',total:40,revision:'legacy'},executionWindow:null};
+  const original=globalThis.fetch;
+  globalThis.fetch=async()=>{calls++;return response({items:[{id:'prior'}],offset:pageOffset,sourceOffset})};
+  function Probe(){detail=useConversationDetail(value);return detail.controls}
+  try{
+   await act(async()=>{root=create(React.createElement(Probe))});await act(async()=>detail.earlier());
+   for(const [historyManaged,sharedHistoryOffset,expectedOffset] of steps){
+    const previous=detail.session.messageWindow;
+    value={...value,historyManaged,sharedHistoryOffset};await act(async()=>root.update(React.createElement(Probe)));
+    const current=detail.session.messageWindow;
+    assert.equal(current.offset,expectedOffset);assert.equal(current.sourceOffset,sourceOffset);
+    assert.equal(current.before,'prior');assert.equal(current.total,40);assert.equal(current.revision,'legacy');
+    if(previous.offset!==expectedOffset)assert.notEqual(current,previous,'changed effective offset invalidates the old window');
+    const stable=current;await act(async()=>root.update(React.createElement(Probe)));
+    assert.equal(detail.session.messageWindow,stable,'no-op render preserves the calculated legacy window');
+   }
+   assert.equal(calls,1);assert.deepEqual(detail.session.messages.map(row=>row.id),['prior','window-last']);
+  }finally{await act(async()=>root?.unmount());globalThis.fetch=original}
+ });
+}
+
 test('paired history failure preserves both windows and a retry commits them together',async()=>{
  let detail,root,pending=[],value=source('one');const original=globalThis.fetch;
  globalThis.fetch=()=>new Promise(resolve=>pending.push(resolve));

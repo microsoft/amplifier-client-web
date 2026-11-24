@@ -54,10 +54,18 @@ export function useConversationDetail(source,beforeApply){
  const messages=useMemo(()=>source?.messages.map(row=>currentAnnotations.has(row.id)?{...row,...currentAnnotations.get(row.id)}:row),[source?.messages,currentAnnotations]);
  const projected=useMemo(()=>source?{...source,messages}:source,[source,messages]);
  const expandedMessages=useMemo(()=>extra?unique([...extra.messages,...(messages||[])]).map(row=>currentAnnotations.has(row.id)?{...row,...currentAnnotations.get(row.id)}:row):messages,[extra?.messages,currentAnnotations,messages]);
+ // The frozen source wrapper may change for live status or annotations while
+ // its reading window does not. Keep that window's identity across those renders
+ // so the mounted history follower is not disposed during an accepted gesture.
+ const legacyOffset=extra&&!extra.messageWindow&&extra.messages.length
+  ?extra.sourceOffset!=null?Math.max(0,extra.sourceOffset-(source?.historyManaged?source.sharedHistoryOffset||0:0)):extra.messageOffset:undefined;
+ const messageWindow=useMemo(()=>extra?{...source?.messageWindow,
+  ...(extra.messageWindow||(extra.messages.length?{offset:legacyOffset,sourceOffset:extra.sourceOffset,before:extra.messages[0].id}:{}))}
+  :source?.messageWindow,[source?.messageWindow,extra,legacyOffset]);
  const regular=useMemo(()=>source&&extra?{...source,messages:expandedMessages,sharedHistoryUserTurnOffset:extra.userOffset??source.sharedHistoryUserTurnOffset,
-  messageWindow:{...source.messageWindow,...(extra.messageWindow||(extra.messages.length?{offset:extra.sourceOffset!=null?Math.max(0,extra.sourceOffset-(source.historyManaged?source.sharedHistoryOffset||0:0)):extra.messageOffset,sourceOffset:extra.sourceOffset,before:extra.messages[0].id}:{}))},
+  messageWindow,
   execution:{...source.execution,nodes:unique([...extra.nodes,...(source.execution?.nodes||[])]),turns:unique([...extra.turns,...(source.execution?.turns||[])]),segments:unique([...(extra.segments||[]),...(source.execution?.segments||[])])},
-  executionWindow:{...source.executionWindow,...extra.groupWindow,...(extra.nodes.length?{offset:extra.nodeOffset,before:extra.nodes[0].id}:{})}}:projected,[source,extra,projected,expandedMessages]);
+  executionWindow:{...source.executionWindow,...extra.groupWindow,...(extra.nodes.length?{offset:extra.nodeOffset,before:extra.nodes[0].id}:{})}}:projected,[source,extra,projected,expandedMessages,messageWindow]);
  const focusedHere=focused?.sessionId===source?.id?focused:null;
  const nativeHere=nativeView?.id===source?.id?nativeView:null;
  const windowSession=useMemo(()=>nativeHere?{...projected,messages:nativeHere.messages,historyLoading:false,historyError:null,messageWindow:nativeHere.window,workProjection:undefined,streaming:'',execution:{nodes:[],turns:[],segments:[]},executionWindow:null}:focusedHere?{...projected,messages:focusedHere.messages,historyLoading:false,historyError:null,workProjection:undefined,streaming:'',execution:focusedHere.execution,

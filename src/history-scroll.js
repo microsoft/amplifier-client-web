@@ -25,8 +25,10 @@ function followHistory(pane,canLoad,load,direction){
   const observed=previous;disarm();previous=observed;
   if(disposed||busy||!canLoad())return;
   armed=true;
-  // Unused input cannot remain permission for a later anchor/focus scroll.
-  frame=window?.requestAnimationFrame?.(()=>{frame=null;disarm()})??null;
+  // Consume movement already present in this input frame even when its scroll
+  // event is delayed. The same predicate expires unused input; it never leaves
+  // permission for a later anchor/focus scroll.
+  frame=window?.requestAnimationFrame?.(()=>{frame=null;scroll()})??null;
  };
  const input=event=>{
   if(event.type==='wheel'){

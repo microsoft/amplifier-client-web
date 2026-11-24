@@ -251,6 +251,32 @@ for(const direction of [-1,1]){
    nextFrame();input(pane,'scroll');await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,1);
   }finally{follow.dispose()}
  });
+ for(const cancel of ['dispose','unavailable']){
+  test(`${name} history rechecks ${cancel} after frame consumption before the load microtask`,async()=>{
+   const {pane,nextFrame,frames}=laterPane();pane.scrollTop=start;
+   let calls=0,available=true;
+   const follow=attach(pane,()=>available,()=>calls++);
+   try{
+    input(pane,'wheel',{deltaY:direction*60});pane.scrollTop=end;nextFrame();
+    if(cancel==='dispose')follow.dispose();else available=false;
+    await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,0);
+    input(pane,'scroll');nextFrame();await Promise.resolve();assert.equal(calls,0);
+   }finally{follow.dispose();assert.equal(frames.size,0)}
+  });
+ }
+ for(const consume of ['scroll','frame']){
+  test(`${name} history focus reset does not cancel already-consumed ${consume} input`,async()=>{
+   const {pane,document,nextFrame}=laterPane();pane.scrollTop=start;let calls=0;
+   const follow=attach(pane,()=>true,()=>calls++);
+   try{
+    input(pane,'wheel',{deltaY:direction*60});pane.scrollTop=end;
+    if(consume==='scroll')input(pane,'scroll');else nextFrame();
+    input(document,'focusin');
+    await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,1,'existing consumed-input contract is not an extra cancellation API');
+    input(pane,'scroll');nextFrame();await Promise.resolve();assert.equal(calls,1);
+   }finally{follow.dispose()}
+  });
+ }
 }
 
 test('explicit restoration suppresses already-moved input before its frame',async()=>{
