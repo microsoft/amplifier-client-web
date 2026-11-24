@@ -5,7 +5,7 @@ import {create} from 'react-test-renderer';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {createServer} from 'vite';
 const server=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
-const {UpdateRestart,UpdateBlockers}=await server.ssrLoadModule('/src/update-restart.jsx');
+const {UpdateRestart,UpdateBlockers,SafeUpdate}=await server.ssrLoadModule('/src/update-restart.jsx');
 const {UpdateSettings}=await server.ssrLoadModule('/src/updates.jsx');
 test.after(()=>server.close());
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
@@ -227,5 +227,25 @@ test('old asynchronous rejection in the same frame as a target change does not l
  await act(async()=>root.update(React.createElement(UpdateRestart,{updates:{...updates,forceRestartTarget:{...target,attemptId:'new'},forceRestartResult:{requestId:'old',status:'rejected',detail:'Obsolete rejection'}},act:dispatch})));
  assert.doesNotMatch(JSON.stringify(root.toJSON()),/Obsolete rejection/);
  assert.equal(button(root,'Interrupt work and restart').props.disabled,false);
+ await act(async()=>root.unmount());
+});
+
+test('safe update uses the exact staged target and reports queued work across restart',async()=>{
+ const calls=[];let root,resolve;
+ const dispatch=(...args)=>{calls.push(args);return new Promise(done=>{resolve=done})};
+ await act(async()=>{root=create(React.createElement(SafeUpdate,{updates:{safeResumeTarget:target},act:dispatch}))});
+ const start=button(root,'Update safely and resume');
+ await act(async()=>{start.props.onClick();start.props.onClick()});
+ assert.equal(start.props.disabled,true);
+ assert.deepEqual(calls,[['updates.safeResume',target,{propagateError:true}]]);
+ await act(async()=>resolve({accepted:true}));
+ for(const [phase,appReady,label] of [['waiting',false,'Waiting for 2 chats'],['replacing',true,'Waiting for required components'],['releasing',true,'Resuming work']]){
+  await act(async()=>root.update(React.createElement(SafeUpdate,{updates:{safeUpdateStatus:{phase,appReady,waiting:2,queued:1}},act:dispatch})));
+  const status=root.root.findByProps({role:'status'}).children.join('');
+  assert.ok(status.includes(label) && status.includes('1 message queued'));
+  assert.equal(root.root.findAllByType('button').length,0);
+ }
+ assert.equal(calls.length,1);
+ assert.equal(renderToStaticMarkup(React.createElement(SafeUpdate,{updates:{},act:dispatch})), '');
  await act(async()=>root.unmount());
 });
