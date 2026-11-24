@@ -13,7 +13,7 @@ test('every destination round-trips through the existing public view action',()=
   assert.equal(settingsLocation(patch).page,page);
   assert.equal(settingsLocation(patch).section.id,section.id);
  }
- assert.equal(seen.size,35);assert.ok(seen.has('chat-input'));assert.ok(seen.has('suggestion-advanced'));assert.ok(seen.has('instance-branding'));assert.ok(seen.has('external-agents'));assert.ok(seen.has('storage'));assert.ok(seen.has('testing'));assert.ok(seen.has('model-capacity'));
+ assert.equal(seen.size,36);assert.ok(seen.has('chat-input'));assert.ok(seen.has('suggestion-advanced'));assert.ok(seen.has('instance-branding'));assert.ok(seen.has('external-agents'));assert.ok(seen.has('linked-instances'));assert.ok(seen.has('storage'));assert.ok(seen.has('testing'));assert.ok(seen.has('model-capacity'));
  assert.ok(!seen.has('browser-appearance'));assert.ok(!seen.has('custom-appearance'));
  assert.ok(seen.has('desktop'));assert.ok(!seen.has('publishing'));assert.ok(seen.has('workspaces'));
  assert.throws(()=>settingsPatch('not-a-page'),/Unknown settings page/);
