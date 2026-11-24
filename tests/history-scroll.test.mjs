@@ -175,3 +175,89 @@ test('passive wheel observes compositor movement before the scroll event',async(
  input(pane,'scroll');await Promise.resolve();assert.equal(calls,1);
  follow.dispose();
 });
+
+// These deterministic scheduler orders test the current-input-frame contract,
+// not which order a particular Chromium/compositor run actually used.
+for(const direction of [-1,1]){
+ const name=direction===-1?'earlier':'later';
+ const start=direction===-1?60:550,end=direction===-1?0:650;
+ const attach=(pane,canLoad,load)=>direction===-1
+  ?{dispose:followEarlierHistory(pane,canLoad,load)}
+  :followLaterHistory(pane,canLoad,load);
+ for(const [label,order,expected] of [
+  ['scroll before frame',['wheel','move','scroll','frame'],1],
+  ['movement before frame, delayed scroll',['wheel','move','frame','scroll'],1],
+  ['compositor before wheel, immediate scroll',['move','wheel','scroll','frame'],1],
+  ['compositor before wheel, delayed scroll',['move','wheel','frame','scroll'],1],
+  ['expiry before later programmatic movement',['wheel','frame','move','scroll'],0],
+  ['programmatic movement without input',['move','frame','scroll'],0],
+ ]){
+  test(`${name} history input order: ${label}`,async()=>{
+   const {pane,nextFrame,frames}=laterPane();pane.scrollTop=start;let calls=0;
+   const follow=attach(pane,()=>true,()=>calls++);
+   try{
+    for(const step of order){
+     if(step==='wheel')input(pane,'wheel',{deltaY:direction*60,deltaX:0});
+     if(step==='move')pane.scrollTop=end;
+     if(step==='scroll')input(pane,'scroll');
+     if(step==='frame')nextFrame();
+    }
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(calls,expected,label);
+    input(pane,'scroll');nextFrame();await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(calls,expected,'one gesture cannot be consumed again by a delayed/duplicate event');
+   }finally{follow.dispose();assert.equal(frames.size,0)}
+  });
+ }
+ for(const cancellation of ['focus','resize','blur','opposite','unavailable','dispose']){
+  test(`${name} history invalidates completed movement before frame consumption: ${cancellation}`,async()=>{
+   const {pane,document,window,nextFrame,frames}=laterPane();pane.scrollTop=start;
+   let calls=0,available=true;
+   const follow=attach(pane,()=>available,()=>calls++);
+   try{
+    input(pane,'wheel',{deltaY:direction*60});pane.scrollTop=end;
+    if(cancellation==='focus')input(document,'focusin');
+    if(cancellation==='resize')input(window,'resize');
+    if(cancellation==='blur')input(window,'blur');
+    if(cancellation==='opposite')input(pane,'wheel',{deltaY:-direction*60});
+    if(cancellation==='unavailable')available=false;
+    if(cancellation==='dispose')follow.dispose();
+    nextFrame();input(pane,'scroll');await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(calls,0,'invalidated input cannot authorize a read');
+   }finally{follow.dispose();assert.equal(frames.size,0)}
+  });
+ }
+ test(`${name} history frame consumption shares one pending request`,async()=>{
+  const {pane,nextFrame}=laterPane();pane.scrollTop=start;let calls=0,release;
+  const follow=attach(pane,()=>true,()=>{calls++;return new Promise(resolve=>{release=resolve})});
+  try{
+   input(pane,'wheel',{deltaY:direction*60});pane.scrollTop=end;nextFrame();
+   await Promise.resolve();assert.equal(calls,1);
+   input(pane,'scroll');input(pane,'wheel',{deltaY:direction*60});
+   pane.scrollTop=end+direction;nextFrame();input(pane,'scroll');
+   await Promise.resolve();assert.equal(calls,1,'busy follower cannot duplicate the accepted read');
+   release();await new Promise(resolve=>setImmediate(resolve));
+   pane.scrollTop=end+direction*2;input(pane,'scroll');nextFrame();
+   await Promise.resolve();assert.equal(calls,1,'settling/anchoring does not re-arm');
+  }finally{release?.();follow.dispose()}
+ });
+ test(`${name} history frame consumption still observes the 120px threshold`,async()=>{
+  const {pane,nextFrame}=laterPane();pane.scrollTop=direction===-1?200:500;let calls=0;
+  const follow=attach(pane,()=>true,()=>calls++);
+  try{
+   input(pane,'wheel',{deltaY:direction*60});pane.scrollTop=direction===-1?121:579;
+   nextFrame();input(pane,'scroll');await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,0);
+   input(pane,'wheel',{deltaY:direction});pane.scrollTop=direction===-1?120:580;
+   nextFrame();input(pane,'scroll');await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,1);
+  }finally{follow.dispose()}
+ });
+}
+
+test('explicit restoration suppresses already-moved input before its frame',async()=>{
+ const {pane,nextFrame}=laterPane();pane.scrollTop=550;let calls=0;
+ const follow=followLaterHistory(pane,()=>true,()=>calls++);
+ try{
+  wheel(pane);pane.scrollTop=650;follow.suppress(()=>{pane.scrollTop=660});
+  nextFrame();input(pane,'scroll');await Promise.resolve();assert.equal(calls,0);
+ }finally{follow.dispose()}
+});

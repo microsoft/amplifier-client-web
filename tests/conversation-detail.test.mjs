@@ -77,6 +77,57 @@ test('unchanged message branches survive parent renders and unrelated session up
   assert.equal(detail.session.messages[0].annotationRevision,0);
  }finally{await act(async()=>root?.unmount())}
 });
+
+for(const change of ['no-op','draft','status']){
+ test(`accepted earlier-page window retains identity through ${change} parent render`,async()=>{
+  let detail,root,draft='',calls=0,value={...source('window'),status:'idle',
+   messageWindow:{mode:'cursor',hasEarlier:true,before:'first',revision:'saved'},executionWindow:null};
+  const original=globalThis.fetch;
+  globalThis.fetch=async()=>{calls++;return response({mode:'cursor',items:[{id:'prior'}],hasEarlier:true,before:'second',revision:'saved'})};
+  function Probe({draft}){detail=useConversationDetail(value);return React.createElement('div',null,draft,detail.controls)}
+  try{
+   await act(async()=>{root=create(React.createElement(Probe,{draft}))});
+   await act(async()=>detail.earlier());
+   assert.equal(calls,1);assert.equal(detail.busy,'');
+   assert.deepEqual(detail.session.messages.map(row=>row.id),['prior','window-last']);
+   const window=detail.session.messageWindow,rows=detail.session.messages;
+   if(change==='draft')draft='Unsent private draft';
+   if(change==='status')value={...value,status:'working'};
+   await act(async()=>root.update(React.createElement(Probe,{draft})));
+   assert.equal(detail.session.messageWindow,window,'unchanged effective page must not restart the mounted history follower');
+   assert.equal(detail.session.messages,rows,'unchanged saved text remains the same branch');
+   assert.equal(detail.session.status,change==='status'?'working':'idle');
+   assert.equal(calls,1,'rendering does not fetch another page');
+  }finally{await act(async()=>root?.unmount());globalThis.fetch=original}
+ });
+}
+
+test('accepted pages, return to latest and chat switches replace the effective window identity',async()=>{
+ let detail,root,calls=[],value={...source('window'),
+  messageWindow:{mode:'cursor',hasEarlier:true,before:'first',revision:'live'},executionWindow:null};
+ const original=globalThis.fetch;
+ globalThis.fetch=async url=>{
+  const before=new URL(url,'http://test').searchParams.get('before');calls.push(before);
+  return response({mode:'cursor',items:[{id:before==='first'?'prior':'oldest'}],
+   hasEarlier:before==='first',before:before==='first'?'second':null,revision:'saved'});
+ };
+ function Probe(){detail=useConversationDetail(value);return detail.controls}
+ try{
+  await act(async()=>{root=create(React.createElement(Probe))});const latest=detail.session.messageWindow;
+  await act(async()=>detail.earlier());const first=detail.session.messageWindow;
+  assert.notEqual(first,latest);assert.equal(first.before,'second');
+  await act(async()=>detail.earlier());const second=detail.session.messageWindow;
+  assert.notEqual(second,first);assert.equal(second.hasEarlier,false);
+  assert.deepEqual(calls,['first','second']);assert.deepEqual(detail.session.messages.map(row=>row.id),['oldest','prior','window-last']);
+  await act(async()=>detail.latest(false));
+  assert.notEqual(detail.session.messageWindow,second);assert.equal(detail.session.messageWindow,latest);
+  value={...source('other'),messageWindow:{mode:'cursor',hasEarlier:true,before:'other-first'},executionWindow:null};
+  await act(async()=>root.update(React.createElement(Probe)));
+  assert.notEqual(detail.session.messageWindow,latest);assert.equal(detail.session.id,'other');
+  assert.equal(detail.session.messageWindow.before,'other-first');assert.deepEqual(calls,['first','second']);
+ }finally{await act(async()=>root?.unmount());globalThis.fetch=original}
+});
+
 test('paired history failure preserves both windows and a retry commits them together',async()=>{
  let detail,root,pending=[],value=source('one');const original=globalThis.fetch;
  globalThis.fetch=()=>new Promise(resolve=>pending.push(resolve));
