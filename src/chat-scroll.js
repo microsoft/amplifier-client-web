@@ -35,9 +35,9 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
  const positions=readingPositions(storage);
  let frame=0,disposed=false,sessionId=null,ready=false,restore=null,submitted=null,snapshot=null,saveTimer=0,initial=false,resuming=false;
  // Keep the desired reading offset separate from the actual geometry. A pane
- // can temporarily make it unreachable (for example, narrower top padding).
- // Reporting that clamped position must not turn it into a new reading choice.
- let constrainedPosition=null;
+ // can make it unreachable through either clamping or native scroll rounding.
+ // Reporting the attained position must not turn a residual into a new choice.
+ let constrainedPosition=null,layoutPosition=null;
  // Ordinary fallback anchors can lie beyond the viewport when Work fills it.
  // Only a genuinely visible reading goal may outlive a clamped restoration.
  // Keep capture-time evidence private, not in the stored reading record.
@@ -88,7 +88,8 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
    const target=pane.scrollTop+box.top-pane.getBoundingClientRect().top-position.offset;
    const limit=Math.max(0,pane.scrollHeight-pane.clientHeight);
    pane.scrollTop=target;
-   if(!position.focus&&readingGoals.get(position)&&(target< -1&&pane.scrollTop<=1||target>limit+1&&Math.abs(pane.scrollTop-limit)<=1))constrainedPosition=position;
+   const quantized=target>=0&&target<=limit&&pane.scrollTop!==target;
+   if(!position.focus&&readingGoals.get(position)&&(quantized||target< -1&&pane.scrollTop<=1||target>limit+1&&Math.abs(pane.scrollTop-limit)<=1))constrainedPosition=position;
    if(position.focus){anchor.tabIndex=-1;anchor.focus({preventScroll:true})}
   }
   else pane.scrollTop=Math.min(position.top||0,pane.scrollHeight);
@@ -125,6 +126,7 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
  };
  const update=()=>{if(!frame&&!disposed)frame=view.requestAnimationFrame(flush)};
  const stop=()=>{
+  layoutPosition=null;
   if(callId&&callSessionId===sessionId)callPaused=true;
   anchorLoad=null;unresolvedPosition=null;submitted=null;following.current=false;restore=null;initial=false;
   // A boundary gesture can choose the current position without a scroll event.
@@ -168,23 +170,46 @@ export function createChatScroll(pane,following={current:true},onAway=()=>{},{lo
   // React-owned layout changes can arrive after this frame's observer flush.
   // Settle them before paint; ordinary stream/resize updates stay batched.
   settleLayout(){view.cancelAnimationFrame(frame);flush()},
+  // History pages capture immediately before their DOM commit. Keep their
+  // programmatic compensation under this owner, including its rounding goal.
+  captureLayout(){
+   if(disposed||!ready||restore)return null;
+   // A scrollbar/focus move can precede its native event. Classify it before
+   // fresh capture erases the old actual top and masks that newer reading choice.
+   scroll();
+   capture();
+   if(constrainedPosition&&!visibleMessage(pane,constrainedPosition.messageId))constrainedPosition=null;
+   return layoutPosition={sessionId,position:constrainedPosition||snapshot};
+  },
+  restoreLayout(token){
+   if(!token||token!==layoutPosition)return false;
+   if(disposed||!ready||token.sessionId!==sessionId||!visibleMessage(pane,token.position.messageId)){layoutPosition=null;return false}
+   // Focus/scrollbar movement may also occur between capture and React's
+   // commit. Its pending native event must not be masked by our compensation.
+   scroll();
+   if(token!==layoutPosition)return false;
+   layoutPosition=null;
+   view.cancelAnimationFrame(frame);frame=0;
+   restorePosition(token.position);report();return true;
+  },
   setCall(id,conversationId){
    if(id===callId&&conversationId===callSessionId)return;
+   layoutPosition=null;
    callId=id;callSessionId=conversationId;callPaused=false;update();
   },
   select(id,isReady=true){
    if(id!==sessionId){
     clearIframeFocus();persist();clearOverflow();const sendingNewChat=sessionId===null&&submitted;
-    sessionId=id;snapshot=null;constrainedPosition=null;restore=positions.get(id)||null;anchorLoad=null;attemptedAnchor=null;unresolvedPosition=null;
+    sessionId=id;snapshot=null;constrainedPosition=null;layoutPosition=null;restore=positions.get(id)||null;anchorLoad=null;attemptedAnchor=null;unresolvedPosition=null;
     submitted=sendingNewChat||(typeof restore?.submittedId==='string'?restore.submittedId:null);
     resuming=!!submitted&&!sendingNewChat;
     following.current=!!submitted;
     if(submitted)restore=null;
     initial=!restore&&!submitted;onAway(false);
    }
-   ready=isReady;if(!ready){clearOverflow();clearIframeFocus()}else queueIframeFocus();update();
+   ready=isReady;if(!ready){layoutPosition=null;clearOverflow();clearIframeFocus()}else queueIframeFocus();update();
   },
-  submitted(id){if(callId&&callSessionId===sessionId)callPaused=false;constrainedPosition=null;anchorLoad=null;unresolvedPosition=null;submitted=id;resuming=false;restore=null;initial=false;following.current=true;update()},
+  submitted(id){if(callId&&callSessionId===sessionId)callPaused=false;constrainedPosition=null;layoutPosition=null;anchorLoad=null;unresolvedPosition=null;submitted=id;resuming=false;restore=null;initial=false;following.current=true;update()},
   jump(id){
    stop();
    const target={messageId:id,top:pane.scrollTop,offset:16,focus:true};
