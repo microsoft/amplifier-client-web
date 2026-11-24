@@ -27,3 +27,30 @@ test('cleanup save, reload, discard and review share a bounded action group with
   assert.deepEqual(calls,[{name:'storage.cleanup.read',args:{}}]);
  }finally{await act(async()=>root?.unmount())}
 });
+
+test('saved tests distinguish verified results-only exports from complete totals and unknown sizes',async()=>{
+ const {SavedTestStorage}=await vite.ssrLoadModule('/src/saved-test-storage.jsx');
+ const partial={id:'partial',label:'Results only',position:1,workspaceAvailability:'not-exported',totalBytes:null,sourceBytes:null,workspaceBytes:null,resultBytes:2048};
+ const complete={id:'complete',label:'Fully accounted',position:2,totalBytes:3072,sourceBytes:1024,workspaceBytes:1024,resultBytes:1024};
+ const unknown={id:'unknown',label:'Incomplete',position:3,totalBytes:null,sourceBytes:null,workspaceBytes:null,resultBytes:null};
+ const pages=[
+  {items:[partial],recordedBytes:0,accountedCount:0,unaccountedCount:1},
+  {items:[complete,{...partial,resultBytes:0},unknown],recordedBytes:3072,accountedCount:1,unaccountedCount:2},
+ ];
+ let root;
+ const read=async()=>act(async()=>root.root.findByType('button').props.onClick());
+ const text=node=>typeof node==='string'?node:node.children.map(text).join('');
+ try{
+  await act(async()=>{root=create(React.createElement(SavedTestStorage,{act:async action=>{
+   assert.equal(action,'storage.cleanup.evidence');return {accepted:true,result:{...pages.shift(),pageSize:32}};
+  }}))});
+  await read();
+  assert.match(text(root.root),/2\.0 KB in verified result archives from 1 test/);
+  assert.doesNotMatch(text(root.root),/0 B recorded/);
+  assert.match(text(root.root.findByType('summary')),/2\.0 KB in results/);
+  assert.match(text(root.root),/Original source: Unavailable.*Final workspace: Not exported\. Test results: 2\.0 KB/);
+  await read();
+  assert.match(text(root.root),/3\.0 KB recorded across 1 test on this page\. 0 B in verified result archives from 1 test\. 1 other test has incomplete size records/);
+  assert.deepEqual(root.root.findAllByType('summary').map(text),['Fully accounted · 3.0 KB','Results only · 0 B in results','Incomplete · Unavailable']);
+ }finally{await act(async()=>root?.unmount())}
+});
