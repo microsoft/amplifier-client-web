@@ -25,10 +25,13 @@ const valid={
 
 export async function linkedInstancesRequest(route,body={},signal){
  if(!routes.has(route))throw new TypeError('Unknown linking operation.');
- const {result}=await request('/api/linked-instances/v1/'+route,{
+ const receipt=await request('/api/linked-instances/v1/'+route,{
   method:'POST',body,signal,cache:'no-store',redirect:'error',
  });
- if(!result||typeof result!=='object'||!valid[route](result,body)){
+ const result=receipt?.result;
+ const inconsistentJoin=route==='join'&&((receipt?.accepted!==undefined&&receipt.accepted!==true)||
+  receipt?.error!=null||receipt?.code!=null);
+ if(inconsistentJoin||!result||typeof result!=='object'||!valid[route](result,body)){
   throw Object.assign(Error('Linking response was not confirmed.'),{unconfirmed:true});
  }
  return result;

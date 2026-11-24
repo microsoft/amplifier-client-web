@@ -24,6 +24,7 @@ const fixture=`
    return {accepted:true};
   };
   if(location.search==='?short')return <main style={{padding:8}}><LinkCodeEntry value={value} onChange={setValue} alphabet="23456789ABCDEFGHJKMNPQRSTUVWXYZ"/></main>;
+  if(view.panel!=='settings')return <button onClick={()=>setView(old=>({...old,panel:'settings'}))}>Open settings</button>;
   const state={view,client:{hostInstanceId:location.hostname},setup:{providers:[]},settings:{},attention:{items:[]},workspaces:[],sessions:[]};
   return <div className="a-overlay a-settings-overlay a-settings-redesign-overlay"><section className="a-dialog wide">
    <SettingsExperience state={state} act={act} dispatch={act} open/>
@@ -34,12 +35,15 @@ const html='<!doctype html><meta name="viewport" content="width=device-width,ini
 const out=process.env.AMPLIFIER_TEST_ARTIFACTS||'output/linked-instances';
 const report={scope:'mounted Settings; two synthetic same-origin host adapters; real Chromium clipboard and keyboard; decoder capability simulated',cases:[],pageErrors:[]};
 const code='amp-link-v1.'+Buffer.from('synthetic-invitation-for-a-only').toString('base64url');
+const unconfirmedCode='amp-link-v1.'+Buffer.from('synthetic-unconfirmed-invitation').toString('base64url');
+const healthyCode='amp-link-v1.'+Buffer.from('synthetic-healthy-invitation').toString('base64url');
 const png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC';
 const peerOrigin='https://amplifier-a.example.test';
 const offerId='1'.repeat(32),joinerId='2'.repeat(32),grantId='3'.repeat(32);
 const extraGrant='4'.repeat(32),reverseGrant='5'.repeat(32),unrelatedGrant='6'.repeat(32);
 const calls=[];
-let server,browser,failure,linked=false,revoked=false,offline=false,joinInterrupted=true,expired=false;
+let server,browser,failure,linked=false,revoked=false,offline=false,expired=false;
+let joinReceipt=null,joinStep=0,joinRefusal=null;
 let ambiguous=false,legacyRows=false;
 try{
  await mkdir(out,{recursive:true});
@@ -71,7 +75,7 @@ try{
    const error=(code,status)=>send({accepted:false,code,error:'synthetic'},status);
    assert.equal(new URL(req.url()).origin,origin);
    assert.equal(req.method(),'POST');
-   calls.push({side,action,body});
+   calls.push({side,action,body,wire:req.postData()});
    if(side==='old')return error('not_found',404);
    if(action==='list'){
     const links=linked?[side==='A'?incoming():outgoing()]:[];
@@ -87,10 +91,27 @@ try{
     return send({code,expiresAt:Date.now()/1000+(expired?-1:600),qrPayload:code,qrPngBase64:png});
    }
    if(action==='join'&&side==='B'){
-    assert.equal(body.code,code);assert.match(body.commandId,/^[0-9a-f]{32}$/);
-    if(linked)return error('link_already_linked',409);
-    if(joinInterrupted){joinInterrupted=false;return error('link_join_unconfirmed',503);}
-    linked=true;return send(outgoing());
+    assert.match(body.commandId,/^[0-9a-f]{32}$/);
+    if(joinRefusal&&body.code===joinRefusal.code)return error(joinRefusal.error,joinRefusal.status);
+    if(body.code===unconfirmedCode)return error('internal_error',500);
+    if(body.code===healthyCode){linked=true;return route.fulfill({status:200,json:{accepted:true,result:outgoing()}});}
+    assert.equal(body.code,code);
+    if(!joinReceipt){joinReceipt=body;linked=true;}
+    if(body.commandId!==joinReceipt.commandId)return error('link_already_linked',409);
+    assert.deepEqual(body,joinReceipt);
+    // The enrollment has already committed. A fresh command would return a
+    // duplicate instead of recovering the receipt for the original command.
+    switch(joinStep++){
+     case 0:return error('link_join_unconfirmed',503);
+     case 1:return route.abort('connectionreset');
+     case 2:return error('internal_error',500);
+     case 3:return route.fulfill({status:502,body:'<html>Gateway error</html>'});
+     case 4:return route.fulfill({status:200,contentType:'application/json',body:'null'});
+     case 5:return send({...outgoing(),direction:'incoming'});
+     case 6:return route.fulfill({status:200,json:{accepted:'true',result:outgoing()}});
+     case 7:return error('link_capacity',409);
+    }
+    return send(outgoing());
    }
    if(action==='status'&&side==='B'){
     assert.deepEqual(body,{instanceId:offerId});
@@ -163,17 +184,35 @@ try{
  await image.setInputFiles(imageFile);
  await expect(target).toHaveValue(code);
  assert.equal(calls.filter(c=>c.action==='join').length,0);
- await join.click();await expect(b.getByRole('alert')).toContainText('not confirmed');
- await expect(join).toBeDisabled();
+ const retry=b.getByRole('button',{name:'Retry same request',exact:true});
+ const pendingJoin=b.getByRole('alert').filter({hasText:'The link may already have been created'});
+ const joinCalls=()=>calls.filter(c=>c.action==='join');
+ async function expectPending(count){
+  await expect(pendingJoin).toBeVisible();
+  await expect(pendingJoin).not.toContainText(code);
+  await expect(retry).toBeEnabled();
+  await expect(b.getByRole('button',{name:'Join with invitation'})).toBeDisabled();
+  await expect(join).toBeDisabled();
+  await expect(b.getByText(/No linked instances yet|No links in the last loaded list/)).toHaveCount(0);
+  await expect(b.getByText(/Amplifier verified the invitation and linked the instance/)).toHaveCount(0);
+  assert.equal(joinCalls().length,count);
+  assert.ok(joinCalls().every(call=>call.wire===joinCalls()[0].wire));
+ }
+ await join.click();
+ await expectPending(1);
  await b.getByRole('button',{name:'External agents',exact:true}).click();
  await expect(target).toHaveCount(0);
  await b.getByRole('button',{name:'Linked instances',exact:true}).click();
- await b.getByRole('button',{name:'Check the same request'}).click();
+ await expectPending(1);
+ for(let count=2;count<=8;count++){await retry.click();await expectPending(count);}
+ await retry.click();
  await expect(b.getByText('Amplifier verified the invitation and linked the instance.')).toBeVisible();
  await expect(b.getByText('This Amplifier can check its status')).toBeVisible();
- const joins=calls.filter(c=>c.action==='join');assert.equal(joins.length,2);assert.deepEqual(joins[0],joins[1]);
+ await expect(retry).toHaveCount(0);
+ const joins=joinCalls();assert.equal(joins.length,9);assert.ok(joins.every(call=>call.wire===joins[0].wire));
  assert.equal(joins[0].side,'B');
- report.cases.push('Explicit paste, real keyboard fallback, camera denial, mocked native upload, no URL navigation or auto-Join, exact command reconciliation.');
+ report.cases.push('Explicit paste, real keyboard fallback, camera denial, and mocked native upload do not auto-Join or navigate.');
+ report.cases.push('After a synthetic enrollment commits, typed unconfirmed, disconnect, generic 500, HTML gateway error, null, malformed and inconsistent success, and replay admission refusal preserve the exact POST body; section navigation sends nothing; only explicit Retry recovers.');
  await b.getByRole('button',{name:'Check availability'}).click();
  await expect(b.getByText('Online at last check')).toBeVisible();
  offline=true;await b.getByRole('button',{name:'Check availability'}).click();
@@ -187,15 +226,38 @@ try{
  await target.fill(code);
  await join.click();
  const conflict=b.getByRole('alert');
- await expect(conflict).toContainText('a link in this direction already exists');
+ await expect(conflict).toContainText('A link in this direction already exists');
  await expect(conflict).toContainText('revoke the existing link on both Amplifiers');
  await expect(conflict).not.toContainText(code);
- await expect(b.getByRole('button',{name:'Check the same request'})).toHaveCount(0);
+ await expect(retry).toHaveCount(0);
  await expect(target).toHaveCount(0);
  await expect(b.getByText('Online at last check')).toBeVisible();
  assert.deepEqual(calls.slice(beforeRepeat).map(c=>c.action),['join']);
  assert.notEqual(calls.at(-1).body.commandId,joins[0].body.commandId);
  report.cases.push('Definite repeat Join explains which direction to review on both Amplifiers, without replacement, replay, or revoke.');
+
+ // A typed refusal can settle this exact attempt without a retry. A revoked
+ // receipt describes prior enrollment, not an invitation that never worked.
+ let refusedId=calls.at(-1).body.commandId;
+ for(const [error,status,message] of [
+  ['link_offer_expired',410,'This invitation expired'],
+  ['link_offer_used',409,'This invitation has already been used'],
+  ['link_revoked',403,'This link was previously created and has been revoked'],
+  ['link_capacity',409,'Too many links are saved'],
+ ]){
+  joinRefusal={code:'amp-link-v1.'+Buffer.from(error).toString('base64url'),error,status};
+  if(!await target.count())await b.getByRole('button',{name:'Join with invitation'}).click();
+  await target.fill(joinRefusal.code);
+  const before=calls.length;await join.click();
+  await expect(conflict).toContainText(message);
+  await expect(retry).toHaveCount(0);
+  await expect(join).toBeEnabled();
+  assert.deepEqual(calls.slice(before).map(c=>c.action),['join']);
+  assert.notEqual(calls.at(-1).body.commandId,refusedId);
+  refusedId=calls.at(-1).body.commandId;
+ }
+ await b.getByRole('button',{name:'Join with invitation'}).click();
+ report.cases.push('Typed expiry, used invitation, revoked enrollment and first-attempt capacity keep specific feedback and do not leave an unresolved Retry.');
 
  // The refusal does not identify which host has duplicates. With one
  // local grant, guide the user to ask the other owner, not revoke it.
@@ -248,6 +310,33 @@ try{
  await expect(a.getByText(/This invitation expired/)).toBeVisible();
  await expect(created).toHaveCount(0);
  report.cases.push('Status on intended installation, unavailable/reconnect, confirmed revoke, expired invitation suppressed.');
+
+ // Settings close tears down its private memory; reopening must not replay
+ // the old invitation. A separate healthy manual Join still works normally.
+ const fresh=await context.newPage();attachErrors(fresh);
+ await install(fresh,bURL.origin,'B');
+ linked=false;revoked=false;
+ await open(fresh,bURL);
+ const freshForm=fresh.getByRole('button',{name:'Join with invitation'});
+ const freshInput=fresh.getByRole('textbox',{name:'Amplifier invitation'});
+ const freshJoin=fresh.getByRole('button',{name:'Join',exact:true});
+ await freshForm.click();await freshInput.fill(unconfirmedCode);await freshJoin.click();
+ await expect(fresh.getByRole('alert')).toContainText('The link may already have been created');
+ await expect(fresh.getByRole('button',{name:'Retry same request'})).toBeEnabled();
+ const afterUnconfirmed=joinCalls().length;
+ await fresh.getByRole('button',{name:'Close settings',includeHidden:true}).evaluate(button=>button.click());
+ await expect(freshInput).toHaveCount(0);
+ await fresh.getByRole('button',{name:'Open settings'}).click();
+ await freshForm.click();
+ await expect(freshInput).toHaveValue('');
+ await expect(fresh.getByRole('button',{name:'Retry same request'})).toHaveCount(0);
+ assert.equal(joinCalls().length,afterUnconfirmed);
+ await freshInput.fill(healthyCode);await freshJoin.click();
+ await expect(fresh.getByText('Amplifier verified the invitation and linked the instance.')).toBeVisible();
+ assert.equal(joinCalls().length,afterUnconfirmed+1);
+ assert.equal(calls.findLast(c=>c.action==='join').body.code,healthyCode);
+ report.cases.push('An untyped first-attempt refusal remains pending. Closing Settings forgets its private retry without replay; a fresh healthy manual Join still succeeds.');
+
  const touch=await browser.newContext({viewport:{width:320,height:780},hasTouch:true,isMobile:true,permissions:['clipboard-read','clipboard-write']});
  const short=await touch.newPage();attachErrors(short);
  await short.goto(aURL.href+'?short');

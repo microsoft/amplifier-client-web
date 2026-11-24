@@ -6,16 +6,34 @@ import {LinkQrReader} from './link-qr.jsx';
 import {LINK_INVITATION_MAX,linkInvitation,linkedInstancesRequest} from './linked-instances-api.js';
 import './linked-instances.css';
 
-const isUnconfirmed=error=>error?.code==='link_join_unconfirmed'||error?.unconfirmed||error?.status===408||error?.status>=500&&error?.accepted!==false;
+// These outcomes attest to the exact enrollment, including on retry. A
+// rejection before enrollment admission only describes the current attempt.
+const joinOutcomes=new Map([['link_already_linked',409],['link_offer_used',409],['link_offer_expired',410],['link_revoked',403]]);
+const joinAdmissionRefusals=new Map([['link_invalid',400],['link_command_conflict',409],['link_capacity',409],['link_unsupported',403]]);
+function isUnconfirmed(route,error,retrying){
+ if(error?.code==='link_join_unconfirmed'||error?.unconfirmed||error?.status===408)return true;
+ if(route!=='join')return error?.status>=500&&error?.accepted!==false;
+ const refusalStatus=joinOutcomes.get(error?.code)??(!retrying?joinAdmissionRefusals.get(error?.code):undefined);
+ return !(refusalStatus&&error.accepted===false&&error.status===refusalStatus);
+}
 const isConflict=(error,code)=>error?.status===409&&error?.accepted===false&&error.code===code;
 const linkName=link=>link.origin||'Amplifier '+link.instanceId.slice(0,8);
-const repeatedLinkNotice='Not joined: a link in this direction already exists. In Linked instances, confirm the matching entries: “This Amplifier can check its status” here, and “Can check this Amplifier’s status” on the invitation creator. To pair again, revoke the existing link on both Amplifiers, then create a new invitation. Nothing was replaced.';
+const repeatedLinkNotice='A link in this direction already exists. In Linked instances, confirm the matching entries: “This Amplifier can check its status” here, and “Can check this Amplifier’s status” on the invitation creator. To pair again, revoke the existing link on both Amplifiers, then create a new invitation.';
+const pendingJoinNotice='Amplifier couldn’t confirm this link. The link may already have been created. Keep Settings open and choose Retry same request to use the original invitation and request.';
+const changeLabels={offer:'Creating invitation…',join:'Verifying invitation…',revoke:'Revoking link…'};
 const ambiguousAvailability='Availability not checked: multiple links in this direction';
 const linkingErrors={
  link_offer_expired:'This invitation expired. Create a new invitation on the other Amplifier.',
  link_offer_used:'This invitation has already been used. Refresh links, or create a new invitation on the other Amplifier.',
  link_verification_failed:'Amplifier could not verify the other instance’s identity. Ask its owner for a new invitation.',
  link_unavailable:'Could not reach the other Amplifier. Check the connection and try again.',
+};
+const joinErrors={
+ link_revoked:'This link was previously created and has been revoked.',
+ link_invalid:'Amplifier did not recognize this invitation. Copy the full invitation and try again.',
+ link_command_conflict:'Amplifier refused this request because its ID was already used for a different request.',
+ link_capacity:'Too many links are saved on this Amplifier. Review your linked instances before trying again.',
+ link_unsupported:'Linking is not available on this Amplifier.',
 };
 function Notice({result}){
  return result&&<p role={result.error?'alert':'status'} className={result.error?'a-danger':undefined}>{result.text}</p>;
@@ -91,16 +109,16 @@ export function LinkedInstancesSettings({active=true}){
   [mode,setMode]=useState(null),[result,setResult]=useState(null),[origin,setOrigin]=useState(''),[offer,setOffer]=useState(null),
   [copyNote,setCopyNote]=useState(''),[checks,setChecks]=useState({}),[confirm,setConfirm]=useState(null);
  const operation=useRef(null),visible=useRef(active);
- const resume=useRef(null),[pending,setPending]=useState(false);
+ const resume=useRef(null),[pending,setPending]=useState(null);
  const selectedOrigin=list?.origins.includes(origin)?origin:list?.origins.length===1?list.origins[0]:'';
 
  useLayoutEffect(()=>{visible.current=active;return()=>{visible.current=false}},[active]);
- useEffect(()=>()=>{operation.current?.abort();operation.current=null},[]);
+ useEffect(()=>()=>{operation.current?.abort();operation.current=null;resume.current=null},[]);
  useEffect(()=>{if(active&&!list)load()},[active]);
  async function run(label,work){
   if(operation.current)return false;
   const controller=new AbortController();operation.current=controller;setBusy(label);setResult(null);
-  try{await work(controller.signal);return !controller.signal.aborted;}
+  try{const completed=await work(controller.signal);return completed!==false&&!controller.signal.aborted;}
   catch(error){
    if(!controller.signal.aborted)setResult({error:true,text:error.displayText||'Amplifier could not complete that request.'});
    return false;
@@ -120,37 +138,31 @@ export function LinkedInstancesSettings({active=true}){
    throw Object.assign(error,{displayText:error.status===401||error.status===403?'Sign in as the owner of this Amplifier to manage linking.':'Could not load linked instances. Try Refresh links.'});
   }
  });}
- async function mutate(route,args,signal){
-  const command=resume.current||{route,body:{commandId:crypto.randomUUID().replaceAll('-',''),...args}};
-  try{
-   const response=await linkedInstancesRequest(command.route,command.body,signal);
-   if(!signal.aborted){resume.current=null;setPending(false);}
-   return response;
-  }catch(error){
-   if(signal.aborted)throw error;
-   if(isUnconfirmed(error)){
-    resume.current=command;setPending(true);
-    error.displayText='The result is not confirmed. Check the same request before starting another change.';
-   }else{
-    resume.current=null;setPending(false);
-    error.displayText=linkingErrors[error.code]||(command.route==='join'?'Could not verify or use the invitation. Check that it is correct, still valid, and that the other Amplifier is reachable.':command.route==='revoke'?'The link was not revoked. Refresh links and try again.':'Could not create an invitation for this address.');
-   }
-   throw error;
-  }
- }
- async function createOrChange(route,args,signal){
+ async function createOrChange(command,signal,retrying){
+  const {route,body}=command;
   let response;
-  try{response=await mutate(route,args,signal);}
+  try{response=await linkedInstancesRequest(route,body,signal);}
   catch(error){
-   // The refusal can come from either owner. It contains no verified peer
-   // identity, so don't identify a row from the pasted invitation.
-   if(!signal.aborted&&route==='join'&&isConflict(error,'link_already_linked')){
-    setMode(null);
-    error.displayText=repeatedLinkNotice;
+   if(signal.aborted)throw error;
+   if(isUnconfirmed(route,error,retrying)){
+    resume.current=command;setPending(route);
+    if(route==='join')return false;
+    error.displayText='The result is not confirmed. Retry the same request before starting another change.';
+   }else{
+    resume.current=null;setPending(null);
+    // The duplicate refusal does not identify a verified peer row.
+    if(route==='join'&&isConflict(error,'link_already_linked')){
+     setMode(null);
+     error.displayText=repeatedLinkNotice;
+    }else{
+     error.displayText=(route==='join'&&joinErrors[error.code])||linkingErrors[error.code]||
+      (route==='revoke'?'The link was not revoked. Refresh links and try again.':'Could not create an invitation for this address.');
+    }
    }
    throw error;
   }
   if(signal.aborted)return;
+  resume.current=null;setPending(null);
   if(route==='offer'){
    setOffer(response);setCopyNote('');
    if(visible.current&&document.hasFocus()&&hostNow()<response.expiresAt){
@@ -166,8 +178,12 @@ export function LinkedInstancesSettings({active=true}){
   catch{if(!signal.aborted)setResult({error:true,text:text+' Could not refresh the list. Use Refresh links.'});}
  }
  function change(route,args){
-  if(pending&&resume.current?.route!==route)return Promise.resolve(false);
-  return run({offer:'Creating invitation…',join:'Verifying invitation…',revoke:'Revoking link…'}[route],signal=>createOrChange(route,args,signal));
+  if(resume.current)return Promise.resolve(false);
+  return run(changeLabels[route],signal=>createOrChange({route,body:{commandId:crypto.randomUUID().replaceAll('-',''),...args}},signal,false));
+ }
+ function retry(){
+  const command=resume.current;
+  if(command)return run('Retrying the same request…',signal=>createOrChange(command,signal,true));
  }
  function check(link){
   return run('Checking availability…',async signal=>{
@@ -203,9 +219,12 @@ export function LinkedInstancesSettings({active=true}){
   <p>Link two Amplifiers to let one check whether the other is online. Links do not give access to chats, files, or controls.</p>
   {busy&&<p role="status">{busy}</p>}
   <Notice result={result}/>
+  {pending==='join'&&<Notice result={{error:true,text:pendingJoinNotice}}/>}
+  {pending&&<button type="button" className="a-soft" disabled={!!busy} onClick={retry}>Retry same request</button>}
   {notSupported&&<p role="status">Linking is not available on this Amplifier.</p>}
   {list&&<>
-   {list.links.length===0?<p>No linked instances yet.</p>:<ul className="a-link-list">
+   {pending==='join'&&list.links.length>0&&<p className="a-caption">Links from the last refresh</p>}
+   {list.links.length===0?(pending!=='join'&&<p>No links in the last loaded list.</p>):<ul className="a-link-list">
     {list.links.map(link=>{
      const matching=list.links.filter(other=>!other.revoked&&other.instanceId===link.instanceId&&other.direction===link.direction);
      const duplicate=!link.revoked&&matching.length>1;
@@ -250,7 +269,6 @@ export function LinkedInstancesSettings({active=true}){
     {offer&&<><Offer offer={offer} copyNote={copyNote}/><div className="a-link-actions"><button type="button" className="a-soft" onClick={()=>setOffer(null)} disabled={!!busy||pending}>Done</button></div></>}
    </div>}
    {mode==='join'&&<Join disabled={!!busy||pending} onJoin={code=>change('join',{code})}/>}
-   {pending&&<button type="button" className="a-soft" disabled={!!busy} onClick={()=>change(resume.current.route)}>Check the same request</button>}
   </>}
   {!list&&<button type="button" className="a-soft" disabled={!!busy} onClick={load}>Refresh links</button>}
  </section>;
