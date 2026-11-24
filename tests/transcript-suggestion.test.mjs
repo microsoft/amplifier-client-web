@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import {createActionCatalogReader} from '../src/action-catalog.js';
 import assert from 'node:assert/strict';
-import {supportsTranscriptSuggestions,suggestionText,suggestionScope,suggestionWitness,suggestionEligible,suggestionOutboxPending,plainSuggestionTab,createSuggestionController,suggestionDispositionText} from '../src/transcript-suggestion.js';
+import {supportsTranscriptSuggestions,suggestionText,suggestionScope,suggestionWitness,suggestionEligible,suggestionOutboxPending,plainSuggestionTab,createSuggestionController,suggestionDispositionText,suggestionSettingsState} from '../src/transcript-suggestion.js';
 import {composerState,insertComposerSuggestion,composerMarkdown,composerDocument} from '../src/markdown-composer.js';
 import {undo,redo} from 'prosemirror-history';
 
@@ -35,6 +35,60 @@ test('late, malformed and failed catalog reads cannot grant actions to a replace
 });
 
 const frame=()=>({client:{hostInstanceId:'host',historyScope:'principal'},selectedSessionId:'s',view:{},sessions:[{id:'s',status:'idle',messages:[{id:'a',role:'assistant',text:'Done.'}]}]});
+test('modal/Canvas transition and retained dirty-settings route cannot spend a first suggestion attempt',()=>{
+ let state=frame(),route='chat-computer',sequence=0;
+ const read=()=>suggestionSettingsState(state,route),controller=createSuggestionController({readState:read,requestId:()=>String(++sequence)});
+ const witness=suggestionWitness(state).key;
+ const check=()=>{const projected=read();assert.equal(suggestionWitness(projected).key,witness);controller.observe(projected,'config',suggestionEligible(projected));return controller.nextRequest()};
+ state.view.panel='chat-computer';assert.equal(check(),null);
+ state={...state,view:{panel:null,settingsCanvas:true},canvas:{kind:'settings',open:true}};
+ assert.equal(check(),null,'Raw modal is cleared before guarded Canvas ownership catches up');
+ route='settings-canvas';assert.equal(check(),null);
+ state={...state,view:{panel:null,settingsCanvas:false},canvas:{kind:'settings',open:false}};
+ assert.equal(check(),null,'Private dirty-settings guard still owns Canvas after the requested close');
+ route='settings';assert.equal(check(),null,'Retained dirty modal also blocks after raw view closes');
+ assert.equal(sequence,0,'No request UUID was allocated while either owner held Settings');
+ route=null;assert.deepEqual(check(),{sessionId:'s',requestId:'1',expectedLastMessageId:'a'});
+ assert.equal(sequence,1);assert.equal(check(),null);
+});
+test('latest raw Settings ownership blocks transport and acceptance before the guarded render catches up',async()=>{
+ const state=frame();let route=null;
+ const read=()=>suggestionSettingsState(state,route);
+ const controller=createSuggestionController({readState:read,requestId:()=> 'original',readStatus:async args=>({...args,status:'ready',sourceKey:'source',configRevision:'r',suggestion:'Try this'})});
+ controller.observe(read(),'r',true);const args=controller.nextRequest();
+ state.canvas={kind:'settings',open:true};
+ assert.equal(controller.requestCurrent(args),false,'Queued dispatch sees requested Canvas before any new render');
+ assert.equal(controller.receive(args,{...args,status:'ready',sourceKey:'source',configRevision:'r',suggestion:'Try this'}),false);
+ state.canvas.open=false;
+ controller.receive(args,{...args,status:'ready',sourceKey:'source',configRevision:'r',suggestion:'Try this'});
+ const ghost=controller.candidate();assert.ok(ghost);
+ state.view.panel='settings';assert.equal(await ghost.validate(),null,'New requested modal also blocks before guarded render');
+ state.view.panel=null;route='settings';assert.equal(await ghost.validate(),null,'Retained dirty-modal owner blocks when raw modal has closed');
+});
+test('non-Settings Canvas and library keep ordinary eligibility, but Settings projection never changes draft/source/Stop or spent receipts',()=>{
+ const state=frame(),draftDocument={version:1,segments:[]};
+ state.view.draftDocument=draftDocument;state.canvas={kind:'markdown',open:true};
+ assert.equal(suggestionEligible(suggestionSettingsState(state,null)),true);
+ state.canvas.kind='settings';state.view.canvasDraft={library:true};
+ assert.equal(suggestionEligible(suggestionSettingsState(state,null)),true,'A library hiding a Settings artifact is not that Settings surface');
+ const projection=suggestionSettingsState(state,'settings-canvas');
+ assert.equal(projection.view.draftDocument,draftDocument);assert.equal(projection.sessions,state.sessions);assert.equal(projection.client,state.client);
+ assert.equal(suggestionEligible(projection),false);
+ state.canvas.open=false;state.view.canvasDraft=null;
+ state.view.settingsCanvas=true;
+ assert.equal(suggestionEligible(suggestionSettingsState(state,null)),true,'A stale raw intent flag after ordinary tab close is not current Settings ownership');
+ state.canvas={id:'ordinary-canvas',open:true};
+ assert.equal(suggestionEligible(suggestionSettingsState(state,null)),true,'Recorded after-close state: open ordinary Canvas, stale settings flag, no guarded Settings');
+ state.view.settingsCanvas=false;
+ const controller=createSuggestionController({readState:()=>suggestionSettingsState(state,null),requestId:()=> 'spent'});
+ controller.observe(state,'r',true);const args=controller.nextRequest();
+ controller.receive(args,{...args,status:'expired',sourceKey:null,configRevision:null});
+ controller.observe(suggestionSettingsState(state,'settings'),'r',false);
+ controller.observe(suggestionSettingsState(state,null),'r',true);
+ assert.equal(controller.nextRequest(),null,'The repair must not reset or retry a previously spent source');
+ assert.equal(controller.resumeRequest().requestId,'spent');
+ state.sessions[0].status='stopped';assert.equal(suggestionEligible(suggestionSettingsState(state,null)),false);
+});
 test('safe disposition copy never renders arbitrary host reason or provider error prose',()=>{
  assert.equal(suggestionDispositionText({status:'empty'}),'No suggestion this time.');
  assert.equal(suggestionDispositionText({status:'failed',reason:'secret endpoint/key'}),'The selected connection could not load a suggestion.');

@@ -20,7 +20,7 @@ import {useTranscriptSuggestion} from './use-transcript-suggestion.jsx';
 import {SuggestionStatus} from './suggestion-status.jsx';
 import {settingsPatch} from './settings-navigation.js';
 import {createActionCatalogReader} from './action-catalog.js';
-import {suggestionScope,suggestionOutboxPending,supportsTranscriptSuggestions} from './transcript-suggestion.js';
+import {suggestionScope,suggestionOutboxPending,supportsTranscriptSuggestions,suggestionSettingsState} from './transcript-suggestion.js';
 import {clearSuggestionModels} from './suggestion-model-settings.jsx';
 import {ComposerReturnHelp} from './composer-return-preference.jsx';
 import {automaticReturnMode} from './composer-return.js';
@@ -1105,7 +1105,7 @@ function App(){
  // may retain READY privately. Actual history loading and safety blockers clear it.
  const suggestionBlocked=!!(!shell.ready||!hasAppearanceIdentity(state?.appearance)||state?.appearance?.availability==='failed'||busy||uploading||availableAttachments.length||referencingDraft||dictating||callActive||voiceStarting||conversationHistoryPending(session,false,messages)||executionUnavailable||detail.focused||!connected||
   suggestionOutboxPending(outbox.entries,outboxSource,session?.id));
- const suggestion=useTranscriptSuggestion({state:settingsState,suggestionsSupported,readState:()=>{const current=pendingView.current.apply(latest.current);return {...current,view:{...current?.view,settingsCanvas:canvasSettingsVisible}}},act:dispatch,blocked:suggestionBlocked,connected,composing:suggestionComposing,
+ const suggestion=useTranscriptSuggestion({state:suggestionSettingsState(state,settingsRoute),suggestionsSupported,readState:()=>suggestionSettingsState(pendingView.current.apply(latest.current),settingsRoute),act:dispatch,blocked:suggestionBlocked,connected,composing:suggestionComposing,
   recipient:recipientAgentId,canUse:()=>!lastDraft.current&&!uploadCount.current&&!referenceDraftLock.current&&!dictationControl.current?.current&&!suggestionOutboxPending(outbox.current.current,deliveryScope(latest.current,session),session?.id)&&!pendingView.current.apply(latest.current)?.draftNavigationPending});
  suggestionFence.current=suggestion.owner;
  useLayoutEffect(()=>{
