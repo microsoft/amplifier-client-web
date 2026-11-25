@@ -91,6 +91,7 @@ import {createRoot} from 'react-dom/client';
 import {Phone,MessageCircle,Bell,ArrowUp,X,GitBranch,Download,ChevronRight,AudioLines} from 'lucide-react';
 import {request,download,visibleView} from './api';
 import {createPendingView} from './pending-view';
+import {createPanelFocus,panelFocusScope} from './panel-focus';
 import {createSettingsActionQueue,settingsDraftKey,isProviderCatalogRead,isDraftDefaultsRead,isConversationChoiceRead,isAppearanceRead} from './settings-action-queue';
 import {applyStateDelta,onlyStateRevisionChanged} from './state-transport';
 import {createViewReporter} from './view-reporter';
@@ -146,7 +147,7 @@ function App(){
  },[]);
  const narrow=useNarrowScreen();
  const [creatingWorkspace,setCreatingWorkspace]=useState(false);
- const actionFeedback=useRef(createActionFeedback()),outsidePointer=useRef(false),panelReturnFocus=useRef(null),settingsNavigation=useRef(null),workspaceSettingsNavigation=useRef(null);
+ const actionFeedback=useRef(createActionFeedback()),outsidePointer=useRef(false),panelFocus=useRef(createPanelFocus()),settingsNavigation=useRef(null),workspaceSettingsNavigation=useRef(null);
  const dictationControl=useRef(null);
  const suggestionFence=useRef(null),[suggestionComposing,setSuggestionComposing]=useState(false),[dictating,setDictating]=useState(false);
  // Cleared on every transport open/error; populated only by this stream's
@@ -765,6 +766,14 @@ function App(){
  const settingsSession=useGuardedSettingsSession(session,settingsNavigation,id=>dispatch(id?'session.select':'session.draft',id?{id}:{},{settingsConfirmed:true}));
  const settingsRoute=useGuardedSettingsPanel(state?.canvas?.kind==='settings'&&state.canvas.open&&!view.canvasDraft?.library&&!view.panel?'settings-canvas':view.panel,settingsNavigation,route=>act('view.update',{patch:{panel:route==='settings-canvas'?null:route,settingsCanvas:route==='settings-canvas'}}));
  const canvasSettingsVisible=settingsRoute==='settings-canvas',panel=canvasSettingsVisible?null:settingsRoute;
+ // Commit the guarded display, not the acknowledged view or an unapproved
+ // pending close. Panel-to-panel transitions retain the same outer invoker.
+ useLayoutEffect(()=>{panelFocus.current.commit({panel,scope:panelFocusScope(state),ready:shell.ready,root:root.current})});
+ useEffect(()=>{
+  const focus=event=>panelFocus.current.observeFocus(event.target);
+  document.addEventListener('focusin',focus,true);
+  return()=>{document.removeEventListener('focusin',focus,true);panelFocus.current.clear()};
+ },[]);
  useEffect(()=>{
   const surface=workSurface(state),workspace=state?.workspaces?.find(row=>row.id===state.view?.workWorkspaceId);
   const title=surface==='home'?'':surface==='workspaces'?'All workspaces':surface==='chats'?'All chats':surface==='workspace'?workspace?.name||'Workspace':session?.title?.trim();
@@ -853,7 +862,7 @@ function App(){
  useEffect(()=>{visualClient.current?.sync(voice,connected,state?.voice?.visual)},[voice,connected,state?.voice?.visual]);
  useEffect(()=>{voiceClient.current?.sync(state?.voice,connected)},[state?.voice,connected,voice.id]);
  const modeChange=m=>act('view.update',{patch:{mode:m}});
- const open=p=>{if(p==='new-session'){newChat();return;}if(!latest.current?.view?.panel)panelReturnFocus.current=document.activeElement;setError('');act('view.update',{patch:{panel:p,toolbarMenuOpen:false,...(p==='settings'&&window.matchMedia('(max-width:959px)').matches?{settingsSection:'index',settingsExpanded:[]}: {})}})};
+ const open=p=>{if(p==='new-session'){newChat();return;}panelFocus.current.capture(root.current);setError('');act('view.update',{patch:{panel:p,toolbarMenuOpen:false,...(p==='settings'&&window.matchMedia('(max-width:959px)').matches?{settingsSection:'index',settingsExpanded:[]}: {})}})};
  useEffect(()=>{
   const shortcut=event=>{
    if(event.key!==','||event.altKey||event.shiftKey||event.isComposing)return;
@@ -861,12 +870,7 @@ function App(){
    if(!(mac?event.metaKey&&!event.ctrlKey:event.ctrlKey&&!event.metaKey))return;
    event.preventDefault();
    if(!latest.current)return;
-   if(!latest.current.view?.panel){
-    const active=document.activeElement;
-    // Add's menu unmounts when Settings takes ownership. Return to its lasting
-    // trigger, not a detached menu row, only after the Settings guard closes.
-    panelReturnFocus.current=active?.closest('.a-composer-add-panel')?root.current?.querySelector('.a-compose-add>button[aria-haspopup="dialog"]')||active:active;
-   }
+   panelFocus.current.capture(root.current);
    act('view.update',{patch:{panel:'settings',toolbarMenuOpen:false,
     ...(window.matchMedia('(max-width:959px)').matches?{settingsSection:'index',settingsExpanded:[]}: {})}});
   };
@@ -877,7 +881,6 @@ function App(){
  const close=()=>settingsNavigation.current?settingsNavigation.current.close():dismissPanel();
  useEffect(()=>{
   if(!panel||!shell.ready)return;
-  const previous=panelReturnFocus.current||document.activeElement;
   const dialog=root.current?.querySelector('.a-overlay [role=dialog]');
   if(!dialog)return;
   const controls=()=>[...dialog.querySelectorAll('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),a[href],summary')].filter(el=>el.getClientRects().length);
@@ -887,7 +890,7 @@ function App(){
    if(e.key==='Tab'){const items=controls(),first=items[0],last=items.at(-1);if(!items.includes(document.activeElement)){e.preventDefault();(e.shiftKey?last:first)?.focus()}else if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus()}}
   };
   window.addEventListener('keydown',handler);
-  return()=>{window.removeEventListener('keydown',handler);panelReturnFocus.current=null;if(previous?.isConnected)previous.focus()};
+  return()=>window.removeEventListener('keydown',handler);
  },[panel,act,shell.ready]);
  function preserveOtherDraft(sessionId){
   const payload=stagedDraftPayload.current;

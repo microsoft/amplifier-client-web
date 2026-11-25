@@ -3,7 +3,7 @@ import {readComposerDraft} from './composer-test-helpers.mjs';
 import {createServer} from 'vite';
 import {openSettingsDialog} from './browser-settings.mjs';
 import {createShellHttpFixture,installFixtureEvents} from './shell-http-fixture.mjs';
-import {chromium} from '@playwright/test';
+import {chromium,expect} from '@playwright/test';
 import {fileURLToPath} from 'node:url';
 import {mkdir,writeFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
@@ -135,6 +135,38 @@ try{
  await page.waitForFunction(()=>!document.querySelector('[role="dialog"]'));
  await finish(maintenance);const closing=await nextAction();assert.equal(closing.args.patch.panel,null);await finish(closing);
  await page.waitForFunction(()=>window.amplifier.getState().view.panel===null);
+
+ // The host has accepted the first open, but has not seen its close. This
+ // explicitly constructs the raw/displayed difference rather than relying on
+ // acknowledgement latency. Exercise the actual App focus owner, not a copy.
+ stage='acknowledged modal reopened before close acknowledgement';
+ const add=page.getByRole('button',{name:'Add attachments',exact:true});
+ const addMenu=page.getByRole('dialog',{name:'Add to your message',exact:true});
+ const modal=page.locator('.a-overlay [role=dialog]');
+ const openFromAdd=async()=>{
+  await add.click();await expect(addMenu.getByRole('button',{name:'Attach files',exact:true})).toBeFocused();
+  await page.keyboard.press('Control+,');await expect(modal).toBeVisible();await expect(addMenu).toHaveCount(0);
+ };
+ await openFromAdd();const firstOpen=await nextAction();assert.equal(firstOpen.args.patch.panel,'settings');
+ await finish(firstOpen);assert.equal(state.view.panel,'settings');
+ await page.keyboard.press('Escape');await expect(modal).toHaveCount(0);await expect(add).toBeFocused();
+ const heldClose=await nextAction();assert.equal(heldClose.args.patch.panel,null);
+ assert.equal(state.view.panel,'settings','The accepted host view still owns the first open');
+ await openFromAdd();
+ assert.equal(waiting.length,0,'Reopen paints before the held close reaches its shared queue');
+ assert.equal(state.view.panel,'settings');
+ await finish(heldClose);const reopened=await nextAction();assert.equal(reopened.args.patch.panel,'settings');
+ await expect(modal).toBeVisible();await finish(reopened);
+ await page.keyboard.press('Escape');await expect(modal).toHaveCount(0);await expect(add).toBeFocused();
+ const reclosed=await nextAction();assert.equal(reclosed.args.patch.panel,null);await finish(reclosed);
+
+ stage='same-scope panel transition preserves the outer invoker';
+ await openFromAdd();await finish(await nextAction());
+ await page.evaluate(()=>{window.panelTransition=window.amplifier.dispatch('view.update',{patch:{panel:'appearance'}})});
+ const transition=await nextAction();assert.equal(transition.args.patch.panel,'appearance');await finish(transition);
+ await page.locator('.a-settings-page-heading').getByRole('heading',{name:'Appearance',exact:true}).waitFor();
+ await page.keyboard.press('Escape');await expect(modal).toHaveCount(0);await expect(add).toBeFocused();
+ const transitionClose=await nextAction();assert.equal(transitionClose.args.patch.panel,null);await finish(transitionClose);
 
  // A rejected older request cannot discard the newer agent-issued navigation.
  stage='rejected older navigation';
