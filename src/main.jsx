@@ -49,6 +49,7 @@ import {SettingsExperience} from './settings-experience';
 import {instanceTitle,updateInstanceHead} from './instance-branding.js';
 import {useGuardedSettingsPanel,useGuardedSettingsSession} from './settings-drafts';
 import {allowanceScope} from './recovery-allowance';
+import {usePausedChat,resumeForMessage,stoppedDelivery} from './paused-chat';
 import {useMessageOutbox,outboxMessages,outboxMatches,ClosedDeliveryItems} from './message-outbox';
 import {checkedDelivery,deliveryRecovery,deliveryScope,deliverySourceScope,deliveryTargetMatches,nativeDeliverySource,retainedDeliveryTarget,freshRetrySource} from './pending-delivery-checks';
 import {clientId,clientUrl,attachClient,draftJournal} from './api';
@@ -753,6 +754,8 @@ function App(){
  const externalConversation=!!(session?.externalAgent||(!session&&draftExternalAgentIds(view.newSessionDraft).length));
  const sharedConversation=isSharedExternalConversation(session)||!session&&draftExternalAgentIds(view.newSessionDraft).length>1;
  const outboxSource=deliveryScope(state,session);
+ const rejectedWhileStopped=outbox.entries.some(row=>row.sessionId===session?.id&&outboxMatches(row,outboxSource)&&!row.closed&&row.status==='failed'&&(stoppedDelivery(row)||row.errorCode==='resume_failed'));
+ const [pausedChat,refreshPausedChat]=usePausedChat(dispatch,session,(state?.runtimeControl?.[session?.id]?.['task.get']??session)?.task,outboxSource,state?.client?.hostInstanceId,rejectedWhileStopped);
  const preparationScope=allowanceScope(session,outboxSource);
  const granted=preparation?.scope===preparationScope?preparation:null;
  useEffect(()=>{setPreparation(previous=>previous?.scope===preparationScope?previous:null)},[preparationScope]);
@@ -974,20 +977,27 @@ function App(){
   uploadQueue.current=uploadQueue.current.then(run,run);
  }
  const chatDrop=useChatFileDrop({ownerKey:JSON.stringify([session?.id??null,state?.attachmentDraftId,state?.selectedWorkspaceId]),enabled:!!state&&workSurface(state)==='chat'&&!externalConversation&&!executionUnavailable&&!historyPending&&!referencingDraft,onFiles:addFiles,onError:setError});
- async function deliver(entry){
+ async function deliver(entry,resume){
   if(deliveries.current.has(entry.id))return;
   const previouslyUncertain=entry.status==='unknown';
   deliveries.current.add(entry.id);outbox.update(entry.id,{status:'sending',error:''});
   try{
    if(!entry.sessionId){const current=await ensureSession(entry.creation);if(!outboxMatches(entry,deliveryScope(latest.current,null)))throw Object.assign(Error('The delivery target changed. The original submission remains saved.'),{accepted:false,beforePost:true});entry=outbox.update(entry.id,{sessionId:current.id,scope:deliveryScope(latest.current,current),...(entry.expectedSource===null?{expectedSource:nativeDeliverySource(current)}:{}),...(entry.expectedConfigurationRevision===null?{expectedConfigurationRevision:current.nextMessageRevision??0}:{})});}
    if(!deliveryTargetMatches(latest.current,{scope:entry.scope},entry.sessionId))throw Object.assign(Error('The original message belongs to a different source. Nothing was sent again.'),{accepted:false,beforePost:true});
+   if(resume){
+    try{
+     await resumeForMessage(dispatch,resume,entry.id,()=>resume.sessionId===entry.sessionId&&latest.current?.selectedSessionId===resume.sessionId&&deliveryTargetMatches(latest.current,resume,entry.sessionId)&&
+      latest.current.sessions.some(row=>row.id===resume.sessionId&&(row.interruptionRevision??0)===resume.interruption));
+    }catch(error){refreshPausedChat();outbox.update(entry.id,{status:'failed',errorCode:'resume_failed',error:actionErrorMessage(error)});return}
+   }
    const result=await dispatch('conversation.send',{sessionId:entry.sessionId,text:entry.text,...(entry.recipientAgentId?{recipientAgentId:entry.recipientAgentId}:{}),...(entry.expectedSource?{expectedSource:entry.expectedSource}:{}),...(entry.document?{document:entry.document}:{}),...(Number.isInteger(entry.expectedConfigurationRevision)?{expectedConfigurationRevision:entry.expectedConfigurationRevision}:{}),...(Number.isInteger(entry.expectedInterruptionRevision)?{expectedInterruptionRevision:entry.expectedInterruptionRevision}:{}),...(entry.recoveryAllowance?{recoveryAllowance:entry.recoveryAllowance}:{}),...(entry.replyTo?.id?{replyId:entry.replyTo.id}:{}),attachmentIds:entry.attachmentIds,via:entry.via,preserveDraft:true},{id:entry.commandId,feedback:false,outboxScope:entry.scope,preservePayload:true});
    if(!deliveryTargetMatches(latest.current,{scope:entry.scope},entry.sessionId)){outbox.update(entry.id,{status:'unknown',error:'The source changed before acknowledgement. The original submission remains saved.'});return;}
    outbox.update(entry.id,['sending','unknown'].includes(result.delivery)?{status:'unknown',error:'Delivery has not been confirmed. Checking again will not run it twice.'}:null);
   }catch(error){
+   if(error.code==='assignment_stopped')refreshPausedChat();
    const received=deliveryTargetMatches(latest.current,{scope:entry.scope},entry.sessionId)&&latest.current?.sessions?.find(row=>row.id===entry.sessionId)?.messages?.some(row=>row.inputId===entry.commandId&&['accepted','queued_for_update','held'].includes(row.delivery?.status));
    if(received&&error.code!=='session_busy')outbox.update(entry.id,null);
-   else outbox.update(entry.id,{status:!previouslyUncertain&&!error.unconfirmed&&(error.beforePost||error.receipt?.delivery==='failed'||error.accepted===false)?'failed':'unknown',error:actionErrorMessage(error)});
+   else outbox.update(entry.id,{status:!previouslyUncertain&&!error.unconfirmed&&(error.beforePost||error.receipt?.delivery==='failed'||error.accepted===false)?'failed':'unknown',errorCode:error.code,error:actionErrorMessage(error)});
   }finally{deliveries.current.delete(entry.id)}
  }
  function discardMessage(message){
@@ -998,7 +1008,7 @@ function App(){
    ['working','starting','running','stopping'].includes(owner?.status)&&owner?.execution?.currentTurnId===entry.commandId)return;
   outbox.update(entry.id,{closed:true});
  }
- async function retryMessage(message,text){
+ async function retryMessage(message,text,resume){
   const previous=outbox.current.current.find(row=>row.id===(message.localDelivery?.id||message.id));if(!previous||previous.closed||previous.status==='sending'||!deliveryTargetMatches(latest.current,{scope:previous.scope},previous.sessionId))return;
   if(previous.recoveryAllowance){setError('Check delivery for this message. To try again, review preparation and send a fresh message.');return;}
   if(previous.document&&text!==undefined){setError('Retry this quoted message unchanged, or discard it and compose a correction.');return;}
@@ -1009,7 +1019,7 @@ function App(){
   if(previous.status==='failed'&&previous.sessionId&&!currentSession){setError('Open the original chat before retrying this unsent message. Its saved submission was kept.');return;}
   const next=outbox.update(previous.id,{creation,...(previous.status==='failed'?{commandId:crypto.randomUUID(),...freshRetrySource(currentSession,creation),expectedGenerationId:undefined,allowNextTurn:undefined,expectedConfigurationRevision:currentSession?currentSession.nextMessageRevision??0:null,expectedInterruptionRevision:currentSession?.interruptionRevision??0,...(text!==undefined?{text}:{})}:{}),error:''});
   if(text!==undefined)act('view.update',{patch:{messageEdit:null}});
-  await deliver(next);
+  await deliver(next,resume);
  }
  async function send(e){
   if(quoteApi.current?.suggestionValidating?.()){e?.preventDefault();return}
@@ -1039,7 +1049,7 @@ function App(){
    else await clearingDraft;
    if(!outboxMatches(entry,deliveryScope(latest.current,session)))throw Error('The delivery target changed. The original submission remains saved.');
    const current=session||await ensureSession(entry.creation);if(!outboxMatches(entry,deliveryScope(latest.current,session)))throw Error('The delivery target changed. The original submission remains saved.');entry=outbox.update(id,{sessionId:current.id,scope:deliveryScope(latest.current,current),...(entry.expectedSource===null?{expectedSource:nativeDeliverySource(current)}:{}),...(entry.expectedConfigurationRevision===null?{expectedConfigurationRevision:current.nextMessageRevision??0}:{})});
-   await deliver(entry);
+   await deliver(entry,pausedChat);
   }catch(error){outbox.update(id,{status:error.receipt?.delivery==='failed'||error.status>=400&&error.status<500&&error.status!==408?'failed':'unknown',error:actionErrorMessage(error)});}
  }
 
@@ -1085,6 +1095,7 @@ function App(){
  const responseActive=working||(session?.workers||[]).some(worker=>['queued','starting','working','running','stopping'].includes(worker.status));
  const sendingHere=outbox.entries.some(row=>outboxMatches(row,outboxSource)&&row.sessionId===(session?.id??null)&&row.status==='sending');
  const primaryAction=composerPrimaryAction({draft,attachments:availableAttachments,uploading,working,responseActive,stopping:session?.status==='stopping',voiceStatus:voice.status,voiceStarting,voiceAvailable:!externalConversation,busy,newChatPending,sending:sendingHere,historyPending,executionUnavailable});
+ const resumeSend=pausedChat&&primaryAction.action==='conversation.send'&&!!(draft.trim()||availableAttachments.length);
  const appReload=useAppReload({client:streamClient,canvasWorkspace:state?.canvasWorkspace,blocked:callActive||voiceStarting?'Finish your voice call, then reload.':uploading||sendingHere||busy?'Wait for the current upload or send to finish.':'',prepare:async()=>{
   // Before a first state arrives there is no mounted editor to checkpoint.
   // The existing local draft journal remains intact across this recovery reload.
@@ -1157,7 +1168,7 @@ function App(){
   setPresentation:patch=>updatePresentation(patch).catch(reportError)};
  const previewVisible=!!peerPreview.active&&!browsing,inspectorVisible=!!stepInspector.active&&!browsing;
  const layoutState=browsing?{...settingsState,canvas:{...state?.canvas,open:false}}:previewVisible||inspectorVisible?{...settingsState,peerPreview:previewVisible,stepInspector:inspectorVisible,canvas:{...state?.canvas,open:true}}:settingsState;
- const renderMessage=(row,options={})=><MessageEntry key={row.id} message={row.message} session={session||{id:null}} state={state} connected={connected} statusCurrent={!detail.focused} act={act} stamp={nowLabel} working={working} forkTurn={turnEnds.get(row.id)} newest={newest.has(row.id)} retry={retryMessage} discard={discardMessage} dispatch={dispatch} {...options}/>;
+ const renderMessage=(row,options={})=><MessageEntry key={row.id} message={row.message} session={session||{id:null}} state={state} connected={connected} statusCurrent={!detail.focused} act={act} stamp={nowLabel} working={working} forkTurn={turnEnds.get(row.id)} newest={newest.has(row.id)} pausedChat={pausedChat} retry={retryMessage} discard={discardMessage} dispatch={dispatch} {...options}/>;
  const renderRow=row=>row.kind==='activity'?<ActivityGroup key={row.id} row={row} turns={groupedTurns} state={state} act={act} renderRow={renderRow}/>:row.kind==='model-change'?<ModelChange key={row.id} change={row.change}/>:row.kind==='artifacts'?<ArtifactLinks key={row.id} state={state} message={row.message} act={act} dispatch={dispatch}/>:row.kind==='work'?<ConversationWork key={row.id} row={row} data={execution} state={state} act={act} dispatch={dispatch} session={session} working={working} renderMessage={renderMessage}/>:row.kind==='peers'?<PeerRun key={row.id} row={row} session={session} state={state} renderMessage={renderMessage}/>:renderMessage(row);
  if(!state||!shell.ready)return <AppReloadContext.Provider value={appReload}><div className="boot"><AppReloadNotice/><img src={logo}/><h1>Amplifier</h1><p>{error||shell.error||'Connecting to your workspace…'}</p>{(error||shell.error)&&<><button onClick={()=>{setBootAttempt(value=>value+1);shell.refresh()}}>Retry connection</button><p><a href="?shell=recovery">Open recovery mode</a></p></>}</div></AppReloadContext.Provider>;
  if(!hasAppearanceIdentity(state.appearance)||state.appearance.availability==='failed')return <div className="boot" role="alert"><h1>Appearance unavailable</h1><p>{state.appearance?.error||'Appearance preferences could not be loaded. Your saved data was not replaced.'}</p><button type="button" onClick={()=>setBootAttempt(value=>value+1)}>Retry connection</button></div>;
@@ -1223,7 +1234,7 @@ function App(){
      {session&&responseActive&&!callActive&&primaryAction.action!=='conversation.stop'&&<button type="button" className="a-compose-stop" aria-label="Stop response" data-action="conversation.stop" disabled={session.status==='stopping'||executionUnavailable} onClick={()=>act('conversation.stop',{sessionId:session.id})}>{session.status==='stopping'?'Stopping…':'Stop'}</button>}
      <ShellSlot name="composer.actions">{!(panel==='chat-models'&&session?.failure?.code==='transition_intent_required')&&<ComposerOptions state={state} session={session} act={act} working={working} detail={presentation.interfaceDetail||presentation.executionDetail} recipientAgentId={recipientAgentId} onRecipientChange={id=>setRecipientChoices(current=>({...current,[recipientKey]:id}))}/>}</ShellSlot>
     </div>
-    <div className="a-compose-end"><DictationButton key={session?.id??'dictation-new'} draft={draft} onChange={value=>{if((latest.current?.selectedSessionId??null)===(session?.id??null))editDraft(value)}} controlRef={dictationControl} onListening={value=>{if(value)suggestionFence.current?.invalidate();setDictating(value)}} disabled={executionUnavailable||historyPending||referencingDraft||sendingHere||browsing||callActive}/><button type={primaryAction.action==='conversation.send'?'submit':'button'} className="a-send" data-part="composer-primary-action" data-action={primaryAction.action} aria-label={primaryAction.action==='call.start'&&state.voiceConfiguration?.available===false?'Set up voice':primaryAction.label} title={primaryAction.action==='call.start'&&state.voiceConfiguration?.available===false?'Set up voice in Settings':primaryAction.label} disabled={primaryAction.disabled||(referencingDraft&&primaryAction.action==='conversation.send')} onClick={primaryAction.action==='call.start'?startCall:primaryAction.action==='call.end'?()=>act('call.end'):primaryAction.action==='conversation.stop'?()=>act('conversation.stop',{sessionId:session.id}):undefined}>{primaryAction.icon==='voice'?<AudioLines/>:primaryAction.icon==='cancel'?<X/>:<ArrowUp/>}</button></div>
+    <div className="a-compose-end"><DictationButton key={session?.id??'dictation-new'} draft={draft} onChange={value=>{if((latest.current?.selectedSessionId??null)===(session?.id??null))editDraft(value)}} controlRef={dictationControl} onListening={value=>{if(value)suggestionFence.current?.invalidate();setDictating(value)}} disabled={executionUnavailable||historyPending||referencingDraft||sendingHere||browsing||callActive}/><button type={primaryAction.action==='conversation.send'?'submit':'button'} className={resumeSend?"a-primary":"a-send"} data-part="composer-primary-action" data-action={primaryAction.action} aria-label={primaryAction.action==='call.start'&&state.voiceConfiguration?.available===false?'Set up voice':resumeSend?'Resume and send':primaryAction.label} title={primaryAction.action==='call.start'&&state.voiceConfiguration?.available===false?'Set up voice in Settings':resumeSend?'Resume and send':primaryAction.label} disabled={primaryAction.disabled||(referencingDraft&&primaryAction.action==='conversation.send')} onClick={primaryAction.action==='call.start'?startCall:primaryAction.action==='call.end'?()=>act('call.end'):primaryAction.action==='conversation.stop'?()=>act('conversation.stop',{sessionId:session.id}):undefined}>{resumeSend?'Resume and send':primaryAction.icon==='voice'?<AudioLines/>:primaryAction.icon==='cancel'?<X/>:<ArrowUp/>}</button></div>
     </div>
     <ComposerReturnHelp id={composerReturnHelpId}/>
     </ComposerOwnership>

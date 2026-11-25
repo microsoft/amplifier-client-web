@@ -59,7 +59,7 @@ export function StreamingMessage({session,state,embedded=false}){
   <article className="a-message a-assistant">{session.externalAgent&&<p className="a-message-attribution">{externalAgentLabel(session,session.externalAgent.activeAgentId||session.externalAgent.id)}</p>}{body}</article>;
 }
 
-export function MessageEntry({message:m,session,state,connected=true,statusCurrent=true,act,stamp,working,forkTurn,retry,discard,dispatch=act,expandedObservation=false,newest=false,omitMedia=false,workEmbedded=false}){
+export function MessageEntry({message:m,session,state,connected=true,statusCurrent=true,act,stamp,working,forkTurn,pausedChat,retry,discard,dispatch=act,expandedObservation=false,newest=false,omitMedia=false,workEmbedded=false}){
  const [loadingEdit,setSaving]=useState(false),[localCopied,setLocalCopied]=useState(false),[copying,setCopying]=useState(false),[detailError,setDetailError]=useState(''),edit=state.view?.messageEdit,editing=edit?.sessionId===session.id&&edit?.messageId===m.id;
  const pendingEdit=usePendingMessageEdit(JSON.stringify([state.client?.hostInstanceId,state.client?.id,session.id,m.inputId||m.commandId||m.id]),setDetailError),saving=loadingEdit||pendingEdit.pending;
  const [text,setText]=useState(editing?edit.text:''),pendingText=useRef(null),submitting=useRef(false);
@@ -106,7 +106,7 @@ export function MessageEntry({message:m,session,state,connected=true,statusCurre
    {!session.externalAgent&&!localDelivery&&!m.displayOnly&&['user','assistant'].includes(m.role)&&<MessageInteractions message={m} sessionId={session.id} dispatch={dispatch}/>}
    {m.role==='user'&&!external&&!session.externalAgent&&!m.displayOnly&&<button type="button" className="a-icon" title={quoted?'Quoted messages retain exact references. Send a correction instead.':session.historyReadOnlyReason|| (session.workspaceAvailable===false?'Workspace folder unavailable':blocked?'Wait for the current work to finish':'Edit message')} aria-label="Edit message" disabled={editLocked} data-operation-pending={saving||undefined} aria-busy={saving||undefined} data-action="view.update" onClick={async()=>{if(editLocked||submitting.current||pendingEdit.isPending())return;setSaving(true);try{patch({sessionId:session.id,messageId:m.id,text:m.textDetail?await readDetail(m.textDetail):m.text,fork:false})}catch(e){setDetailError(e.message)}finally{setSaving(false)}}}><Pencil/></button>}
    {forkTurn&&!session.externalAgent&&!m.displayOnly&&<ForkTurn session={session} turn={forkTurn} act={act} working={working}/>}
-   <MessageDelivery message={m} session={session} delivery={delivery} localDelivery={localDelivery} dispatch={dispatch} retry={retry} discard={discard} recovery={deliveryRecovery(state,session)}/>
+   <MessageDelivery message={m} session={session} delivery={delivery} localDelivery={localDelivery} pausedChat={pausedChat} dispatch={dispatch} retry={retry} discard={discard} recovery={deliveryRecovery(state,session)}/>
 
    {copied?.status==='ready'&&<span role="status" className="a-copy-result success">Copied Markdown</span>}
    {copied?.status==='error'&&<span role="alert" className="a-copy-result error"><AlertCircle/>{copied.message||'Could not copy'}</span>}
