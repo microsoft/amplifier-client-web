@@ -17,8 +17,10 @@ import {hasEarlierWindow,conversationHistoryPending} from './history-window.js';
 import {ChatPages,chatPageTitles} from './chat-pages';
 import {MarkdownComposer} from './markdown-composer.jsx';
 import {useTranscriptSuggestion} from './use-transcript-suggestion.jsx';
+import {SuggestionStatus} from './suggestion-status.jsx';
+import {settingsPatch} from './settings-navigation.js';
 import {createActionCatalogReader} from './action-catalog.js';
-import {suggestionScope,suggestionOutboxPending,supportsTranscriptSuggestions} from './transcript-suggestion.js';
+import {suggestionScope,suggestionOutboxPending,supportsTranscriptSuggestions,suggestionSettingsState} from './transcript-suggestion.js';
 import {clearSuggestionModels} from './suggestion-model-settings.jsx';
 import {ComposerReturnHelp} from './composer-return-preference.jsx';
 import {automaticReturnMode} from './composer-return.js';
@@ -171,6 +173,7 @@ function App(){
  const questionReviewState=useState({});
  const creatingSession=useRef(null),uploadQueue=useRef(Promise.resolve()),uploadCount=useRef(0),fileInput=useRef(null),messagesPane=useRef(null),stickToBottom=useRef(true),chatScroll=useRef(null),historyScrollAnchor=useRef(null),composerRef=useRef(null),root=useRef(null),latest=useRef(null),voiceClient=useRef(null),messagesEnd=useRef(null),draftTimer=useRef(),stagedDraft=useRef(null),stagedDraftPayload=useRef(null),lastNotify=useRef(new Set()),lastDraft=useRef(''),canvasVisibilityQueue=useRef(Promise.resolve()),commandQueue=useRef(Promise.resolve()),voiceControlQueue=useRef(Promise.resolve()),navigationQueue=useRef(Promise.resolve()),canvasDirtyBarrier=useRef(null),reviewQueue=useRef(Promise.resolve()),stateListeners=useRef(new Set()),seenEffects=useRef(new Set()),effectHandler=useRef(()=>{}),pendingView=useRef(createPendingView()),serverState=useRef(null),conversationNavigation=useRef(createConversationNavigation());
  const focusInteraction=useRef({touch:false});
+ const [referenceFocus,setReferenceFocus]=useState(null);
  useEffect(()=>{
   const supersede=event=>{focusInteraction.current={touch:event.type==='pointerdown'?event.pointerType!=='mouse':event.type==='keydown'?false:focusInteraction.current.touch}};
   for(const name of ['pointerdown','keydown','input','focusin','compositionstart'])document.addEventListener(name,supersede,true);
@@ -230,8 +233,7 @@ function App(){
   notifySnapshot.current(next);
   const previousSession=latest.current?.sessions?.find(s=>s.id===latest.current.selectedSessionId),nextSession=next.sessions?.find(s=>s.id===next.selectedSessionId);
   if(previousSession?.id===nextSession?.id&&Number(nextSession?.sharedHistoryOffset)<Number(previousSession?.sharedHistoryOffset)&&messagesPane.current){
-   const pane=messagesPane.current,top=pane.getBoundingClientRect().top,anchor=[...pane.querySelectorAll('[data-message-id]')].find(node=>node.getBoundingClientRect().bottom>top);
-   if(anchor){historyScrollAnchor.current={sessionId:nextSession.id,messageId:anchor.dataset.messageId,top:anchor.getBoundingClientRect().top};stickToBottom.current=false}
+   historyScrollAnchor.current=chatScroll.current?.captureLayout();stickToBottom.current=false;
   }
   serverState.current=next;conversationNavigation.current.remember(next);
   destinationHistory.current.observe(next,historyOptions);
@@ -373,6 +375,7 @@ function App(){
   // acceptance. The same navigation queue and Settings/Canvas guards still own
   // the transition; rejection must not destroy the control that shows it.
   const navigationToken=openingDraft?conversationNavigation.current.beginDraft():selectedId&&!meta.chatLink&&!chatReference&&!handoffNavigation&&!canvasDirtyBarrier.current?conversationNavigation.current.begin(pendingView.current.apply(latest.current),selectedId,meta.navigationSession):null;
+  const referenceInteraction=chatReference?focusInteraction.current:null;
   const focusToken=selectedId&&!meta.chatLink&&!chatReference&&!handoffNavigation
    ?conversationNavigation.current.beginFocus(latest.current,selectedId,{interaction:focusInteraction.current,desktop:automaticReturnMode(window)==='desktop-send'&&!focusInteraction.current.touch}):null;
   if(navigationToken&&serverState.current){latest.current=conversationNavigation.current.apply(serverState.current);setState(pendingView.current.apply(latest.current))}
@@ -507,15 +510,9 @@ function App(){
    }
    else if(focusToken){conversationNavigation.current.settleFocus(focusToken,result.accepted===true);if(latest.current)setState(pendingView.current.apply(latest.current))}
    if(pending&&latest.current)setState(pendingView.current.apply(latest.current));
-   if(chatReference&&result.accepted===true)requestAnimationFrame(()=>{
-    if(meta.chatReferenceIntent!==archiveRevision.current||latest.current?.selectedSessionId!==args.id)return;
-    const messages=root.current?.querySelector('[data-part="messages"]');
-    if(messages?.dataset.sessionId!==args.id)return;
-    if(args.chatReference){
-     const heading=root.current?.querySelector('[data-part="session-heading"]');
-     if(heading?.dataset.sessionId===args.id)heading.focus({preventScroll:true});
-    }else{messages.setAttribute('tabindex','-1');messages.focus({preventScroll:true})}
-   });
+   if(chatReference&&result.accepted===true&&meta.chatReferenceIntent===archiveRevision.current){
+    setReferenceFocus({id:args.id,heading:!!args.chatReference,revision:meta.chatReferenceIntent,interaction:referenceInteraction});
+   }
    if(!handledActionResults.current.has(result)){handledActionResults.current.add(result);handleEffects(result.effects)}
    return result;
   }).catch(error=>{conversationNavigation.current.settleFocus(focusToken,false);if(stop&&!stopPostStarted)capabilityStopFence.current.settleStop(stop,'not-applied');if(navigationToken){conversationNavigation.current.settle(navigationToken);if(serverState.current){latest.current=conversationNavigation.current.apply(serverState.current);setState(pendingView.current.apply(latest.current))}}if(error.state&&validDeliveryState(error.state))acceptState(error.state);if(pending){pendingView.current.settle(pending);if(latest.current)setState(pendingView.current.apply(latest.current))}if(chatReference&&meta.chatReferenceIntent!==archiveRevision.current)error.navigationSuperseded=true;throw error}).finally(()=>{settleTracking();settleFeedback()});
@@ -746,7 +743,7 @@ function App(){
  },[state?.appearance?.namespace,state?.appearance?.generation,state?.appearance?.availability,state?.appearance?.composition?.id]);
  useEffect(()=>{const v=state?.view;if(!v)return;if(v.workerDraft!==undefined)setWorkerDraft(v.workerDraft);if(v.agentAction!==undefined)setAgentAction(v.agentAction);if(v.agentArgs!==undefined)setAgentArgs(v.agentArgs)},[state?.view?.workerDraft,state?.view?.agentAction,state?.view?.agentArgs]);
  const selectedSession=state?.sessions?.find(s=>s.id===state.selectedSessionId);
- const detail=useConversationDetail(selectedSession,()=>{stickToBottom.current=false;const pane=messagesPane.current;if(!pane)return;const top=pane.getBoundingClientRect().top,anchor=[...pane.querySelectorAll('[data-message-id]')].find(node=>node.getBoundingClientRect().bottom>top);if(anchor)historyScrollAnchor.current={sessionId:state.selectedSessionId,messageId:anchor.dataset.messageId,top:anchor.getBoundingClientRect().top}},dispatch);
+ const detail=useConversationDetail(selectedSession,()=>{stickToBottom.current=false;historyScrollAnchor.current=chatScroll.current?.captureLayout()},dispatch);
  useEffect(()=>{if(detail.jumpRequest){const frame=requestAnimationFrame(()=>detail.jumpRequest.id==='latest'?chatScroll.current?.reveal():chatScroll.current?.jump(detail.jumpRequest.id));return()=>cancelAnimationFrame(frame)}},[detail.jumpRequest]);
  const [preparation,setPreparation]=useState(null);
  const session=detail.session,view=state?.view||{},mode=view.mode||'chat',activity=sessionStatus(session),working=activity.busy;
@@ -839,7 +836,7 @@ function App(){
    return detail.earlier();
   });
  },[session?.id,session?.messageWindow,session?.sharedHistoryOffset,session?.historyLoading,detail.busy,act,shell.ready]);
- useLayoutEffect(()=>{const saved=historyScrollAnchor.current;if(!saved||!messagesPane.current)return;historyScrollAnchor.current=null;if(saved.sessionId!==session?.id)return;const pane=messagesPane.current,anchor=[...(pane?.querySelectorAll('[data-message-id]')||[])].find(node=>node.dataset.messageId===saved.messageId);if(anchor)pane.scrollTop+=anchor.getBoundingClientRect().top-saved.top},[session?.id,session?.sharedHistoryOffset,session?.messageWindow,session?.executionWindow,shell.ready]);
+ useLayoutEffect(()=>{const saved=historyScrollAnchor.current;historyScrollAnchor.current=null;if(saved)chatScroll.current?.restoreLayout(saved)},[session?.id,session?.sharedHistoryOffset,session?.messageWindow,session?.executionWindow,shell.ready]);
  // Initial Work and genuine retry notices occupy space above the transcript.
  // Preserve reading intent in the same commit when those notices change.
  useLayoutEffect(()=>{chatScroll.current?.settleLayout()},[session?.workProjection?.status,session?.id,shell.ready]);
@@ -1119,7 +1116,7 @@ function App(){
  // may retain READY privately. Actual history loading and safety blockers clear it.
  const suggestionBlocked=!!(!shell.ready||!hasAppearanceIdentity(state?.appearance)||state?.appearance?.availability==='failed'||busy||uploading||availableAttachments.length||referencingDraft||dictating||callActive||voiceStarting||conversationHistoryPending(session,false,messages)||executionUnavailable||detail.focused||!connected||
   suggestionOutboxPending(outbox.entries,outboxSource,session?.id));
- const suggestion=useTranscriptSuggestion({state,suggestionsSupported,readState:()=>pendingView.current.apply(latest.current),act:dispatch,blocked:suggestionBlocked,connected,composing:suggestionComposing,
+ const suggestion=useTranscriptSuggestion({state:suggestionSettingsState(state,settingsRoute),suggestionsSupported,readState:()=>suggestionSettingsState(pendingView.current.apply(latest.current),settingsRoute),act:dispatch,blocked:suggestionBlocked,connected,composing:suggestionComposing,
   recipient:recipientAgentId,canUse:()=>!lastDraft.current&&!uploadCount.current&&!referenceDraftLock.current&&!dictationControl.current?.current&&!suggestionOutboxPending(outbox.current.current,deliveryScope(latest.current,session),session?.id)&&!pendingView.current.apply(latest.current)?.draftNavigationPending});
  suggestionFence.current=suggestion.owner;
  useLayoutEffect(()=>{
@@ -1128,6 +1125,21 @@ function App(){
    !!state&&state.selectedSessionId===latest.current?.selectedSessionId&&shell.ready&&connected&&!historyPending&&!executionUnavailable&&!referencingDraft&&!suggestionComposing&&!dictating&&!callActive&&!voiceStarting&&!detail.focused&&
    !document.hidden&&document.hasFocus()&&![...document.querySelectorAll('[role="dialog"]')].some(node=>node.getClientRects().length);
   if(conversationNavigation.current.claimFocus(pendingView.current.apply(latest.current),{interaction:focusInteraction.current,editable}))editor.focus({preventScroll:true});
+ });
+ // A positive receipt can arrive before React commits the destination chat.
+ useLayoutEffect(()=>{
+  if(!referenceFocus)return;
+  const {id,heading,revision,interaction}=referenceFocus;
+  if(revision!==archiveRevision.current||interaction!==focusInteraction.current||id!==latest.current?.selectedSessionId){
+   setReferenceFocus(null);return;
+  }
+  const pane=messagesPane.current;
+  if(pane?.dataset.sessionId!==id)return;
+  const target=heading?root.current?.querySelector('[data-part="session-heading"]'):pane;
+  if(target?.dataset.sessionId!==id)return;
+  if(!heading)target.tabIndex=-1;
+  target.focus({preventScroll:true});
+  setReferenceFocus(null);
  });
  const browse=(surface,id=null)=>act('view.update',{patch:{...browsePatch(surface,id),navExpanded:false}});
  const visitHistory=async key=>{
@@ -1186,13 +1198,14 @@ function App(){
   {!browsing&&<ConversationStatus session={session} act={act}/>} {!externalConversation&&!state.runtime?.available&&<div className="a-alert a-runtime"><span><strong>Connect Amplifier to get started.</strong> {state.runtime?.error||'The Amplifier runtime is not installed. Install this app with its runtime dependencies, then relaunch.'}</span><button className="a-link" onClick={()=>open('settings')} data-action="view.update">Setup details <ChevronRight/></button></div>}
   <LiveChatActivity voice={voice} callSession={state.sessions.find(row=>row.id===state.voice?.sessionId)} callActive={callActive} act={act}><SharingIndicator sessionId={session?.id} visual={computerVisual} client={computerClient} dispatch={dispatch} onError={reportError}/></LiveChatActivity>
   <WorkspaceLayout appearanceScheme={themeScheme} appearanceCss={activeCss} state={layoutState} act={act} presentation={presentation}><WorkspaceRail footer={<AppFooter state={state} act={act} connected={connected} open={open}/>} shell={shell} state={state} session={session} act={act} selectSession={id=>act('session.select',{id})} newSession={newChat}/><section className={`a-conversation ${messages.length||historyDisplayPending||session?.historyError||executionUnavailable?'has-messages':'is-empty'}`} data-part="conversation" aria-label="Shared conversation" {...chatDrop.handlers}>{chatDrop.active&&<div className="a-chat-file-overlay" data-part="chat-file-drop" role="status"><div><strong>Drop to attach to {session?.title||'this draft'}</strong><p>Files join this draft. Nothing is sent.</p></div></div>}<WorkSurface shell={shell} state={state} act={act} dispatch={dispatch} navigationRef={workspaceSettingsNavigation}/>
-   <MessageFocus session={session} scope={state.client?.historyScope||state.client?.hostInstanceId} focus={state.view?.messageFocus} detail={detail} ensureVisible={ensureMessageVisible}/><div className="a-messages" ref={messagesPane} data-part="messages" data-view-source={session?"conversation":undefined} data-session-id={session?.id??undefined} data-host-instance-id={state.client?.hostInstanceId} data-work-projection={workProjectionReceipt(session,state.client?.hostInstanceId)} role="log" aria-label="Conversation messages" aria-live="polite" aria-busy={historyDisplayPending||!!detail.busy}><StepInspectionContext.Provider value={stepInspection}>{historyDisplayPending?<SessionHistoryControls session={{...session,historyLoading:!session?.historyError, messages:[],sharedHistoryOffset:0,historyActivity:null}} act={act}/>:<><div className="a-session-history">{detail.controls}</div><WorkProjectionStatus session={session} messages={messages}/><SessionHistoryControls session={session?.messageWindow?.offset>0?{...session,sharedHistoryOffset:0}:session} messages={messages} act={act} hideEarlier/>{session?.parentId&&<div className="a-chat-origin"><GitBranch/><span>{!isTopLevelChat(session)?'Subagent conversation':session.editOrigin?'Continued from an edited message':'Forked conversation'}</span><button type="button" className="a-link" data-action="session.select" disabled={!state.sessions.some(s=>s.id===session.parentId)} onClick={()=>act('session.select',{id:session.parentId})}>{!isTopLevelChat(session)?'Open parent chat':'Open original chat'}</button></div>}{!session&&conversationRows.length===0&&<NewChatSetup draft={draft} onChoose={value=>{if(lastDraft.current.trim())return;editDraft(value);composerRef.current?.focus()}}/>} {conversationRows.length===0&&!historyDisplayPending&&!session?.historyError&&!executionUnavailable?session&&<div className="a-empty"><img src={logo} alt=""/><h2>What shall we work on?</h2><p>{session.externalAgent?'Send a message to '+(session.externalAgent.label||session.externalAgent.id)+'.':'Bring an idea, a question, or a file.'}</p></div>:conversationRows.map(renderRow)}{!voiceStream&&<StreamingMessage session={session} state={state}/>}{presentation.planPlacement==='inline'&&<ChatPlan session={session} state={state} act={act} placement="inline"/>}<Questions key={`questions:${session?.id}`} session={session} state={state} dispatch={dispatch} reviewState={questionReviewState}/><NewChatHandoffs key={`handoffs:${session?.id}`} state={state} dispatch={dispatch}/></>}<div ref={messagesEnd}/></StepInspectionContext.Provider></div>
+   <MessageFocus session={session} scope={state.client?.historyScope||state.client?.hostInstanceId} focus={state.view?.messageFocus} detail={detail} ensureVisible={ensureMessageVisible}/><div className="a-messages" ref={messagesPane} data-part="messages" data-view-source={session?"conversation":undefined} data-session-id={session?.id??undefined} data-host-instance-id={state.client?.hostInstanceId} data-work-projection={workProjectionReceipt(session,state.client?.hostInstanceId)} role="log" aria-label="Conversation messages" aria-live="polite" aria-busy={historyDisplayPending||!!detail.busy}><StepInspectionContext.Provider value={stepInspection}>{historyDisplayPending?<SessionHistoryControls session={{...session,historyLoading:!session?.historyError, messages:[],sharedHistoryOffset:0,historyActivity:null}} act={act}/>:<><div className="a-session-history">{detail.controls}</div><WorkProjectionStatus session={session} messages={messages}/><SessionHistoryControls session={session?.messageWindow?.offset>0?{...session,sharedHistoryOffset:0}:session} messages={messages} act={act} hideEarlier/>{session?.parentId&&<div className="a-chat-origin"><GitBranch/><span>{!isTopLevelChat(session)?'Subagent conversation':session.editOrigin?'Continued from an edited message':'Forked conversation'}</span><button type="button" className="a-link" data-action="session.select" disabled={!state.sessions.some(s=>s.id===session.parentId)} onClick={()=>act('session.select',{id:session.parentId})}>{!isTopLevelChat(session)?'Open parent chat':'Open original chat'}</button></div>}{!session&&conversationRows.length===0&&<NewChatSetup draft={draft} onChoose={value=>{if(lastDraft.current.trim())return;editDraft(value);composerRef.current?.focus()}}/>} {conversationRows.length===0&&!historyDisplayPending&&!session?.historyError&&!executionUnavailable?session&&<div className="a-empty"><img src={logo} alt=""/><h2>What shall we work on?</h2><p>{session.externalAgent?'Send a message to '+(session.externalAgent.label||session.externalAgent.id)+'.':'Bring an idea, a question, or a file.'}</p></div>:conversationRows.map(renderRow)}{!voiceStream&&<StreamingMessage session={session} state={state}/>}{presentation.planPlacement==='inline'&&<ChatPlan session={selectedSession} state={state} act={act} placement="inline"/>}<Questions key={`questions:${session?.id}`} session={session} state={state} dispatch={dispatch} reviewState={questionReviewState}/><NewChatHandoffs key={`handoffs:${session?.id}`} state={state} dispatch={dispatch}/></>}<div ref={messagesEnd}/></StepInspectionContext.Provider></div>
    {session&&!historyDisplayPending&&<ConversationRail paneRef={messagesPane} sessionId={session.id} messages={messages} onJump={id=>messages.some(row=>row.id===id)?chatScroll.current?.jump(id):detail.around(id)}/>}
    {(awayFromBottom||detail.focused)&&<div className="a-chat-jump"><button type="button" className="a-soft" aria-label="Jump to latest messages" onClick={()=>detail.focused?detail.latest():chatScroll.current?.reveal()}>↓ Latest messages</button></div>}
    <LiveActivity session={state.sessions.find(row=>row.id===session?.id)||session}/>
    {!historyDisplayPending&&<DependencyWaiting key={'waiting:'+session?.id} sessionId={session?.id} activity={state.selectedActivity} act={act}/>}
    <ApprovalPanel key={session?.id} session={session} act={act} dispatch={dispatch} canvasDraft={state.view?.canvasDraft} freshnessKey={`${connected}:${session?.interruptionRevision}:${session?.executionRevision}`}/>
-   {(!presentation.planPlacement||presentation.planPlacement==='composer'||presentation.planPlacement==='active'&&responseActive)&&!historyDisplayPending&&<ChatPlan session={session} state={state} act={act}/> }
+   {/* The checklist belongs to the selected chat, not the frozen reading window. */}
+   {(!presentation.planPlacement||presentation.planPlacement==='composer'||presentation.planPlacement==='active'&&responseActive)&&!historyDisplayPending&&<ChatPlan session={selectedSession} state={state} act={act}/> }
    <QuestionNotice session={session} paneRef={messagesPane}/>
    {!browsing&&<ConversationError state={state} session={session} act={act} onWriteMessage={()=>composerRef.current?.focus()}/>}
    <ContextDegradationNotice session={browsing?null:selectedSession}/>
@@ -1225,6 +1238,7 @@ function App(){
      const digest=[...new Uint8Array(bytes)].map(n=>n.toString(16).padStart(2,'0')).join('');
      return digest===quote.sourceDigest?'Original revealed. Saved quotation is unchanged.':'Source changed since quoting. The earlier snapshot is retained.';
     }} onFiles={addFiles} disabled={executionUnavailable} readOnly={referencingDraft||!!state?.draftNavigationPending} pasteDisabled={historyPending}/>
+    <SuggestionStatus disposition={suggestion.disposition} onReview={()=>act('view.update',{patch:{...settingsPatch('chat-input'),toolbarMenuOpen:false}})}/>
     {visibleQuoteNotice(quoteNotice,session?.id)&&<small role="status">{visibleQuoteNotice(quoteNotice,session?.id)}</small>}
     {quoteReturn&&quoteReturn.sid===session?.id&&<button type="button" className="a-link" onClick={()=>{if(messagesPane.current)messagesPane.current.scrollTop=quoteReturn.top;const button=quoteReturn.button;setQuoteReturn(null);if(button?.isConnected&&button.getClientRects().length)button.focus({preventScroll:true});else composerRef.current?.focus({preventScroll:true});}}>Return to reading position</button>}
     </div>

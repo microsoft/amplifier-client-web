@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import {createActionCatalogReader} from '../src/action-catalog.js';
 import assert from 'node:assert/strict';
-import {supportsTranscriptSuggestions,suggestionText,suggestionScope,suggestionWitness,suggestionEligible,suggestionOutboxPending,plainSuggestionTab,createSuggestionController} from '../src/transcript-suggestion.js';
+import {supportsTranscriptSuggestions,suggestionText,suggestionScope,suggestionWitness,suggestionEligible,suggestionOutboxPending,plainSuggestionTab,createSuggestionController,suggestionDispositionText,suggestionSettingsState} from '../src/transcript-suggestion.js';
 import {composerState,insertComposerSuggestion,composerMarkdown,composerDocument} from '../src/markdown-composer.js';
 import {undo,redo} from 'prosemirror-history';
 
@@ -35,6 +35,112 @@ test('late, malformed and failed catalog reads cannot grant actions to a replace
 });
 
 const frame=()=>({client:{hostInstanceId:'host',historyScope:'principal'},selectedSessionId:'s',view:{},sessions:[{id:'s',status:'idle',messages:[{id:'a',role:'assistant',text:'Done.'}]}]});
+test('modal/Canvas transition and retained dirty-settings route cannot spend a first suggestion attempt',()=>{
+ let state=frame(),route='chat-computer',sequence=0;
+ const read=()=>suggestionSettingsState(state,route),controller=createSuggestionController({readState:read,requestId:()=>String(++sequence)});
+ const witness=suggestionWitness(state).key;
+ const check=()=>{const projected=read();assert.equal(suggestionWitness(projected).key,witness);controller.observe(projected,'config',suggestionEligible(projected));return controller.nextRequest()};
+ state.view.panel='chat-computer';assert.equal(check(),null);
+ state={...state,view:{panel:null,settingsCanvas:true},canvas:{kind:'settings',open:true}};
+ assert.equal(check(),null,'Raw modal is cleared before guarded Canvas ownership catches up');
+ route='settings-canvas';assert.equal(check(),null);
+ state={...state,view:{panel:null,settingsCanvas:false},canvas:{kind:'settings',open:false}};
+ assert.equal(check(),null,'Private dirty-settings guard still owns Canvas after the requested close');
+ route='settings';assert.equal(check(),null,'Retained dirty modal also blocks after raw view closes');
+ assert.equal(sequence,0,'No request UUID was allocated while either owner held Settings');
+ route=null;assert.deepEqual(check(),{sessionId:'s',requestId:'1',expectedLastMessageId:'a'});
+ assert.equal(sequence,1);assert.equal(check(),null);
+});
+test('latest raw Settings ownership blocks transport and acceptance before the guarded render catches up',async()=>{
+ const state=frame();let route=null;
+ const read=()=>suggestionSettingsState(state,route);
+ const controller=createSuggestionController({readState:read,requestId:()=> 'original',readStatus:async args=>({...args,status:'ready',sourceKey:'source',configRevision:'r',suggestion:'Try this'})});
+ controller.observe(read(),'r',true);const args=controller.nextRequest();
+ state.canvas={kind:'settings',open:true};
+ assert.equal(controller.requestCurrent(args),false,'Queued dispatch sees requested Canvas before any new render');
+ assert.equal(controller.receive(args,{...args,status:'ready',sourceKey:'source',configRevision:'r',suggestion:'Try this'}),false);
+ state.canvas.open=false;
+ controller.receive(args,{...args,status:'ready',sourceKey:'source',configRevision:'r',suggestion:'Try this'});
+ const ghost=controller.candidate();assert.ok(ghost);
+ state.view.panel='settings';assert.equal(await ghost.validate(),null,'New requested modal also blocks before guarded render');
+ state.view.panel=null;route='settings';assert.equal(await ghost.validate(),null,'Retained dirty-modal owner blocks when raw modal has closed');
+});
+test('non-Settings Canvas and library keep ordinary eligibility, but Settings projection never changes draft/source/Stop or spent receipts',()=>{
+ const state=frame(),draftDocument={version:1,segments:[]};
+ state.view.draftDocument=draftDocument;state.canvas={kind:'markdown',open:true};
+ assert.equal(suggestionEligible(suggestionSettingsState(state,null)),true);
+ state.canvas.kind='settings';state.view.canvasDraft={library:true};
+ assert.equal(suggestionEligible(suggestionSettingsState(state,null)),true,'A library hiding a Settings artifact is not that Settings surface');
+ const projection=suggestionSettingsState(state,'settings-canvas');
+ assert.equal(projection.view.draftDocument,draftDocument);assert.equal(projection.sessions,state.sessions);assert.equal(projection.client,state.client);
+ assert.equal(suggestionEligible(projection),false);
+ state.canvas.open=false;state.view.canvasDraft=null;
+ state.view.settingsCanvas=true;
+ assert.equal(suggestionEligible(suggestionSettingsState(state,null)),true,'A stale raw intent flag after ordinary tab close is not current Settings ownership');
+ state.canvas={id:'ordinary-canvas',open:true};
+ assert.equal(suggestionEligible(suggestionSettingsState(state,null)),true,'Recorded after-close state: open ordinary Canvas, stale settings flag, no guarded Settings');
+ state.view.settingsCanvas=false;
+ const controller=createSuggestionController({readState:()=>suggestionSettingsState(state,null),requestId:()=> 'spent'});
+ controller.observe(state,'r',true);const args=controller.nextRequest();
+ controller.receive(args,{...args,status:'expired',sourceKey:null,configRevision:null});
+ controller.observe(suggestionSettingsState(state,'settings'),'r',false);
+ controller.observe(suggestionSettingsState(state,null),'r',true);
+ assert.equal(controller.nextRequest(),null,'The repair must not reset or retry a previously spent source');
+ assert.equal(controller.resumeRequest().requestId,'spent');
+ state.sessions[0].status='stopped';assert.equal(suggestionEligible(suggestionSettingsState(state,null)),false);
+});
+test('safe disposition copy never renders arbitrary host reason or provider error prose',()=>{
+ assert.equal(suggestionDispositionText({status:'empty'}),'No suggestion this time.');
+ assert.equal(suggestionDispositionText({status:'failed',reason:'secret endpoint/key'}),'The selected connection could not load a suggestion.');
+ assert.match(suggestionDispositionText({status:'duplicate_source',reason:'prior_attempt_failed'}),/previous suggestion attempt failed/i);
+ assert.match(suggestionDispositionText({status:'unsupported',reason:'runtime_not_prepared'}),/not prepared/i);
+});
+test('future terminal receipts reconcile the exact attempt ID, stay spent and never become editable text',()=>{
+ for(const status of ['empty','unsupported','failed','timeout','cancelled','expired','duplicate_source','busy','disabled','missing_selection','stale']){
+  const h=harness(),args=h.request();assert.equal(h.controller.disposition().status,'pending');
+  assert.equal(h.controller.receive(args,{...h.result(args),status,suggestion:null}),true);
+  assert.equal(h.controller.disposition().status,status);assert.equal(h.controller.candidate(),null);assert.equal(h.request(),null);
+  h.controller.suspend();h.observe();assert.equal(h.controller.resumeRequest().requestId,args.requestId);
+  assert.equal(h.controller.nextRequest(),null);
+ }
+});
+test('null pre-admission terminal fields need the exact owned request plus fresh local source/authority',()=>{
+ for(const mutate of [
+  h=>{h.state.client.historyScope='different-principal'},
+  h=>{h.state.sessions[0].messages[0].text='Edited public source'},
+  h=>{h.state.sessions[0].status='stopped'},
+  h=>h.revision('other-account'),
+  h=>{h.state.selectedSessionId=null},
+ ]){
+  const h=harness(),args=h.request();mutate(h);
+  assert.equal(h.controller.receive(args,{...args,status:'unsupported',sourceKey:null,configRevision:null,suggestion:null}),false);
+  assert.equal(h.controller.candidate(),null);
+ }
+});
+test('temporary transport/catalog verification gaps retain only exact attempt identity, never a visible candidate or new inference',()=>{
+ for(const status of ['ready','pending','failed','empty','unsupported']){
+  const h=harness(),args=h.request();h.controller.receive(args,{...h.result(args),status});
+  h.controller.observe(h.state,undefined,false);assert.equal(h.controller.candidate(),null);assert.equal(h.controller.resumeRequest(),null);
+  h.observe();const original=h.controller.resumeRequest();assert.equal(original.requestId,args.requestId);assert.equal(h.controller.nextRequest(),null);
+ }
+});
+test('a real Stop or explicit invalidation during a catalog verification gap dismisses all old receipts for that chat',()=>{
+ for(const explicit of [false,true]){
+  const h=harness(),args=h.request();h.controller.receive(args,{...h.result(args),status:'failed'});
+  h.controller.observe(h.state,undefined,false);
+  if(explicit)h.controller.invalidate();else{h.state.sessions[0].status='stopped';h.observe()}
+  h.state.sessions[0].status='idle';h.observe();assert.equal(h.controller.resumeRequest(),null);assert.equal(h.controller.nextRequest(),null);
+ }
+});
+test('navigation busy and public-history hydration suspend a terminal receipt without dismissing it',()=>{
+ for(const gate of ['navigation','history']){
+  const h=harness(),args=h.request();h.controller.receive(args,{...h.result(args),status:'unsupported'});
+  if(gate==='history')h.state.sessions[0].historyLoading=true;
+  h.controller.observe(h.state,'model1',false);assert.equal(h.controller.disposition(),null);
+  delete h.state.sessions[0].historyLoading;h.observe();
+  assert.equal(h.controller.resumeRequest().requestId,args.requestId);assert.equal(h.controller.nextRequest(),null);
+ }
+});
 test('controller observes unselected pre-client boot states without allocating work',()=>{
  for(const initial of [undefined,null,{}, {sessions:[]},{selectedSessionId:undefined,sessions:[]},{selectedSessionId:null,sessions:[]}]){
   let state=initial;
@@ -87,6 +193,13 @@ test('a fresh controller admits a host-cached source-bound result only for its e
 test('unavailable old attempt remains spent without caption workflow or replacement request',async()=>{
  const h=harness(),args=h.request();h.controller.receive(args,h.result(args));h.controller.suspend();h.status({status:'empty',reason:'prior_attempt_unavailable',suggestion:null});
  assert.equal(await h.controller.restore(),false);assert.equal(h.request(),null);
+});
+test('READY status restoration exposes the exact terminal outcome rather than leaving loading or a stale ghost',async()=>{
+ for(const status of ['empty','expired','failed','unsupported','cancelled']){
+  const h=harness(),args=h.request();h.controller.receive(args,h.result(args));h.controller.suspend();h.status({status,suggestion:null});
+  assert.equal(await h.controller.restore(),false);assert.equal(h.controller.disposition().status,status);
+  assert.equal(h.controller.nextRequest(),null);assert.equal(h.controller.resumeRequest().requestId,args.requestId);
+ }
 });
 test('source-bound READY LRU touches restored entries without inference on capacity eviction',async()=>{
  let state=frame(),sequence=0;
@@ -192,7 +305,7 @@ test('callbacks and acceptance recheck live state even before the next render',a
  const h=harness(),args=h.request();h.controller.receive(args,h.result(args));const ghost=h.controller.candidate(),claim=await ghost.validate();h.state.view.draft='typed';assert.equal(claim(),false);
 });
 test('responses must bind exact request, session and server last-message witness',()=>{
- for(const patch of [{requestId:'other'},{sessionId:'other'},{sourceKey:null},{configRevision:'other'},{suggestion:'bad\nline'},{status:'failed'}]){
+ for(const patch of [{requestId:'other'},{sessionId:'other'},{sourceKey:null},{configRevision:'other'},{suggestion:'bad\nline'},{status:'unrecognized'}]){
   const h=harness(),args=h.request();assert.equal(h.controller.receive(args,{...h.result(args),...patch}),false);assert.equal(h.controller.candidate(),null);
  }
 });

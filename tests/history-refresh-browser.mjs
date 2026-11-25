@@ -1,10 +1,12 @@
 // Built client with bounded synthetic state. No runtime or provider calls.
 import assert from 'node:assert/strict';
 import {fileURLToPath} from 'node:url';
-import {mkdir,writeFile} from 'node:fs/promises';
-import {preview} from 'vite';
+import {join} from 'node:path';
+import {createHash} from 'node:crypto';
+import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {chromium,expect} from '@playwright/test';
 import {createShellHttpFixture,installFixtureEvents} from './shell-http-fixture.mjs';
+import {readClientArtifact,startClientArtifactFixture} from './client-artifact-fixture.mjs';
 
 const message=(id,role='assistant',text=id)=>({id,role,text,createdAt:1700000000});
 const session={id:'refresh-chat',sessionKind:'root',title:'Refresh fixture',workspace:'/fixture',workspaceId:'project',
@@ -14,17 +16,46 @@ let state={revision:1,settings:{workspace:'/fixture'},runtime:{available:true},
  view:{setupJourney:'done',workSurface:'chat',navPinned:true},sessions:[session],
  workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],
  selectedSessionId:session.id,selectedWorkspaceId:'project',canvas:{open:false}};
-const shell=createShellHttpFixture(()=>state),errors=[],evidence={checks:[],frames:[],requests:[],actions:[],routeErrors:[]};
+const shell=createShellHttpFixture(()=>state),errors=[],evidence={checks:[],frames:[],requests:[],actions:[],routeErrors:[],
+ boot:{responses:[],failedRequests:[],consoleErrors:[]},cleanupErrors:[]};
+const sha256=bytes=>createHash('sha256').update(bytes).digest('hex');
 const receipt={hostInstanceId:'fixture-shell-host',sessionId:session.id,generation:1,sourceCount:1,
  scope:'recent-events',windowKey:'fixture-work',historyComplete:false,itemCount:0,scannedBytes:0,scannedEvents:0};
-let server,browser,page,releaseEarlier,releaseSend,sendBody,earlierReads=0;
+let server,staticFixture,browser,page,releaseEarlier,releaseSend,sendBody,earlierReads=0;
 try{
- server=await preview({configFile:false,root:fileURLToPath(new URL('../',import.meta.url)),
-  build:{outDir:fileURLToPath(new URL('../dist',import.meta.url))},
-  preview:{host:'127.0.0.1',port:0}});
+ // Optional args use the maintained, hash-verified static package fixture. Never
+ // fall back to a source server or silently build/copy a missing preview tree.
+ const [packageDirectory,pairedRevision,...extra]=process.argv.slice(2);
+ assert.ok(extra.length===0&&(!pairedRevision||packageDirectory),'Usage: node tests/history-refresh-browser.mjs [STATIC_PACKAGE DECLARED_PAIRED_SERVER_SHA]');
+ const artifact=packageDirectory?await readClientArtifact(packageDirectory,pairedRevision):null;
+ const webDirectory=artifact?.webDirectory||fileURLToPath(new URL('../dist',import.meta.url));
+ let index,built;
+ try{index=await readFile(join(webDirectory,'index.html'));built=JSON.parse(await readFile(join(webDirectory,'build.json')));}
+ catch(error){throw new Error(`Built-client prerequisite missing or invalid at ${webDirectory}; prepare the intended build or pass a verified static package and its declared paired-server SHA. No build was started.`,{cause:error});}
+ evidence.input={mode:artifact?'compiled-artifact':'local-preview',webDirectory,build:built,indexSha256:sha256(index),
+  ...(artifact?{packageDirectory:artifact.packageDirectory,source:artifact.manifest.source,
+   declaredPairedServer:artifact.manifest.pairedServer,assetsVerified:true}:{})};
+ let origin;
+ if(artifact){staticFixture=await startClientArtifactFixture(artifact,{errors});origin=staticFixture.origin;}
+ else{
+  const {preview}=await import('vite');
+  server=await preview({configFile:false,root:fileURLToPath(new URL('../',import.meta.url)),
+   build:{outDir:webDirectory},preview:{host:'127.0.0.1',port:0}});
+  origin=server.resolvedUrls.local[0];
+ }
  browser=await chromium.launch({headless:true});
  page=await browser.newPage({viewport:{width:1280,height:950}});page.setDefaultTimeout(10000);
  page.on('pageerror',error=>errors.push(error.message));
+ page.on('console',message=>{if(message.type()==='error')evidence.boot.consoleErrors.push(message.text());});
+ page.on('requestfailed',request=>{
+  if(!new URL(request.url()).pathname.startsWith('/api/'))
+   evidence.boot.failedRequests.push({url:request.url(),error:request.failure()?.errorText});
+ });
+ page.on('response',response=>{
+  const type=response.request().resourceType();
+  if(['document','script','stylesheet'].includes(type))
+   evidence.boot.responses.push({url:response.url(),type,status:response.status(),mime:response.headers()['content-type']||''});
+ });
  await page.addInitScript(installFixtureEvents);
  await page.route('**/api/**',async route=>{
   const path=new URL(route.request().url()).pathname;
@@ -56,9 +87,26 @@ try{
    await route.abort('failed').catch(()=>{});
   }
  });
- await page.goto(server.resolvedUrls.local[0]);
+ const navigation=await page.goto(origin);
+ assert.ok(navigation,'Built-client navigation must return a document response');
+ const body=await navigation.body();
+ evidence.boot.navigation={url:navigation.url(),status:navigation.status(),mime:navigation.headers()['content-type']||'',
+  bytes:body.length,sha256:sha256(body)};
+ assert.equal(navigation.status(),200,'Built-client document must be served, not an empty preview 404');
+ assert.match(evidence.boot.navigation.mime,/^text\/html(?:;|$)/);
+ assert.equal(sha256(body),sha256(index),'Served index must match the selected built-client bytes');
  await expect(page.getByText('Loading conversation…',{exact:true})).toBeVisible();
  await expect(page.locator('[data-message-id]')).toHaveCount(0);
+ evidence.boot.mounted=await page.evaluate(()=>({mounted:!!document.querySelector('#amp-one'),
+  clientId:window.amplifier?.getState?.().client?.id,fixture:window.fixtureEventState?.(),
+  modules:[...document.querySelectorAll('script[type="module"][src]')].map(node=>node.src)}));
+ assert.equal(evidence.boot.mounted.mounted,true);
+ assert.ok(evidence.boot.mounted.modules.length>0,'Built client has a module entry');
+ for(const url of evidence.boot.mounted.modules){
+  const response=evidence.boot.responses.find(row=>row.url===url);
+  assert.equal(response?.status,200,'Built module must be served: '+url);
+  assert.match(response.mime,/^(?:text|application)\/javascript(?:;|$)/);
+ }
  evidence.checks.push('initial transcript loading remains visible');
  const paint=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
  const publish=async patch=>{Object.assign(session,patch);state={...state,revision:state.revision+1};await page.evaluate(value=>window.emitState(value),shell.state());await paint()};
@@ -136,7 +184,6 @@ try{
  releaseSend();await sendReceipt;
  evidence.checks.push('stream-only and unacknowledged local input stay readable without a loading row');
  assert.deepEqual(errors,[]);assert.deepEqual(evidence.routeErrors,[]);evidence.status='passed';
- console.log(JSON.stringify({status:evidence.status,checks:evidence.checks,pageErrors:errors}));
 }catch(error){
  evidence.status='failed';evidence.error=error.message;
  if(page&&!page.isClosed())evidence.failureState=await page.evaluate(()=>{
@@ -153,9 +200,22 @@ try{
 finally{
  releaseEarlier?.();releaseSend?.();
  if(process.env.AMPLIFIER_TEST_ARTIFACTS){
-  await mkdir(process.env.AMPLIFIER_TEST_ARTIFACTS,{recursive:true});
-  await writeFile(process.env.AMPLIFIER_TEST_ARTIFACTS+'/history-refresh.json',JSON.stringify({...evidence,pageErrors:errors},null,2)+'\n');
-  await page?.screenshot({path:process.env.AMPLIFIER_TEST_ARTIFACTS+'/history-refresh.png'}).catch(()=>{});
+  try{
+   await mkdir(process.env.AMPLIFIER_TEST_ARTIFACTS,{recursive:true});
+   await page?.screenshot({path:process.env.AMPLIFIER_TEST_ARTIFACTS+'/history-refresh.png'}).catch(()=>{});
+  }catch(error){evidence.cleanupErrors.push(String(error.stack||error));}
  }
- await browser?.close();await new Promise(resolve=>server?server.httpServer.close(resolve):resolve());
+ for(const close of [()=>browser?.close(),()=>staticFixture?.close(),
+  ()=>new Promise((resolve,reject)=>server?server.httpServer.close(error=>error?reject(error):resolve()):resolve())]){
+  try{await close();}catch(error){evidence.cleanupErrors.push(String(error.stack||error));}
+ }
+ // Include late errors and cleanup in the saved result, not only the assertions
+ // reached before browser closure. Keep the original failed journey untouched.
+ if(errors.length||evidence.routeErrors.length||evidence.cleanupErrors.length||
+  evidence.boot.failedRequests.length||evidence.boot.consoleErrors.length)evidence.status='failed';
+ if(process.env.AMPLIFIER_TEST_ARTIFACTS){
+  await writeFile(process.env.AMPLIFIER_TEST_ARTIFACTS+'/history-refresh.json',JSON.stringify({...evidence,pageErrors:errors},null,2)+'\n');
+ }
+ console.log(JSON.stringify({status:evidence.status,checks:evidence.checks,pageErrors:errors,cleanupErrors:evidence.cleanupErrors}));
+ if(evidence.status!=='passed')process.exitCode=1;
 }

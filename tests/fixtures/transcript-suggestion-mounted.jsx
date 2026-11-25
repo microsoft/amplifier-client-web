@@ -37,7 +37,7 @@ function App(){
    return {accepted:true};
   }
   if(action==='view.update'){setState(current=>({...current,view:{...current.view,...args.patch}}));return {accepted:true}}
-  if(action==='providers.configureSuggestions'){if(failSave.current)throw Error('Fixture save failure');selection.current={...selection.current,...args,revision:'config'+(++sequence.current)};return {accepted:true,result:{suggestionModels:selection.current,configurationChanged:true}}}
+  if(action==='providers.configureSuggestions'){if(failSave.current)throw Error('Fixture save failure');if(args.expectedSuggestionModelsRevision!==selection.current.revision)return {accepted:false,code:'suggestion_configuration_changed',error:'Suggestion setup changed.'};selection.current={...selection.current,...args,revision:'config'+(++sequence.current)};return {accepted:true,result:{suggestionModels:selection.current,configurationChanged:true}}}
   if(action.endsWith('request')){
    attempts.current.set(args.requestId,{source:source.current,expiresAt:Date.now()+60000});
    if(pendingMetadata.current)setTimeout(()=>setState(current=>({...current,revision:(current.revision||0)+1,sessions:current.sessions.map(session=>({...session,messagesRevision:(session.messagesRevision||0)+1,historyRevision:(session.historyRevision||0)+1,messageWindow:{...session.messageWindow,revision:'acknowledged',beforeCursor:'refreshed-cursor'},messages:session.messages.map(row=>({...row,revision:(row.revision||0)+1,updatedAt:Date.now()}))}))})),100);
@@ -78,7 +78,7 @@ function App(){
    newChat:()=>setState(current=>({...current,selectedSessionId:null})),
    reopen:()=>setState(current=>({...current,selectedSessionId:'one'})),
    configChange:()=>{selection.current={...selection.current,revision:'config-external',model:'other-model'};setState(current=>({...current,configurationRevision:(current.configurationRevision||0)+1}))},
-   snapshot:()=>({draft:live.current.view.draft,selectedSessionId:live.current.selectedSessionId,navigationPending:!!live.current.navigationPending,draftNavigationPending:!!live.current.draftNavigationPending,doc:quoteApi.current.capture().doc.toJSON(),sends:sends.current,calls:calls.current}),
+   snapshot:()=>({draft:live.current.view.draft,configRevision:selection.current.revision,selectedSessionId:live.current.selectedSessionId,navigationPending:!!live.current.navigationPending,draftNavigationPending:!!live.current.draftNavigationPending,doc:quoteApi.current.capture().doc.toJSON(),sends:sends.current,calls:calls.current}),
    response(){
     const id=++sequence.current;
     setState(current=>({...current,sessions:[{...current.sessions[0],status:'working',messages:[...current.sessions[0].messages,{id:'user'+id,role:'user',text:'Next'}]}]}));

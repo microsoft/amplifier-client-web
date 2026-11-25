@@ -9,6 +9,32 @@ export function UpdateBlockers({updates,act}){
  </details>;
 }
 
+export function SafeUpdate({updates,act}){
+ const target=updates.safeResumeTarget;
+ const state=updates.safeUpdateStatus;
+ const [pending,setPending]=React.useState(false),[error,setError]=React.useState('');
+ const busy=React.useRef(false);
+ const start=async()=>{
+  if(busy.current||!target)return;
+  busy.current=true;setPending(true);setError('');
+  try{
+   const result=await act('updates.safeResume',target,{propagateError:true});
+   if(result?.accepted===false)throw new Error(result.error||'The update request was declined.');
+  }catch(e){setError(e.message||'Check update status before trying again.')}
+  finally{busy.current=false;setPending(false)}
+ };
+ if(state){
+  const label=state.phase==='releasing'?'Resuming work':state.appReady?'Waiting for required components':state.phase==='waiting'?
+   (state.waiting?`Waiting for ${state.waiting} ${state.waiting===1?'chat':'chats'} to finish`:'Preparing to restart'):
+   'Restarting Amplifier';
+  return <p role="status">{label}{state.queued>0&&` · ${state.queued} ${state.queued===1?'message':'messages'} queued`}</p>;
+ }
+ if(!target)return null;
+ return <div><button type="button" className="a-primary" data-action="updates.safeResume" disabled={pending} onClick={start}>Update safely and resume</button>
+  <p className="a-caption">New work will wait while chats save their progress and the update finishes.</p>
+  {error&&<p role="alert">{error}</p>}</div>;
+}
+
 export function UpdateRestart({updates,act}){
  const target=updates.forceRestartTarget?{...updates.forceRestartTarget}:null;
  const key=JSON.stringify(target||null);

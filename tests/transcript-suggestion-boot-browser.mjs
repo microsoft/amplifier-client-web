@@ -5,10 +5,16 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import {createShellHttpFixture,installFixtureEvents} from './shell-http-fixture.mjs';
 import {readClientArtifact,startClientArtifactFixture} from './client-artifact-fixture.mjs';
+import {shellScope,sameScope} from '../src/shell/resources.js';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const output=process.env.AMPLIFIER_TEST_ARTIFACTS||'/tmp/transcript-suggestion-boot';
-const artifact=process.argv[2]?await readClientArtifact(process.argv[2],process.argv[3]):null;
+const canvasTransitionOnly=process.argv.includes('--settings-canvas-only');
+const positional=process.argv.slice(2).filter(arg=>!['--activation-only','--settings-canvas-only'].includes(arg));
+const artifact=positional[0]?await readClientArtifact(positional[0],positional[1]):null;
+const activationOutcomes=new Map();
+const acknowledgementModes=new Map();
+let failedSettingsReads=0,nextSetupChange=null;
 let state={revision:1,settings:{workspace:'/fixture',suggestedMessages:true,suggestedMessagesRevision:0},runtime:{available:true},view:{setupJourney:'done',scheme:'system',navPinned:true},sessions:[],workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:null,selectedWorkspaceId:'project',setup:{providers:[{id:'fixture',module:'provider-fixture',enabled:true,config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false},attention:{items:[],sessions:{}}};
 const catalogMetadata={info:{config_fields:[]},configSchema:{fields:[{id:'reasoning_effort',choices:['low','medium','high'],requires_model:true}]}};
 const suggestionCatalog=['settings.update','providers.suggestionModels','providers.configureSuggestions','session.suggestion.request','session.suggestion.status','session.suggestion.cancel'].map(name=>({name}));
@@ -28,10 +34,11 @@ const heldPreferences=[];
 // Host-side durable-result adapter lives outside browser documents. This does
 // not persist candidates in drafts or browser storage and is not a DB test.
 const cachedResults=new Map(),attemptResults=new Map(),responseEvidence=[];
-const sourceFor=id=>JSON.stringify(['b'.repeat(64),'boot-config',id,state.sessions.find(row=>row.id===id)?.messages]);
+const sourceFor=id=>JSON.stringify(['b'.repeat(64),suggestionConfig.revision,id,state.sessions.find(row=>row.id===id)?.messages]);
 const heldSelections=[];
 const selectChat=id=>{state.selectedSessionId=id;const row=state.sessions.find(row=>row.id===id);state.view={...state.view,panel:null,workSurface:'chat',draft:row?.draft||'',draftDocument:null};state.revision++};
 const report={scope:'actual production App with maintained synthetic HTTP/shell/event adapters; no installed host, provider or physical focus acceptance'};
+report.shellScopeConflicts=[];
 if(artifact)report.artifact={source:artifact.manifest.source,pairedServer:artifact.manifest.pairedServer,build:artifact.built,assetsVerified:true};
 await mkdir(output,{recursive:true});
 try{
@@ -55,8 +62,19 @@ try{
    if(!attached){heldAttach=route;attached=true;return}
    return route.fulfill({json:ownerShell.response(route.request())});
   }
+  if(['/api/shell','/api/shell/resources'].includes(url.pathname)){
+   const demand=url.pathname==='/api/shell/resources'?route.request().postDataJSON():{clientId:url.searchParams.get('clientId'),demandId:Number(url.searchParams.get('demandId')),resources:JSON.parse(url.searchParams.get('navigationResources')),scope:JSON.parse(url.searchParams.get('scope'))};
+   // A valid old demand can arrive after synthetic selection/reconnect changes
+   // the server scope. Production shell_resources.py rejects this with 409;
+   // it must not crash Node outside this journey's finally/cleanup boundary.
+   if(demand.clientId===ownerShell.state().client.id&&Number.isSafeInteger(demand.demandId)&&demand.demandId>0&&Array.isArray(demand.resources)&&Array.isArray(demand.scope)&&demand.scope.length===5&&!sameScope(demand.scope,shellScope(state))){
+    if(report.shellScopeConflicts.length<16)report.shellScopeConflicts.push({demandId:demand.demandId,requested:demand.scope,current:shellScope(state)});
+    return route.fulfill({status:409,json:{error:'Shell scope changed; request the current client scope.'}});
+   }
+  }
   const result=ownerShell.response(route.request());if(result!==undefined)return route.fulfill({json:result});
   if(url.pathname==='/api/state')return route.fulfill({json:snapshot(owner)});
+  if(canvasTransitionOnly&&url.pathname==='/api/ui-use/v1/state')return route.fulfill({json:{targets:[],target:'unavailable',preferences:{target:'unavailable',selection:'standard'},computer:{detail:'Synthetic unavailable desktop.'}}});
   if(url.pathname==='/api/actions'&&route.request().method()==='GET'){
    if(holdCatalog){heldCatalog=route;return}
    return route.fulfill({json:catalogResponse()});
@@ -71,19 +89,32 @@ try{
    await route.fulfill({json:{accepted:true,result:{settings:{suggestedMessages:state.settings.suggestedMessages,suggestedMessagesRevision:state.settings.suggestedMessagesRevision},scope:'installation-owner'},state:snapshot(owner)}});
    await Promise.all(context.pages().map(p=>p.evaluate(next=>window.emitFixtureState?.(next),snapshot(p)).catch(()=>{})));return;
   }
-  if(body.action==='providers.suggestionModels')return route.fulfill({json:{accepted:true,result:{suggestionModels:suggestionConfig,providers:[{id:'fixture',displayName:'Fixture account',module:'provider-fixture',sharedCatalogKey:'global-fixture-key'}]}}});
+  if(body.action==='providers.suggestionModels'){
+   if(failedSettingsReads>0){failedSettingsReads--;return route.fulfill({json:{accepted:false,error:'Fixture settings read failed'}})}
+   return route.fulfill({json:{accepted:true,result:{suggestionModels:suggestionConfig,providers:[{id:'fixture',displayName:'Fixture account',module:'provider-fixture',sharedCatalogKey:'global-fixture-key'}]}}});
+  }
   if(body.action==='providers.configureSuggestions'){
    if(rejectSetup)return route.fulfill({json:{accepted:false,error:'Fixture setup rejected'}});
+   if(nextSetupChange){suggestionConfig={...suggestionConfig,...nextSetupChange};nextSetupChange=null}
+   if(body.args.expectedSuggestionModelsRevision!==suggestionConfig.revision)return route.fulfill({status:409,json:{accepted:false,code:'suggestion_configuration_changed',error:'Suggestion setup changed. Review the current sharing choice.'}});
    suggestionConfig={...suggestionConfig,...body.args,revision:'consumer-config-'+state.revision};return route.fulfill({json:{accepted:true,result:{suggestionModels:suggestionConfig,configurationChanged:true}}});
   }
   if(body.action.startsWith('session.suggestion.')){
    assert.equal(Object.hasOwn(body.args,'regenerate'),false,'Automatic-only wire never sends a regeneration mode');
    if(body.action==='session.suggestion.request'){
     attempt=body.args;const sourceKey=sourceFor(attempt.sessionId),reused=cachedResults.has(sourceKey);
-    if(!reused){modelCalls++;const status=attempt.sessionId==='empty'?'empty':'ready';cachedResults.set(sourceKey,{status,suggestion:status==='ready'?'Try the next step.':null,sourceKey,configRevision:'boot-config',expiresAt:status==='ready'?null:Date.now()+3600000,retention:status==='ready'?'source':null})}
+    if(!reused){modelCalls++;const status=activationOutcomes.get(attempt.sessionId)||(attempt.sessionId==='empty'?'empty':'ready');cachedResults.set(sourceKey,{status,suggestion:status==='ready'?'Try the next step.':null,sourceKey,configRevision:suggestionConfig.revision,expiresAt:status==='ready'?null:Date.now()+60000,retention:status==='ready'?'source':null})}
     attemptResults.set(attempt.requestId,{...cachedResults.get(sourceKey),reused});
+    const ack=acknowledgementModes.get(attempt.sessionId);
+    if(ack==='lost')return route.abort('connectionreset');
+    if(ack==='truncated')return route.fulfill({contentType:'application/json',body:'{"accepted":true,"result":'});
    }
    const saved=attemptResults.get(body.args.requestId),result={...saved,requestId:body.args.requestId,sessionId:body.args.sessionId};
+   if(!saved)return route.fulfill({json:{accepted:true,result:{...result,status:'expired',sourceKey:null,configRevision:null,suggestion:null,expiresAt:null}}});
+   if(saved?.status==='pending'&&activationOutcomes.has(body.args.sessionId)){
+    result.status=body.action==='session.suggestion.cancel'?'cancelled':activationOutcomes.get(body.args.sessionId);
+    if(result.status!=='pending')Object.assign(saved,result);
+   }
    if(result.sourceKey!==sourceFor(body.args.sessionId))Object.assign(result,{status:'stale',suggestion:null});
    responseEvidence.push({action:body.action,requestId:result.requestId,sessionId:result.sessionId,status:result.status,reused:result.reused});
    return route.fulfill({json:{accepted:true,result}});
@@ -94,6 +125,18 @@ try{
    state.revision++;
   }
   if(body.action==='canvas.visibility'){state.canvas={...state.canvas,open:body.args.open};state.revision++}
+  if(canvasTransitionOnly&&body.action==='canvas.show'){
+   state.canvas={id:'fixture-settings-canvas',kind:'settings',title:'Settings',open:true};
+   state.canvasArtifacts=[{...state.canvas,sessionId:state.selectedSessionId,workspaceId:state.selectedWorkspaceId,tabOpen:true}];
+   state.canvasWorkspace={views:[{id:'primary',resourceId:state.canvas.id,renderer:'builtin.canvas.settings'}]};
+   state.view={...state.view,panel:null,settingsCanvas:true};state.revision++;
+  }
+  if(canvasTransitionOnly&&body.action==='canvas.tabClose'){
+   // Actual e5b8 after-close witness: an ordinary non-Settings Canvas remains
+   // open and the raw settingsCanvas intent flag is stale, with no Settings DOM.
+   state.canvas={id:'fixture-ordinary-canvas',open:true};state.canvasArtifacts=[];state.canvasWorkspace={views:[]};
+   state.view={...state.view,panel:null};state.revision++;
+  }
   if(body.action==='session.select'){
    if(holdSelection){heldSelections.push({route,body});return}
    selectChat(body.args.id);
@@ -127,6 +170,33 @@ try{
  assert.equal(await page.evaluate(()=>window.amplifier.getState().selectedSessionId),null);
  assert.equal(await page.evaluate(()=>window.amplifier.getState().view?.panel??null),null,'Normal chat boot is not masked by a settings panel');
  assert.deepEqual(suggestionActions(),[]);assert.deepEqual(writes(),[]);
+ if(canvasTransitionOnly){
+  state.sessions=[{id:'canvas-chat',title:'Already-On Canvas transition',sessionKind:'root',workspace:'/fixture',workspaceId:'project',status:'idle',historyManaged:true,historyLoaded:true,messages:[{id:'canvas-answer',role:'assistant',text:'An already completed public reply.'}],workers:[]}];
+  state.selectedSessionId='canvas-chat';state.view={...state.view,panel:'chat-computer',settingsCanvas:false,draft:'',draftDocument:null};state.revision++;
+  await page.evaluate(next=>window.emitFixtureState(next),snapshot());
+  const openControls=page.getByRole('button',{name:'Open controls in canvas',exact:true});
+  await expect(openControls).toBeVisible();assert.deepEqual(suggestionActions(),[],'Already-On modal has no prior attempt');
+  await openControls.click();
+  await expect(page.locator('[data-part="canvas"]')).toBeVisible();
+  await expect(page.getByRole('button',{name:'Close tab Settings',exact:true}).first()).toBeVisible();
+  await page.clock.fastForward(500);
+  report.canvasBeforeClose={actions:suggestionActions().map(row=>({action:row.action,args:row.args})),modelCalls};
+  assert.deepEqual(suggestionActions(),[],'Modal -> Canvas must never allocate, request or cancel a suggestion');
+  await page.getByRole('button',{name:'Close tab Settings',exact:true}).first().click();
+  await expect(page.getByRole('button',{name:'Use suggested message'})).toBeVisible();
+  await expect.poll(()=>suggestionActions().filter(row=>row.action==='session.suggestion.request').length).toBe(1);
+  await page.clock.fastForward(1000);
+  assert.equal(modelCalls,1);assert.equal(suggestionActions().filter(row=>row.action==='session.suggestion.cancel').length,0);
+  assert.equal(suggestionActions().filter(row=>row.action==='session.suggestion.request').length,1);
+  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
+  report.canvasTransition={alreadyOn:true,ordinaryButton:true,ordinaryTabClose:true,zeroWhileOwned:true,firstRequestAfterClose:true,modelCalls,synthetic:true};report.status='PASS';
+  console.log('PASS: already-On same-chat ordinary modal-to-Settings-Canvas has zero attempts until ordinary tab close, then one request.');
+ }else if(process.argv.includes('--activation-only')){
+  const {checkSuggestionActivation}=await import('./suggestion-activation-journey.mjs');
+  report.activation=await checkSuggestionActivation({page,expect,assert,state,calls,snapshot,activationOutcomes,output,acknowledgementModes,configureFixture:patch=>{if(patch.config)suggestionConfig={...suggestionConfig,...patch.config};if('rejectSetup'in patch)rejectSetup=patch.rejectSetup;if('rejectPreference'in patch)rejectPreference=patch.rejectPreference;if('failedSettingsReads'in patch)failedSettingsReads=patch.failedSettingsReads;if(patch.nextSetupChange)nextSetupChange=patch.nextSetupChange}});
+  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);report.status='PASS';
+  console.log('PASS: focused suggestion setup/close activation, old-chat hydration, private exact terminal reconciliation and draft priority in production App (synthetic host).');
+ }else{
  // Hydration can omit selection, then normalize it to null. Neither is a source.
  delete state.selectedSessionId;state.revision++;await page.evaluate(next=>window.emitFixtureState(next),snapshot());
  await page.waitForFunction(()=>window.amplifier.getState().selectedSessionId===undefined);await expect(composer).toBeVisible();
@@ -247,11 +317,12 @@ try{
  await page.evaluate(()=>window.amplifier.dispatch('view.update',{patch:{panel:'settings',settingsSection:'setup',settingsExpanded:['chat-input']}}));
  const personal=page.getByLabel('Show suggested messages',{exact:true});await personal.click();await expect(personal).not.toBeChecked();
  suggestionConfig={...suggestionConfig,enabled:false};state.configurationRevision=(state.configurationRevision||0)+1;state.revision++;
- await page.evaluate(next=>window.emitFixtureState(next),snapshot());await expect(personal).not.toBeChecked();
- await personal.click();await expect(personal).not.toBeChecked();await expect(page.getByRole('group',{name:'Set up suggested messages'})).toBeVisible();
+ await page.evaluate(next=>window.emitFixtureState(next),snapshot());await expect(personal).toHaveCount(0);
+ const startSetup=page.getByRole('button',{name:'Set up suggested messages',exact:true});
+ await startSetup.click();await expect(personal).toHaveCount(0);await expect(page.getByRole('group',{name:'Set up suggested messages'})).toBeVisible();
  const beforeSetup=calls.filter(row=>row.action==='providers.configureSuggestions').length;
  await page.getByRole('button',{name:'Cancel setup',exact:true}).click();assert.equal(calls.filter(row=>row.action==='providers.configureSuggestions').length,beforeSetup);
- await personal.click();const compactSetup=page.getByRole('group',{name:'Set up suggested messages'});
+ await startSetup.click();const compactSetup=page.getByRole('group',{name:'Set up suggested messages'});
  await compactSetup.getByLabel('Model',{exact:true}).selectOption('haiku-fixture');
  async function verifyDraftOnTabReturn(field,value,saveButton){
   const before=suggestionCalls().length;
@@ -274,7 +345,7 @@ try{
  await verifyDraftOnTabReturn(compactSetup.getByLabel('Model',{exact:true}),'haiku-fixture',
   compactSetup.getByRole('button',{name:'Save setup and enable',exact:true}));
  rejectSetup=true;
- await compactSetup.getByRole('button',{name:'Save setup and enable',exact:true}).click();await expect(page.getByRole('alert').filter({hasText:'Fixture setup rejected'})).toBeVisible();await expect(personal).not.toBeChecked();
+ await compactSetup.getByRole('button',{name:'Save setup and enable',exact:true}).click();await expect(page.getByRole('alert').filter({hasText:'Fixture setup rejected'})).toBeVisible();await expect(personal).toHaveCount(0);
  rejectSetup=false;await compactSetup.getByRole('button',{name:'Save setup and enable',exact:true}).click();await expect(personal).toBeChecked();await expect(compactSetup).toHaveCount(0);
  const setupArgs=calls.filter(row=>row.action==='providers.configureSuggestions').at(-1).args;
  assert.equal(setupArgs.enabled,true);assert.equal(setupArgs.model,'haiku-fixture');assert.equal(setupArgs.effort,null);assert.equal(setupArgs.transcriptMode,undefined);assert.equal(setupArgs.prompt,undefined);assert.deepEqual(setupArgs.configurationTarget,{kind:'global'});
@@ -393,6 +464,7 @@ try{
  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
  report.status='PASS';report.checks={preClientBoot:true,clientApiExposed:true,authenticatedUnselectedAppRendered:true,undefinedAndNullSelection:true,enabledOptedInNoSourceNoSuggestion:true,noSendsOrChatModelMutation:true,deferredProjectionWithMatchingFullSetup:true,hostCatalogOptionsAndEffort:true,typeAndPasteClearSameAttempt:true,acceptedUndoRestores:true,explicitChatSwitchFocus:true,immediateTabAcceptance:true,userMovedFocusProtected:true,touchEnvironmentNoAutoFocus:true,sourceBoundBeyond61seconds:true,automaticOnlyNoCreationControls:true,reloadUsesHostCachedReady:true,reloadPopulatedDraftAlwaysWins:true,reloadUsesHostCachedEmpty:true,knownEmptyNoAutoLoop:true,ChatInputConsumerToggle:true,configuredToggleZeroModelSetupWrites:true,syncedTwoClientReloadAndFailure:true,oldBrowserOnNotPromoted:true,missingSetupCancelFailureSuccess:true,partialGlobalSetup:true,customInstructionStagedResetAndDraftReview:true,oneAdvancedEditorAndNarrowLayout:true};report.cacheAdapter={modelCalls,responses:responseEvidence};
  console.log('PASS: actual App boot/catalog plus synthetic READY type/paste-clear and accepted-Undo status-only restoration; zero provider calls or sends.');
+ }
 }catch(error){report.status='FAIL';report.error=error.stack;throw error}
 finally{
  const failedBeforeCleanup=report.status==='FAIL';
