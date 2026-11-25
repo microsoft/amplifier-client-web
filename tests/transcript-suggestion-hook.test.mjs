@@ -293,3 +293,14 @@ test('unmount withdraws a hanging owned attempt once and retains a same-incarnat
   controller.reset();assert.equal(h.cancelGuards[0](),false,'A later authentication reset must revoke the same guard');
  }finally{await h.close()}
 });
+test('no usable public exchange is quiet and never reports missing selection; admitted empty stays spent',async()=>{
+ const h=await scenario({response:async(action,args)=>({accepted:true,result:{...args,status:'empty',suggestion:null,sourceKey:'source',configRevision:'config'}})});
+ try{
+  h.state.sessions[0].messages=[];await h.render();assert.equal(h.disposition,null);assert.deepEqual(h.calls,[]);
+  h.state.sessions[0].messages=[{id:'a',role:'assistant',text:'',textDetail:{}}];await h.render();assert.equal(h.disposition,null);assert.deepEqual(h.calls,[]);
+  h.state.sessions[0].messages=[{id:'a',role:'assistant',text:'Done'}];await h.render();assert.equal(h.disposition.status,'empty');
+  const original=h.calls[0].args;h.state.view.panel='settings';await h.render();h.state.view.panel=null;await h.render();
+  assert.equal(h.disposition.status,'empty');assert.equal(h.calls.filter(row=>row.action==='session.suggestion.request').length,1);
+  assert.equal(h.calls.filter(row=>row.action==='session.suggestion.status').at(-1).args.requestId,original.requestId);
+ }finally{await h.close()}
+});

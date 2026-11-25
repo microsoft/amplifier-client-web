@@ -152,6 +152,7 @@ if(process.argv.includes('--preflight')){
   await page.getByRole('button',{name:'Save setup',exact:true}).click();await expect(page.getByText('Setup saved. Applies to the next suggestion request.',{exact:true})).toBeVisible();
   const saved=(await calls('providers.configureSuggestions')).at(-1).args;
   assert.equal(saved.model,'other-model');assert.equal(saved.effort,'high');assert.equal(saved.scope,'global');assert.equal(saved.prompt,undefined,'Model form cannot overwrite separately edited prompt');
+  assert.equal(saved.shareRecentConversation,true);assert.equal(saved.transcriptMode,undefined);assert.equal(saved.humanTurns,undefined);
   await page.getByText('Custom instruction',{exact:true}).click();
   const prompt=page.getByRole('textbox',{name:'Instruction for suggested messages'});await expect(prompt).toHaveValue('Default fixture prompt.');
   const expectedInstructionRevision=(await snapshot()).configRevision;
