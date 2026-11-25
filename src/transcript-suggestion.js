@@ -51,13 +51,18 @@ export function suggestionEligible(state,{ignoreDeparture=false,ignoreDraft=fals
 }
 // Only a committed, visible assistant tail can witness a request. Do not use
 // streaming text, local outbox rows, native context, or agent/runtime snapshots.
+function messageDetailIdentity(session,row){
+ const detail=row?.textDetail;
+ return typeof row?.id==='string'&&!!row.id&&detail?.sessionId===session.id&&detail.part==='messages'&&detail.id===row.id&&detail.field==='text'&&
+  typeof detail.digest==='string'&&/^[a-f0-9]{64}$/.test(detail.digest)&&Number.isSafeInteger(detail.length)&&detail.length>0?[detail.digest,detail.length]:null;
+}
 function visibleTranscriptWitness(session){
  const messages=session.messages||[],rows=[];
  const encoder=new TextEncoder(),decoder=new TextDecoder();
  let remaining=24*1024;
  for(let index=messages.length-1;index>=Math.max(0,messages.length-100)&&remaining>0;index--){
   const row=messages[index],text=typeof row.text==='string'?row.text:'',bytes=encoder.encode(text.slice(0,remaining)).subarray(0,remaining),prefix=decoder.decode(bytes);
-  rows.push([row.id,row.role,row.agentId,row.participantId,row.recipientAgentId,!!row.textDetail,text.length,prefix]);
+  rows.push([row.id,row.role,row.agentId,row.participantId,row.recipientAgentId,messageDetailIdentity(session,row)||!!row.textDetail,text.length,prefix]);
   remaining-=bytes.length;
  }
  // Only known-visible content and identity belong here. Window cursors, generic
@@ -68,7 +73,11 @@ function visibleTranscriptWitness(session){
 }
 export function suggestionWitness(state){
  const session=state?.sessions?.find(row=>row.id===state.selectedSessionId),tail=session?.messages?.at(-1);
- if(!suggestionScope(state)||!session||tail?.role!=='assistant'||!tail.id||!tail.text?.trim()||tail.streaming||tail.localDelivery||tail.textDetail||tail.response?.phase==='interim'||['running','working'].includes(tail.response?.status)||session.streaming)return null;
+ // A compact public row is still the committed reply, not missing history.
+ // Bind its existing content digest locally; the host reads and validates the
+ // whole authoritative text by message ID. Never fetch/submit the detail body.
+ const hasText=tail?.textDetail?messageDetailIdentity(session,tail):tail?.text?.trim();
+ if(!suggestionScope(state)||!session||tail?.role!=='assistant'||!tail.id||!hasText||tail.streaming||tail.localDelivery||tail.response?.phase==='interim'||['running','working'].includes(tail.response?.status)||session.streaming)return null;
  return {sessionId:session.id,lastMessageId:tail.id,key:JSON.stringify([suggestionScope(state),deliveryScope(state,session),session.id,state.configurationRevision??0,session.nextMessageRevision??0,session.interruptionRevision??0,visibleTranscriptWitness(session)])};
 }
 

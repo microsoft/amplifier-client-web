@@ -304,3 +304,19 @@ test('no usable public exchange is quiet and never reports missing selection; ad
   assert.equal(h.calls.filter(row=>row.action==='session.suggestion.status').at(-1).args.requestId,original.requestId);
  }finally{await h.close()}
 });
+test('Settings close activates a committed 21449-character detail tail without reading its full text and refocus uses the original request',async()=>{
+ const previousFetch=globalThis.fetch;globalThis.fetch=()=>{throw Error('Suggestion hook must not fetch full detail text')};
+ const h=await scenario({ready:true});try{
+  // Exact derived reference fields from original run006, not a captured browser
+  // DTO or shortened host seed. The display prefix is deliberately synthetic.
+  h.state.selectedSessionId='f8f17e7d-80e1-47a4-abaa-7dc89ae422a0';h.state.sessions[0].id=h.state.selectedSessionId;
+  h.state.sessions[0].messages=[{id:'c0c28180-e7b9-4824-b108-28128af8cb1a',role:'assistant',text:'Newest whole answer. '.repeat(205).slice(0,4096),textDetail:{sessionId:h.state.selectedSessionId,part:'messages',id:'c0c28180-e7b9-4824-b108-28128af8cb1a',field:'text',digest:'1317f73538b6d821d2ad0574cb886e20b1f2e1ca79b0384bb162711652bbe186',length:21449}}];
+  h.state.view.panel='settings';await h.render();assert.deepEqual(h.calls,[]);
+  h.state.view.panel=null;await h.render();assert.ok(h.ghost);
+  const original=h.calls[0].args;assert.deepEqual(Object.keys(original).sort(),['expectedLastMessageId','requestId','sessionId']);assert.equal(original.expectedLastMessageId,'c0c28180-e7b9-4824-b108-28128af8cb1a');
+  h.state.view.panel='settings';await h.render();h.state.view.panel=null;await h.render();assert.ok(h.ghost);
+  assert.equal(h.calls.filter(row=>row.action==='session.suggestion.request').length,1);assert.equal(h.calls.filter(row=>row.action==='session.suggestion.status').at(-1).args.requestId,original.requestId);
+  h.state.sessions[0].messages[0].textDetail.digest='b'.repeat(64);await h.render();assert.equal(h.ghost,null);
+  assert.equal(h.calls.filter(row=>row.action==='session.suggestion.request').length,1,'Same-ID content edit never buys another inference');
+ }finally{await h.close();globalThis.fetch=previousFetch}
+});

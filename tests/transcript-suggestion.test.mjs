@@ -226,6 +226,50 @@ test('witness is a committed assistant tail in the authenticated visible convers
  for(const patch of [{role:'user'},{streaming:true},{localDelivery:{}},{textDetail:{}},{text:''}]){const next=frame();Object.assign(next.sessions[0].messages[0],patch);assert.equal(suggestionWitness(next),null)}
  const next=frame();next.selectedSessionId=null;assert.equal(suggestionWitness(next),null);
 });
+// run006's host-derived public reference shape: canonical body remains 21449
+// characters on the host. This is a synthetic display prefix, not that body.
+const detailTail=(sessionId='s',id='a',digest='1317f73538b6d821d2ad0574cb886e20b1f2e1ca79b0384bb162711652bbe186')=>({id,role:'assistant',text:'Newest whole answer. '.repeat(205).slice(0,4096),textDetail:{sessionId,part:'messages',id,field:'text',digest,length:21449}});
+test('committed long detail tail requests by stable row ID only; same-ID detail edits invalidate without buying another attempt',async()=>{
+ const h=harness();h.state.sessions[0].messages=[detailTail()];
+ const args=h.request();assert.deepEqual(args,{sessionId:'s',requestId:'1',expectedLastMessageId:'a'});
+ assert.equal(h.controller.receive(args,h.result(args)),true);const ghost=h.controller.candidate();assert.ok(ghost);
+ const originalKey=suggestionWitness(h.state).key;
+ h.state.sessions[0].messages[0].textDetail={...h.state.sessions[0].messages[0].textDetail,windowKey:'refreshed-display-window'};
+ h.state.sessions[0].messagesRevision=999;h.state.sessions[0].messages[0].updatedAt=123;
+ assert.equal(suggestionWitness(h.state).key,originalKey,'Detail fetch/window bookkeeping does not change semantic source');
+ h.state.sessions[0].messages[0].textDetail.digest='b'.repeat(64);
+ assert.notEqual(suggestionWitness(h.state).key,originalKey,'Same ID/length/prefix with new full content is different');
+ assert.equal(ghost.available(),false);assert.equal(await ghost.validate(),null);
+ h.observe();assert.equal(h.controller.nextRequest(),null,'Changed full content does not reset the spent assistant tail');
+});
+test('detail-tail admission rejects malformed or foreign references and retains final/Stop/ownership/source fences',()=>{
+ const detail=detailTail().textDetail;
+ for(const patch of [{sessionId:'other'},{id:'other'},{part:'execution'},{field:'input'},{digest:''},{digest:'not-a-content-digest'},{length:0},{length:NaN},{length:1.5}]){
+  const state=frame();state.sessions[0].messages=[{...detailTail(),textDetail:{...detail,...patch}}];assert.equal(suggestionWitness(state),null,JSON.stringify(patch));
+ }
+ for(const patch of [{streaming:true},{localDelivery:{}},{response:{phase:'interim'}},{response:{status:'working'}}]){
+  const state=frame();state.sessions[0].messages=[{...detailTail(),...patch}];assert.equal(suggestionWitness(state),null);
+ }
+ const state=frame();state.sessions[0].messages=[detailTail()];
+ for(const patch of [{status:'stopped'},{historyLoading:true},{historyReadOnlyReason:'cold gap'},{ownership:{status:'yielded'}}]){
+  const next=structuredClone(state);Object.assign(next.sessions[0],patch);assert.equal(suggestionEligible(next),false);
+ }
+ state.sessions[0].messages[0].text='';assert.ok(suggestionWitness(state),'A stable nonempty public detail reference does not need its full text inline');
+});
+test('same-ID long detail replacement rejects pending/acceptance replies without renewing original paid-source identity',async()=>{
+ const h=harness();h.state.sessions[0].messages=[detailTail()];
+ const args=h.request();assert.ok(args);assert.equal(h.controller.receive(args,{...h.result(args),status:'pending'}),true);
+ const prior=suggestionWitness(h.state).key;
+ h.state.sessions[0].messages[0].textDetail.digest='b'.repeat(64);
+ assert.notEqual(suggestionWitness(h.state).key,prior);assert.equal(h.controller.requestCurrent(args),false);
+ assert.equal(h.controller.receive(args,h.result(args)),false,'Late response for replaced full body cannot become a candidate');
+ h.observe();assert.equal(h.controller.nextRequest(),null,'Same assistant tail remains spent');
+ const ready=harness();ready.state.sessions[0].messages=[detailTail()];const original=ready.request();ready.controller.receive(original,ready.result(original));let finish;
+ ready.readStatus(()=>new Promise(resolve=>{finish=resolve}));
+ const ghost=ready.controller.candidate(),pending=ghost.validate();
+ ready.state.sessions[0].messages[0].textDetail.digest='c'.repeat(64);
+ finish(ready.result(original));assert.equal(await pending,null);assert.equal(ghost.available(),false);ready.observe();assert.equal(ready.controller.nextRequest(),null);
+});
 test('native and external/multiagent conversations share the visible-transcript path',()=>{
  for(const externalAgent of [undefined,{id:'external',participants:[{id:'one'},{id:'two'}]}]){const state=frame();state.sessions[0].externalAgent=externalAgent;assert.ok(suggestionWitness(state));assert.ok(suggestionEligible(state))}
 });
