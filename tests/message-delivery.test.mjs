@@ -373,3 +373,61 @@ for(const saved of [true,false])for(const status of ['failed','unknown'])test(
  assert.equal(button(root,'Retry original submission'),undefined);assert.equal(button(root,'Send again'),undefined);
  await act(async()=>root.unmount());
 });
+
+test('resume a saved message only against the observed paused work',async()=>{
+ const {resumeForMessage}=await server.ssrLoadModule('/src/paused-chat.js');
+ const offer={sessionId:'chat',assignmentRevision:7,taskRevision:11},actions=[];
+ const dispatch=async(action,args,meta)=>{actions.push([action,args,meta.id]);return {accepted:true}};
+ await resumeForMessage(dispatch,offer,'submission',()=>true);
+ assert.deepEqual(actions,[
+  ['assignment.resume',{sessionId:'chat',expectedRevision:7},'submission-assignment.resume-7'],
+  ['task.resume',{sessionId:'chat',expectedRevision:11},'submission-task.resume-11'],
+ ]);
+ let reads=0;
+ await assert.rejects(resumeForMessage(dispatch,offer,'moved',()=>++reads===1),/chat changed/);
+ assert.equal(actions.length,3,'Changing chats during resume prevents the second action');
+ await assert.rejects(resumeForMessage(async()=>({accepted:false}),offer,'refused',()=>true),/not been confirmed/);
+});
+
+test('only a definitely unsent message refused by Stop offers inline resume',async()=>{
+ const message={id:'m',role:'user',text:'Please continue'},session={id:'chat',messages:[]},pausedChat={sessionId:'chat'};
+ let root;const calls=[];
+ async function show(status,error,errorCode){
+  const delivery={status,error,errorCode,commandId:'original'};
+  const el=React.createElement(MessageDelivery,{message,session,pausedChat,delivery,localDelivery:delivery,retry:(...args)=>calls.push(args)});
+  await act(async()=>{if(root)root.update(el);else root=create(el)});
+  return root.root.findAllByType('button').map(button=>text(button));
+ }
+ assert.ok((await show('failed','This assignment is stopped. Open Shared tasks and assignment.')).includes('Resume and send'));
+ root.root.findAllByType('button').find(button=>text(button)==='Resume and send').props.onClick();
+ assert.deepEqual(calls,[[message,undefined,pausedChat]]);
+ assert.ok((await show('failed','Workspace unavailable','unavailable')).includes('Retry'));
+ assert.ok(text(root.root).includes('Workspace unavailable'));
+ assert.ok((await show('unknown','Connection lost')).includes('Check delivery'));
+ await act(async()=>root.unmount());
+});
+
+test('a paused member cannot reopen the group and a late read stays in its original chat',async()=>{
+ const {usePausedChat}=await server.ssrLoadModule('/src/paused-chat.js');
+ const reads=[];
+ function dispatch(action,args){
+  assert.equal(action,'assignment.brief');
+  return new Promise(resolve=>reads.push({id:args.sessionId,reply:ownerSessionId=>resolve({
+   result:{assignmentId:'group',assignmentRevision:5,status:'stopped',ownerSessionId},
+  })}));
+ }
+ function Chat({id}){
+  const [offer]=usePausedChat(dispatch,{id,status:'stopped'},{status:'paused',revision:3},id,'host',false);
+  return offer?.sessionId??'paused';
+ }
+ let root;
+ await act(async()=>{root=create(React.createElement(Chat,{id:'member'}))});
+ await act(async()=>reads[0].reply('owner'));
+ assert.equal(root.toJSON(),'paused');
+ await act(async()=>root.update(React.createElement(Chat,{id:'first'})));
+ await act(async()=>root.update(React.createElement(Chat,{id:'second'})));
+ await act(async()=>reads[2].reply('second'));
+ await act(async()=>reads[1].reply('first'));
+ assert.equal(root.toJSON(),'second');
+ await act(async()=>root.unmount());
+});

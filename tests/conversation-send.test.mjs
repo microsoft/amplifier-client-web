@@ -7,7 +7,7 @@ import {nativeDeliverySource,freshRetrySource,deliveryScope,deliveryTargetMatche
 import {draftExternalAgentIds,externalParticipants,externalAgentLabel} from '../src/external-participants.js';
 const source=readFileSync(new URL('../src/main.jsx',import.meta.url),'utf8');
 function callback(name,end,bindings){
- bindings={granted:null,nativeDeliverySource,freshRetrySource,draftExternalAgentIds,externalParticipants,externalAgentLabel,sharedConversation:false,deliveryTargetMatches:(state,target,id)=>deliveryTargetMatches({...state,client:{hostInstanceId:'host'}},target,id),...bindings};
+ bindings={pausedChat:null,granted:null,nativeDeliverySource,freshRetrySource,draftExternalAgentIds,externalParticipants,externalAgentLabel,sharedConversation:false,deliveryTargetMatches:(state,target,id)=>deliveryTargetMatches({...state,client:{hostInstanceId:'host'}},target,id),...bindings};
  const start=source.indexOf(` async function ${name}(`),stop=source.indexOf(end,start);
  assert.ok(start>=0&&stop>start,`Find the maintained ${name} callback`);
  return new Function(...Object.keys(bindings),`${source.slice(start,stop)};return ${name};`)(...Object.values(bindings));

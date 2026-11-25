@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
 let state={revision:1,settings:{workspace:'/fixture'},runtime:{available:true},view:{navPinned:true},sessions:[{id:'chat',title:'Saved conversation',sessionKind:'root',workspace:'/fixture',workspaceId:'project',status:'idle',historyManaged:true,historyLoaded:true,messages:[],workers:[]}],workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:'chat',selectedWorkspaceId:'project',setup:{providers:[{id:'fixture',module:'provider-fixture',config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false}};
 const shell=createShellHttpFixture(()=>state);
-const waiting=[],deliveryWaiting=[],deferredDelivery=new Set(),calls=[],errors=[];let browser,vite,page,blockedDraft;let blockNextDraft=false;
+const waiting=[],deliveryWaiting=[],deferredDelivery=new Set(),calls=[],errors=[];let browser,vite,page,blockedDraft;let blockNextDraft=false,pausedAssignment=null;
 const unknownDelivery='Delivery is still uncertain. Nothing was sent again.';
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(check,label){for(let i=0;i<150&&!check();i++)await sleep(10);assert.ok(check(),label)}
@@ -42,6 +42,17 @@ try{
   // Passive mount/reconnect reads have their own queue. Only the cases testing
   // a particular delayed read hold it; other reads return exact-bound unknown.
   const item={route,body,client:route.request().headers()['x-amplifier-client']};
+  if(body.action==='assignment.brief'){
+   const result=pausedAssignment?{assignmentId:pausedAssignment.id,assignmentRevision:pausedAssignment.revision,status:pausedAssignment.status,ownerSessionId:pausedAssignment.ownerSessionId}:{assignmentId:null};
+   return route.fulfill({json:{accepted:true,result,state:shell.state()}});
+  }
+  if(body.action==='assignment.resume'||body.action==='task.resume'){
+   const target=body.action==='task.resume'?chat().task:pausedAssignment;
+   if(!target||body.args.sessionId!==chat().id||body.args.expectedRevision!==target.revision)
+    return route.fulfill({status:409,json:{accepted:false,error:'Work changed',code:'revision_conflict'}});
+   target.status='active';target.revision++;state.revision++;
+   return route.fulfill({json:{accepted:true,state:shell.state()}});
+  }
   if(body.action==='conversation.delivery'){
    const target=state.sessions.find(session=>session.id===body.args.sessionId);
    item.source={workspace:target.workspace||null,nativeIdentity:target.runtimeSessionId||target.nativeIdentity||target.id};
@@ -130,6 +141,29 @@ try{
  }
  const send=async text=>{await composer().fill(text);await page.getByRole('button',{name:'Send message',exact:true}).click();assert.equal(await readComposerDraft(composer()),'');await page.locator('.a-user').filter({hasText:text}).waitFor();return next()};
  await page.goto(vite.resolvedUrls.local[0]);await composer().waitFor();
+ // An assignment can stop before the browser hears about it. Recover the
+ // saved submission in place, then exercise a fresh send from a paused chat.
+ const pausedText='Please resume the release work.';
+ const refused=await send(pausedText);
+ pausedAssignment={id:'group',ownerSessionId:'chat',status:'stopped',revision:9};
+ chat().task={id:'task',status:'paused',revision:3};chat().status='stopped';state.revision++;
+ await refused.route.fulfill({status:409,json:{accepted:false,code:'assignment_stopped',error:'This assignment is stopped. Open Shared tasks and assignment.',state:shell.state()}});
+ const resumeButton=page.getByRole('button',{name:'Resume and send',exact:true});
+ await resumeButton.waitFor();
+ assert.equal(await page.getByText('This assignment is stopped.',{exact:false}).count(),0);
+ const resumeActions=()=>calls.filter(c=>['assignment.resume','task.resume','conversation.send'].includes(c.action)).map(c=>c.action);
+ assert.deepEqual(resumeActions(),['conversation.send'],'Rendering the recovery must never wake work');
+ await resumeButton.click();
+ const resumed=await next();assert.equal(resumed.body.args.text,pausedText);
+ assert.deepEqual(resumeActions(),['conversation.send','assignment.resume','task.resume','conversation.send']);
+ await received(resumed);await page.locator('.a-user').filter({hasText:pausedText}).waitFor();
+ pausedAssignment.status='stopped';pausedAssignment.revision++;chat().task.status='paused';chat().task.revision++;await emit();
+ await composer().fill('Continue in this chat');
+ await resumeButton.waitFor();await composer().press('Enter');
+ const fresh=await next();assert.equal(fresh.body.args.text,'Continue in this chat');
+ assert.deepEqual(resumeActions().slice(4),['assignment.resume','task.resume','conversation.send']);
+ await received(fresh);
+ chat().messages=[];delete chat().task;chat().status='idle';pausedAssignment=null;await emit();
  // A lost draft-autosave reply must not prevent a durable outbox send.
  blockNextDraft=true;
  const independent=await send('Send while draft autosave is stalled');

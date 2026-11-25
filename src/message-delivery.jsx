@@ -1,4 +1,5 @@
 import React,{useEffect,useRef,useState} from 'react';
+import {stoppedDelivery} from './paused-chat';
 import {AlertCircle,RotateCcw,LoaderCircle} from 'lucide-react';
 import {checkedDelivery,usePendingDeliveryCheck} from './pending-delivery-checks';
 
@@ -7,7 +8,7 @@ export function MessageDelivery(props){
  return <DeliveryWarning key={JSON.stringify([props.recovery?.scope,props.recovery?.connection,props.session.id,inputId])} {...props}/>;
 }
 
-function DeliveryWarning({message,session,delivery,localDelivery,dispatch,retry,discard,recovery}){
+function DeliveryWarning({message,session,delivery,localDelivery,pausedChat,dispatch,retry,discard,recovery}){
  const [submitting,setPending]=useState(false),[localReport,setReport]=useState(null),[confirm,setConfirm]=useState(false),[localError,setError]=useState('');
  const inputId=message.inputId||localDelivery?.commandId;
  const checkOwner=usePendingDeliveryCheck(JSON.stringify([recovery?.scope,recovery?.connection,session.id,inputId]));
@@ -102,11 +103,12 @@ function DeliveryWarning({message,session,delivery,localDelivery,dispatch,retry,
  if(!steering&&delivery.status==='held')return <span className="a-message-delivery" role="status">{delivery.reason||'Message retained without sending.'}</span>;
  const sending=['sending','queued'].includes(delivery?.status);
  const preparing=session.status==='starting'||session.activity?.phase==='runtime-setup';
+ const resume=originalSubmission&&delivery.status==='failed'&&!oneTimeAllowance&&!steering&&(stoppedDelivery(localDelivery)||localDelivery.errorCode==='resume_failed')&&pausedChat;
  const content=<div className="a-dialog-actions a-delivery-content">
-  {steeringContent||<span className="a-message-delivery" role="status">{sending?<><LoaderCircle className="a-progress-spinner"/>{preparing?'Preparing chat…':'Sending…'}</>:<><AlertCircle/>{delivery.status==='failed'?'Not sent':'Delivery not confirmed'}
-   {delivery.status==='failed'&&!oneTimeAllowance?<button type="button" className="a-link" data-action="conversation.send" disabled={pending||blocked} onClick={()=>session.messages?.some(row=>row.inputId===inputId)?resend():retry(message)}><RotateCcw/>Retry</button>:<button type="button" className="a-link" data-action="conversation.delivery" disabled={pending||!inputId} onClick={check}><RotateCcw/>{pending?'Checking…':'Check delivery'}</button>}
+  {steeringContent||<span className="a-message-delivery" role="status">{sending?<><LoaderCircle className="a-progress-spinner"/>{preparing?'Preparing chat…':'Sending…'}</>:<><AlertCircle/>{resume?'Work is paused':delivery.status==='failed'?'Not sent':'Delivery not confirmed'}
+   {delivery.status==='failed'&&!oneTimeAllowance?<button type="button" className="a-link" data-action="conversation.send" disabled={pending||blocked} onClick={()=>resume?retry(message,undefined,resume):session.messages?.some(row=>row.inputId===inputId)?resend():retry(message)}><RotateCcw/>{resume?'Resume and send':'Retry'}</button>:<button type="button" className="a-link" data-action="conversation.delivery" disabled={pending||!inputId} onClick={check}><RotateCcw/>{pending?'Checking…':'Check delivery'}</button>}
   </>}</span>}
-  {!sending&&(!steering||steeringWarning)&&delivery?.error&&<p role="alert" className="a-delivery-detail">{delivery.error}</p>}
+  {(!resume||!stoppedDelivery(localDelivery))&&!sending&&(!steering||steeringWarning)&&delivery?.error&&<p role="alert" className="a-delivery-detail">{delivery.error}</p>}
   {oneTimeAllowance&&unresolved&&<p className="a-delivery-detail">To try again, review preparation and send a fresh message.</p>}
   {closeable&&<button type="button" className="a-link" disabled={submitting} title="Keep the original submission in Chat info without resending or confirming delivery." onClick={()=>{if(!submitting)discard?.(message)}}>Close delivery item</button>}
   {report?.message&&<p role="status" className="a-delivery-detail">{report.message}</p>}
