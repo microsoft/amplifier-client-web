@@ -768,7 +768,7 @@ function App(){
  const canvasSettingsVisible=settingsRoute==='settings-canvas',panel=canvasSettingsVisible?null:settingsRoute;
  // Commit the guarded display, not the acknowledged view or an unapproved
  // pending close. Panel-to-panel transitions retain the same outer invoker.
- useLayoutEffect(()=>{panelFocus.current.commit({panel,scope:panelFocusScope(state),ready:shell.ready,root:root.current})});
+ useLayoutEffect(()=>{panelFocus.current.commit({panel,requestedPanel:view.panel,scope:panelFocusScope(state),ready:shell.ready,root:root.current})});
  useEffect(()=>{
   const focus=event=>panelFocus.current.observeFocus(event.target);
   document.addEventListener('focusin',focus,true);

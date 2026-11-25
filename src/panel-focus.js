@@ -29,7 +29,7 @@ export function createPanelFocus(){
     ?root.querySelector('.a-compose-add>button[aria-haspopup="dialog"]'):active;
    pending={scope:current.scope,target};
   },
-  commit({panel,scope,ready,root}){
+  commit({panel,requestedPanel=panel,scope,ready,root}){
    const previous=current;current={panel,scope,ready};
    if(!ready||scope!==previous.scope){pending=null;visit=null;}
    if(panel){
@@ -41,6 +41,13 @@ export function createPanelFocus(){
      visit={scope,target,root,dialog,panel,cancelled:false};
      pending=null;
     }else if(visit){visit.panel=panel;visit.dialog=dialogIn(root);}
+    return;
+   }
+   if(!previous.panel){
+    // The guard commits its visible route after the requested route changes.
+    // Keep an opening capture through that closed intermediate commit, but
+    // discard it if the request is rejected or superseded before opening.
+    if(!requestedPanel)pending=null;
     return;
    }
    const closing=visit;visit=null;pending=null;

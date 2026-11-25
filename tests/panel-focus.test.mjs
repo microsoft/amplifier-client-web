@@ -27,10 +27,11 @@ function fixture(){
  let dialog=null;
  const root={ownerDocument:doc,querySelector:selector=>selector.startsWith('.a-compose-add')?add:dialog};
  let state={client:{hostInstanceId:'instance',historyScope:'owner'},selectedSessionId:'chat',selectedWorkspaceId:'workspace',view:{workSurface:'chat'}};
- function commit(panel,patch={}){state={...state,...patch};owner.commit({panel,scope:panelFocusScope(state),ready:true,root})}
+ function commit(panel,patch={},requestedPanel=panel){state={...state,...patch};owner.commit({panel,requestedPanel,scope:panelFocusScope(state),ready:true,root})}
  commit(null);
  const open=(panel='settings')=>{
   doc.activeElement=choice;owner.capture(root);
+  commit(null,{},panel); // The guard's passive effect has not accepted the opening yet.
   dialog=node('dialog');heading.parent=dialog;doc.activeElement=heading;add.disabled=true;commit(panel);
  };
  const close=()=>{dialog.isConnected=false;heading.isConnected=false;dialog=null;add.disabled=false;doc.activeElement=doc.body;commit(null)};
@@ -54,6 +55,13 @@ test('ordinary open from a lasting control returns to it exactly once',()=>{
  const f=fixture();f.doc.activeElement=f.add;f.owner.capture(f.root);
  f.dialog=f.node('dialog');f.heading.parent=f.dialog;f.doc.activeElement=f.heading;f.commit('settings');
  f.close();f.commit(null);assert.deepEqual(f.focused,['add']);
+});
+
+test('abandoned opening drops its capture instead of lending it to a later modal',()=>{
+ const f=fixture();f.doc.activeElement=f.add;f.owner.capture(f.root);
+ f.commit(null,{},'settings');f.commit(null); // Rejected request before the guard opens.
+ f.dialog=f.node('dialog');f.heading.parent=f.dialog;f.doc.activeElement=f.heading;
+ f.commit('settings');f.close();assert.deepEqual(f.focused,[]);
 });
 
 test('pending dirty close is not a new modal lifetime; Keep leaves outer invoker intact',()=>{
