@@ -45,7 +45,7 @@ It is not a cloud or cross-host account preference. Old browser choices are
 not migrated or promoted into the synced setting.
 The suggestion provider/account and model are shown separately from the chat model.
 The same feature's **Advanced settings** holds explicit host setup across workspaces,
-model/effort choices, expert recent/full text sharing and a deeper custom instruction.
+model/effort choices and a deeper custom instruction.
 Global Advanced and Privacy link to this one feature destination rather than owning
 duplicate editors. If host setup is missing, **Set up suggested messages** opens a
 compact **Save setup and enable** confirmation; opening it alone changes neither
@@ -54,9 +54,9 @@ Host-setup success and a failed synced-preference save are reported separately.
 Preference saves use a setting-specific revision so another client's newer Off
 choice wins over a delayed setup-and-enable operation.
 Setup/model/instruction saves also carry the displayed suggestion-configuration
-revision. A concurrent sharing/account change rejects the save atomically,
+revision. A concurrent configuration/account change rejects the save atomically,
 keeps staged edits and refreshes current setup for explicit review—never a
-silent Recent-to-Full change or an automatic mutation retry. A failed setup read
+silent account change or an automatic mutation retry. A failed setup read
 has a read-only retry and can recover on a fresh connection; neither runs a
 suggestion or discovers models.
 There is no automatic model selection or fallback; a configured connection is
@@ -65,11 +65,17 @@ The saved connection/model card has a **Change** action. Optional recommendation
 come from the selected module's purpose ranking for that exact catalog, with its
 live/configured/static provenance; an unknown module is never guessed from its
 name or model-family substrings. Manual model IDs stay in Advanced. A newer
-recommendation does not replace a saved explicit choice or sharing consent.
+recommendation does not replace a saved explicit choice.
 
-The host sends bounded visible conversation text to the selected provider,
-including other participants' messages—not an agent's private context or an
-unsent draft. The client requests a suggestion only by conversation and committed
+The host sends recent conversation text from this chat to the selected AI—not
+messages relayed from other chats, an agent's private context or an unsent draft.
+This may include more of this conversation than before.
+There is no Recent/Full mode, message count or transcript-limit control.
+An explicit setup/model save with this disclosure visible confirms recent-text
+sharing; synced On/Off, passive reads and instruction-only saves do not grant it.
+Legacy setup without that confirmation stays inactive until explicitly saved.
+No usable conversation text produces a quiet empty outcome, not a model error.
+The client requests a suggestion only by conversation and committed
 message identifiers. The selected chat can request once when idle with an empty
 message box while the page is visible and focused, including when you visit an
 existing chat. No other chat or background page requests work. A source-bound
@@ -79,7 +85,7 @@ Finite responses obey their original expiry. Failed, empty, cancelled or missing
 attempts do not trigger a client retry loop. Suggestions are automatic; there is no
 creation or regeneration control. Closing Settings after confirmed enable checks
 the already-viewed eligible chat immediately. The composer shows **Loading a
-suggested message…**, **No suggestion this time**, or a safe unavailable/failure
+suggested message…** or a safe unavailable/failure
 explanation with setup review—not a chat-working badge. Returning to a retained
 non-ready attempt reads its exact original ID, without a new inference request.
 If an admission acknowledgement is lost or malformed, the client withdraws that
@@ -91,8 +97,7 @@ can ask the host for its current source-bound result, including a cached empty
 outcome, without duplicate model work. The host owns durable private suggestion
 storage; ghosts are never stored as drafts or in a second persistent browser cache.
 Starting a new chat before it has a response makes no request. In suggested-message
-Advanced settings, restoring the default instruction stages an edit requiring Save;
-the actual sharing modes remain recent conversation or full visible conversation.
+Advanced settings, restoring the default instruction stages an edit requiring Save.
 Advanced model details (pricing, catalog origin and refresh time) stay in a
 secondary disclosure; ordinary connection/model controls remain readable.
 

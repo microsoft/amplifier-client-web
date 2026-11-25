@@ -90,7 +90,9 @@ test('non-Settings Canvas and library keep ordinary eligibility, but Settings pr
  state.sessions[0].status='stopped';assert.equal(suggestionEligible(suggestionSettingsState(state,null)),false);
 });
 test('safe disposition copy never renders arbitrary host reason or provider error prose',()=>{
- assert.equal(suggestionDispositionText({status:'empty'}),'No suggestion this time.');
+ assert.equal(suggestionDispositionText({status:'empty'}),null);
+ assert.equal(suggestionDispositionText({status:'history_unavailable'}),null);
+ assert.equal(suggestionDispositionText({status:'awaiting_response'}),null);
  assert.equal(suggestionDispositionText({status:'failed',reason:'secret endpoint/key'}),'The selected connection could not load a suggestion.');
  assert.match(suggestionDispositionText({status:'duplicate_source',reason:'prior_attempt_failed'}),/previous suggestion attempt failed/i);
  assert.match(suggestionDispositionText({status:'unsupported',reason:'runtime_not_prepared'}),/not prepared/i);

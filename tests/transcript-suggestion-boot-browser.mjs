@@ -19,7 +19,7 @@ let state={revision:1,settings:{workspace:'/fixture',suggestedMessages:true,sugg
 const catalogMetadata={info:{config_fields:[]},configSchema:{fields:[{id:'reasoning_effort',choices:['low','medium','high'],requires_model:true}]}};
 const suggestionCatalog=['settings.update','providers.suggestionModels','providers.configureSuggestions','session.suggestion.request','session.suggestion.status','session.suggestion.cancel'].map(name=>({name}));
 let supportsSuggestions=false,historyScope='b'.repeat(64),holdCatalog=false,heldCatalog=null;
-let suggestionConfig={enabled:true,provider:'fixture',model:'fixture-model',effort:'low',transcriptMode:'last_n',humanTurns:6,revision:'boot-config',prompt:'Default fixture instruction.',defaultPrompt:'Default fixture instruction.'},rejectSetup=false;
+let suggestionConfig={enabled:true,provider:'fixture',model:'fixture-model',effort:'low',revision:'boot-config',prompt:'Default fixture instruction.',defaultPrompt:'Default fixture instruction.'},rejectSetup=false;
 state.modelCatalogs={'global-fixture-key':{phase:'ready',supported:true,provenance:'provider-api',modelsDeferred:true,loadedAt:100,metadata:{info:{},configSchema:{fields:[]}}}};
 state.setup.providerCatalogs={fixture:{phase:'ready',supported:true,provenance:'provider-api',sharedCatalogKey:'global-fixture-key',loadedAt:100,models:['fixture-model','haiku-fixture','sonnet-fixture','fourth-model'],metadata:catalogMetadata}};
 const shell=createShellHttpFixture(()=>state),calls=[],errors=[],external=[],reads=[];
@@ -94,6 +94,7 @@ try{
    return route.fulfill({json:{accepted:true,result:{suggestionModels:suggestionConfig,providers:[{id:'fixture',displayName:'Fixture account',module:'provider-fixture',sharedCatalogKey:'global-fixture-key'}]}}});
   }
   if(body.action==='providers.configureSuggestions'){
+   assert.equal(Object.hasOwn(body.args,'transcriptMode'),false);assert.equal(Object.hasOwn(body.args,'humanTurns'),false);
    if(rejectSetup)return route.fulfill({json:{accepted:false,error:'Fixture setup rejected'}});
    if(nextSetupChange){suggestionConfig={...suggestionConfig,...nextSetupChange};nextSetupChange=null}
    if(body.args.expectedSuggestionModelsRevision!==suggestionConfig.revision)return route.fulfill({status:409,json:{accepted:false,code:'suggestion_configuration_changed',error:'Suggestion setup changed. Review the current sharing choice.'}});

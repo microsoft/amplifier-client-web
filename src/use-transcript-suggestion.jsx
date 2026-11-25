@@ -83,7 +83,7 @@ export function useTranscriptSuggestion({state,suggestionsSupported,readState,ac
  const ghost=owner.candidate();
  useEffect(()=>{if(!ghost||ghost.expiresAt===null)return;const timer=setTimeout(()=>refresh(value=>value+1),Math.max(0,ghost.expiresAt-Date.now()+1));return()=>clearTimeout(timer)},[ghost?.expiresAt]);
  const interested=enabled&&visible&&focused&&connected&&!blocked&&!composing&&!editing&&suggestionEligible(state);
- const disposition=eligible?(owner.disposition()||(!witness?{status:'history_unavailable'}:null)):interested?{status:!config?(data.loadState==='unavailable'?'setup_unavailable':'setup_loading'):config.enabled!==true?'disabled':!witness?'awaiting_response':'missing_selection'}:null;
+ const disposition=eligible?owner.disposition():interested?{status:!config?(data.loadState==='unavailable'?'setup_unavailable':'setup_loading'):config.enabled!==true?'disabled':'missing_selection'}:null;
  return {ghost,disposition,owner,supersede:reason=>{
   if(reason==='editor-input'){inputPending.current=true;setEditing(true);owner.suspend()}
   else if(reason==='editor-input-end'){if(!inputPending.current)return;inputPending.current=false;setEditing(false)}
