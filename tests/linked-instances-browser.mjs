@@ -49,6 +49,10 @@ let ambiguous=false,legacyRows=false;
 const deviceOnline='synthetic-device-online',deviceOffline='synthetic-device-offline',candidateId='8'.repeat(32);
 const candidate={candidateId,instanceId:offerId,label:'Office Amplifier',route:'lan'};
 let saved={enabled:false,lan:false,tailscale:false},runtime=null,setupBlocked=false,loseSave=false,lease=null,discoveryJoin=0,browseDelay=null,discoveryLinked=false;
+const privateOrigin='https://192.0.2.21:45123', secondInstance='a'.repeat(32);
+let listenerSaved={enabled:false,lan:true,tailscale:false,peerListener:false},listener='none',listenerRevoked=false,
+ listenerBlock='peer_port_unavailable',listenerDelay=null,listenerReceiptLost=false,listenerRevision=1;
+const revision=()=>listenerRevision.toString(16).padStart(64,'0');
 try{
  await mkdir(out,{recursive:true});
  server=await createServer({configFile:false,root:fileURLToPath(new URL('../',import.meta.url)),
@@ -81,6 +85,48 @@ try{
    assert.equal(req.method(),'POST');
    calls.push({side,action,body,wire:req.postData()});
    if(side==='old')return error('not_found',404);
+   if(['peer-listener','configured-listener'].includes(side)){
+    const configured=side==='configured-listener';
+    const effective=configured?'configured':listener;
+    const currentOrigins=configured?[peerOrigin]:effective==='peer-only'?[privateOrigin]:[];
+    const flags=configured?{enabled:true,lan:false,tailscale:false,peerListener:false}:listenerSaved;
+    const setupReply=()=>({status:effective!=='none'?'active':flags.enabled?'unavailable':'off',revision:revision(),
+     enabled:flags.enabled,peerListener:flags.peerListener,listener:effective,origins:currentOrigins,
+     discovery:{lan:flags.lan,tailscale:flags.tailscale},blockers:effective==='none'&&flags.enabled?[listenerBlock||'https_origin_required']:[],
+     lanExpiresAt:null});
+    if(action==='setup'){assert.deepEqual(body,{});return send(setupReply());}
+    if(action==='setup-save'&&!configured){
+     if(listenerDelay)await listenerDelay;
+     const {expectedRevision,...changes}=body;
+     if(expectedRevision!==revision())return error('link_setup_conflict',409);
+     assert.deepEqual(Object.keys(changes).sort(),['enabled','lan',...(Object.hasOwn(changes,'peerListener')?['peerListener']:[]),'tailscale']);
+     listenerSaved={...listenerSaved,...changes};listenerRevision++;
+     listener=listenerSaved.enabled&&listenerSaved.peerListener&&!listenerBlock?'peer-only':'none';
+     if(listenerReceiptLost){listenerReceiptLost=false;return route.abort('connectionreset');}
+     // Recalculate the receipt after the operation finishes.
+     return send({...setupReply(),status:listener==='peer-only'?'active':listenerSaved.enabled?'unavailable':'off',
+      enabled:listenerSaved.enabled,peerListener:listenerSaved.peerListener,listener,origins:listener==='peer-only'?[privateOrigin]:[],
+      discovery:{lan:listenerSaved.lan,tailscale:listenerSaved.tailscale},
+      blockers:listener==='none'&&listenerSaved.enabled?[listenerBlock||'https_origin_required']:[]});
+    }
+    if(effective==='none')return error('link_unsupported',403);
+    if(action==='list')return send({instanceId:configured?offerId:joinerId,origins:currentOrigins,
+     links:configured?[]:[{...incoming(),instanceId:offerId,revoked:listenerRevoked}],discovery:{lan:flags.lan,tailscale:flags.tailscale}});
+    if(action==='offer'){
+     assert.equal(body.origin,currentOrigins[0]);
+     return send({code,expiresAt:Date.now()/1000+600,qrPngBase64:png});
+    }
+    if(action==='lan-browse')return send({status:'ok',instances:[candidate,{...candidate,candidateId:'b'.repeat(32),instanceId:secondInstance}]});
+    if(action==='join'){
+     assert.equal(body.expectedInstanceId,secondInstance);
+     return send({...outgoing(),instanceId:secondInstance});
+    }
+    if(action==='revoke'&&!configured){
+     assert.equal(body.grantId,grantId);listenerRevoked=true;
+     return send({...incoming(),instanceId:offerId,revoked:true});
+    }
+    assert.fail('Unexpected listener fixture action: '+action);
+   }
    if(side==='setup'){
     const runtimeDiscovery={lan:runtime?.lan===true,tailscale:runtime?.tailscale===true};
     const runtimeOrigins=runtime?.enabled&&!setupBlocked?[peerOrigin,'https://second.example.test']:[];
@@ -180,7 +226,7 @@ try{
  await install(a,aURL.origin,'A');await install(b,bURL.origin,'B');await install(old,aURL.origin,'old');
  async function open(page,url){
   await page.goto(url.href);
-  await page.getByRole('button',{name:'Linked instances',exact:true}).click();
+  await page.getByRole('button',{name:/^Linked instances(?:\s|$)/}).click();
  }
  await open(old,aURL);
  await expect(old.getByText('Linking is not available on this Amplifier.')).toBeVisible();
@@ -189,6 +235,7 @@ try{
  report.cases.push('Older host exposes no create or join controls.');
  await open(a,aURL);
  await expect(a.getByText('This version supports invitations but not in-app linking setup.')).toBeVisible();
+ await expect(a.getByRole('button',{name:'Allow linking from other devices'})).toHaveCount(0);
  await a.bringToFront();
  await a.getByRole('button',{name:'Create invitation'}).click();
  await a.getByRole('button',{name:'Create',exact:true}).click();
@@ -496,6 +543,101 @@ try{
  await keyActivate(setupPage.getByText('Connection details',{exact:true}));
  await expect(setupPage.getByText('Used at last check: Tailscale')).toBeVisible();
  report.cases.push('Explicit nearby browse, stale result ignored after switching modes, one Tailscale lookup per chosen device, offline is not checked, selected identity required, exact retry and verified connection reuse.');
+ const local=await context.newPage();attachErrors(local);
+ await install(local,bURL.origin,'peer-listener');await open(local,bURL);
+ const localButton=name=>local.getByRole('button',{name,exact:true});
+ const listenerCalls=()=>calls.filter(call=>call.side==='peer-listener');
+ const listenerSaves=()=>listenerCalls().filter(call=>call.action==='setup-save');
+ const localSetup=local.getByRole('region',{name:'Linking setup'});
+ await expect(localSetup.getByText('Linking is off on this Amplifier.')).toBeVisible();
+ assert.deepEqual(listenerCalls().map(call=>call.action).sort(),['list','setup']);
+ await expect(localButton('Create invitation')).toHaveCount(0);
+ await expect(localSetup.getByText(/does not share this browser, chats, or files/)).toBeVisible();
+ let releaseListener;
+ listenerDelay=new Promise(resolve=>{releaseListener=resolve});
+ await localButton('Allow linking from other devices').click();
+ await expect(local.getByRole('status').filter({hasText:'Opening the connection for linking…'})).toBeVisible();
+ await expect(localButton('Refresh setup')).toBeDisabled();
+ await expect(localButton('Allow linking from other devices')).toBeDisabled();
+ assert.deepEqual(listenerCalls().slice(2).map(call=>call.action),['setup-save']);
+ assert.deepEqual(listenerSaves()[0].body,{enabled:true,lan:true,tailscale:false,peerListener:true,expectedRevision:revision()});
+ releaseListener();listenerDelay=null;
+ await expect(localSetup.getByText('Linking is not ready on this Amplifier.')).toBeVisible();
+ await expect(localSetup.getByText(/saved connection for linking is already in use/)).toBeVisible();
+ await expect(local.getByText(/restart/i)).toHaveCount(0);
+ await expect(localButton('Create invitation')).toHaveCount(0);
+ // The next attempt succeeds on the host but the browser doesn't get its reply.
+ listenerBlock=null;listenerReceiptLost=true;
+ await localButton('Try connection again').click();
+ await expect(local.getByRole('alert')).toContainText('Could not confirm that linking settings were saved.');
+ assert.equal(listenerSaves().length,2);
+ assert.deepEqual(listenerSaves()[1].body,{enabled:true,lan:true,tailscale:false,expectedRevision:(listenerRevision-1).toString(16).padStart(64,'0')});
+ const afterLostReceipt=listenerCalls().length;
+ await localButton('Refresh setup').click();
+ await expect(localSetup.getByText('Linking is ready on this Amplifier.')).toBeVisible();
+ await expect(localButton('Find nearby Amplifiers')).toBeEnabled();
+ assert.deepEqual(listenerCalls().slice(afterLostReceipt).map(call=>call.action).sort(),['list','setup']);
+ await expect(localSetup.getByText('This Amplifier’s instance ID:',{exact:false})).toContainText(joinerId.slice(0,8));
+ await localButton('Create invitation').click();
+ await expect(local.getByRole('combobox')).toHaveCount(0);
+ await localButton('Create').click();
+ await expect(local.getByRole('textbox',{name:'Created invitation'})).toBeVisible();
+ await localButton('Show QR code').click();
+ await expect(local.getByRole('img',{name:'Amplifier pairing QR code'})).toBeVisible();
+ await localButton('Done').click();await localButton('Create invitation').click();
+ assert.equal(local.url(),bURL.href);
+ await localButton('Find nearby Amplifiers').click();
+ await expect(localButton('Office Amplifier · '+offerId.slice(0,8))).toBeVisible();
+ const chosenOffice=localButton('Office Amplifier · '+secondInstance.slice(0,8));
+ await chosenOffice.focus();await local.keyboard.press('Enter');
+ await localButton('Join this Amplifier').click();
+ await local.getByRole('textbox',{name:'Amplifier invitation'}).fill(code);
+ await localButton('Join').click();
+ await expect(local.getByText('Amplifier verified the invitation and linked the instance.')).toBeVisible();
+ const stale=await context.newPage();attachErrors(stale);
+ await install(stale,bURL.origin,'peer-listener');await open(stale,bURL);
+ const staleView=stale.getByRole('region',{name:'Linking setup'});
+ await expect(staleView.getByText('Linking is ready on this Amplifier.')).toBeVisible();
+ await staleView.getByText('Discovery options',{exact:true}).click();
+ await staleView.getByRole('checkbox',{name:'Allow Tailscale discovery'}).check();
+ const staleRevision=revision();
+ await localButton('Turn off linking').click();
+ await expect(localSetup.getByText('Linking is off on this Amplifier.')).toBeVisible();
+ await expect(localButton('Create invitation')).toHaveCount(0);
+ assert.equal(listenerRevoked,false);
+ assert.deepEqual(listenerSaves()[2].body,{enabled:false,lan:true,tailscale:false,expectedRevision:staleRevision});
+ const beforeStaleSave=listenerCalls().length;
+ await staleView.getByRole('button',{name:'Save discovery options'}).click();
+ await expect(staleView.getByRole('status')).toHaveText('Linking settings changed. Refresh setup to review the current settings before saving again.');
+ await expect(staleView.getByRole('button',{name:'Save discovery options'})).toHaveCount(0);
+ await expect(stale.getByRole('button',{name:'Create invitation'})).toBeDisabled();
+ assert.deepEqual(listenerCalls().slice(beforeStaleSave).map(call=>call.action),['setup-save']);
+ assert.deepEqual(listenerSaves()[3].body,{enabled:true,lan:true,tailscale:true,expectedRevision:staleRevision});
+ assert.equal(listenerSaved.enabled,false);
+ assert.equal(listenerSaved.tailscale,false);
+ assert.equal(listener,'none');
+ await staleView.getByRole('button',{name:'Refresh setup'}).click();
+ await expect(staleView.getByText('Linking is off on this Amplifier.')).toBeVisible();
+ assert.deepEqual(listenerCalls().slice(beforeStaleSave+1).map(call=>call.action).sort(),['list','setup']);
+ report.cases.push('A discovery save drafted in a stale tab cannot undo the other tab’s confirmed disable. Conflict requires explicit readback and never replays.');
+ await localButton('Enable linking').click();
+ await expect(local.getByText('Can check this Amplifier’s status')).toBeVisible();
+ await localButton('Revoke link').click();await localButton('Confirm revoke').click();
+ await expect(local.getByText('Revoked',{exact:true})).toBeVisible();
+ await localButton('Withdraw device connection permission').click();
+ await expect(localButton('Allow linking from other devices')).toBeVisible();
+ await expect(localButton('Create invitation')).toHaveCount(0);
+ assert.deepEqual(listenerSaves().map(call=>call.body.peerListener),[true,undefined,undefined,undefined,undefined,false]);
+ assert.equal(listenerCalls().filter(call=>call.action==='revoke').length,1);
+ report.cases.push('Plain localhost opt-in, pending action with no polling, typed unavailable, lost receipt requires explicit readback, active peer-only invitation and QR, same-name installation selection, disable preserves grants, separate revoke and consent withdrawal.');
+ const configured=await touch.newPage();attachErrors(configured);
+ await install(configured,aURL.origin,'configured-listener');await open(configured,new URL(aURL.href+'?mobile'));
+ await expect(configured.getByText('Linking is ready on this Amplifier.')).toBeVisible();
+ await expect(configured.getByRole('button',{name:'Allow linking from other devices'})).toHaveCount(0);
+ await configured.getByRole('button',{name:'Create invitation'}).click();
+ await configured.getByRole('button',{name:'Create',exact:true}).click();
+ await expect(configured.getByRole('textbox',{name:'Created invitation'})).toBeVisible();
+ report.cases.push('Existing configured HTTPS invitation still works without opening a separate connection or changing setup.');
  const short=await touch.newPage();attachErrors(short);
  await short.goto(aURL.href+'?short');
  const input=short.getByRole('textbox',{name:'Pairing code'}),cells=short.locator('[data-code-cell]');

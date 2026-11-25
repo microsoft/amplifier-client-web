@@ -3,7 +3,7 @@ import {ClipboardPaste,Copy} from 'lucide-react';
 import {hostNow} from './api.js';
 import {writeClipboardText} from './clipboard-copy.js';
 import {LinkQrReader} from './link-qr.jsx';
-import {LINK_INVITATION_MAX,linkInvitation,linkedInstancesRequest,verifiedRouteName} from './linked-instances-api.js';
+import {LINK_INVITATION_MAX,hasPeerListener,isSetupRevision,linkInvitation,linkedInstancesRequest,verifiedRouteName} from './linked-instances-api.js';
 import {LinkedInstanceDiscovery} from './linked-instance-discovery.jsx';
 import './linked-instances.css';
 
@@ -39,7 +39,14 @@ const joinErrors={
 const setupBlockers={
  https_origin_required:'No secure invitation address is available on this Amplifier.',
  app_tls_required:'This Amplifier needs its own secure connection before it can share an invitation.',
+ app_tls_unavailable:'Amplifier couldn’t start its configured secure connection.',
  saved_configuration_unavailable:'This Amplifier’s installation cannot save linking settings.',
+ peer_listener_unsupported:'This installation can’t open a separate connection for linking.',
+ peer_interface_unavailable:'Amplifier couldn’t find an eligible network connection for linking.',
+ peer_interface_ambiguous:'Amplifier found more than one possible network connection and couldn’t safely choose one.',
+ peer_identity_unavailable:'Amplifier couldn’t prepare its secure identity for linking.',
+ peer_port_unavailable:'The saved connection for linking is already in use or unavailable.',
+ peer_listener_unavailable:'Amplifier couldn’t open its separate connection for linking.',
 };
 const missingEndpoint=error=>error.status===404||error.status===405;
 function Notice({result}){
@@ -116,7 +123,20 @@ function LinkSetupOptions({setup,disabled,onSave}){
  const [lan,setLan]=useState(setup.discovery.lan),[tailscale,setTailscale]=useState(setup.discovery.tailscale);
  const dirty=lan!==setup.discovery.lan||tailscale!==setup.discovery.tailscale;
  const enabled=setup.enabled;
+ const supportsPeer=hasPeerListener(setup)&&isSetupRevision(setup.revision);
+ const canAllowPeer=supportsPeer&&!setup.peerListener&&setup.listener!=='configured';
+ const canRetryPeer=supportsPeer&&setup.peerListener&&enabled&&setup.status==='unavailable'&&setup.listener==='none';
  return <>
+  {(canAllowPeer||supportsPeer&&setup.peerListener)&&<div className="a-link-peer">
+   <p>Allow other Amplifiers to connect for invitations and status checks only. This does not share this browser, chats, or files, and does not make this Amplifier discoverable.</p>
+   {setup.peerListener&&<p className="a-caption">Turning off linking closes this connection but keeps your permission and saved links. Withdraw permission to prevent this separate connection from opening again.</p>}
+   <div className="a-link-actions">
+    {canAllowPeer&&<button type="button" className="a-primary" disabled={disabled} onClick={()=>onSave({enabled:true,lan,tailscale,peerListener:true})}>Allow linking from other devices</button>}
+    {canRetryPeer&&<button type="button" className="a-soft" disabled={disabled} onClick={()=>onSave({enabled:true,lan:setup.discovery.lan,tailscale:setup.discovery.tailscale})}>Try connection again</button>}
+    {supportsPeer&&setup.peerListener&&<button type="button" className="a-soft" disabled={disabled}
+     onClick={()=>onSave({enabled,lan:setup.discovery.lan,tailscale:setup.discovery.tailscale,peerListener:false})}>Withdraw device connection permission</button>}
+   </div>
+  </div>}
   <details>
    <summary>Discovery options</summary>
    <p>These options allow discovery but don’t make this Amplifier visible or look for other devices by themselves.</p>
@@ -124,7 +144,7 @@ function LinkSetupOptions({setup,disabled,onSave}){
    <label><input type="checkbox" checked={tailscale} disabled={disabled} onChange={event=>setTailscale(event.target.checked)}/> Allow Tailscale discovery</label>
   </details>
   <div className="a-link-actions">
-   {!enabled&&<button type="button" className="a-primary" disabled={disabled} onClick={()=>onSave({enabled:true,lan,tailscale})}>Enable linking</button>}
+   {!enabled&&!canAllowPeer&&<button type="button" className="a-primary" disabled={disabled} onClick={()=>onSave({enabled:true,lan,tailscale})}>Enable linking</button>}
    {enabled&&<>
     <button type="button" className="a-soft" disabled={disabled||!dirty} onClick={()=>onSave({enabled:true,lan,tailscale})}>Save discovery options</button>
     <button type="button" className="a-soft" disabled={disabled} onClick={()=>onSave({enabled:false,lan:setup.discovery.lan,tailscale:setup.discovery.tailscale})}>Turn off linking</button>
@@ -143,20 +163,28 @@ export function LinkedInstancesSettings({active=true}){
  const [setup,setSetup]=useState(null),[setupState,setSetupState]=useState(null),[target,setTarget]=useState(null),
   [discoverableUntil,setDiscoverableUntil]=useState(null),[discoveryEpoch,setDiscoveryEpoch]=useState(0);
  const supportedSetup=setupState==='ready',legacy=setupState==='legacy';
+ const peerCapable=hasPeerListener(setup);
+ const revisionUnavailable=setup?.revision===null||peerCapable&&!isSetupRevision(setup.revision);
  const ready=supportedSetup&&setup.status==='active';
  const origins=list?.origins||[];
  const lan=ready&&origins.length>0&&list.discovery?.lan===true,tailscale=ready&&origins.length>0&&list.discovery?.tailscale===true;
- const offerOrigins=ready?setup.origins.slice(0,1).filter(value=>origins.includes(value)):origins;
+ // Peer endpoints come only from positive, matching host observations. Do not
+ // offer a previously seen endpoint after an uncertain activation or shutdown.
+ const currentOrigins=supportedSetup?setup.origins.filter(value=>origins.includes(value)):[];
+ const offerOrigins=peerCapable?currentOrigins.slice(0,1):ready?currentOrigins.slice(0,1):origins;
  const selectedOrigin=ready||offerOrigins.length===1?offerOrigins[0]||'':offerOrigins.includes(origin)?origin:'';
- const allowJoin=legacy||origins.length>0;
+ const allowJoin=peerCapable?currentOrigins.length>0:legacy||origins.length>0;
  const targetAllowed=target?.route==='lan'?lan:target?.route==='tailscale'?tailscale:true;
  const disabled=!!busy||!!pending;
  const setupStatus=supportedSetup?({
   active:'Linking is ready on this Amplifier.',
-  pending:'Linking settings are saved. Restart this Amplifier to apply them. No restart was started here.',
+  pending:peerCapable&&setup.peerListener&&setup.listener!=='configured'
+   ?'The connection for linking is not confirmed yet. Use Refresh setup to check again.'
+   :'Linking settings are saved. Restart this Amplifier to apply them. No restart was started here.',
   off:'Linking is off on this Amplifier.',
   unavailable:'Linking is not ready on this Amplifier.',
- })[setup.status]:'Could not confirm linking setup. Use Refresh setup to check again.';
+ })[setup.status]:setupState==='conflict'?'Linking settings changed. Refresh setup to review the current settings before saving again.':
+  'Could not confirm linking setup. Use Refresh setup to check again.';
 
  useLayoutEffect(()=>{visible.current=active;return()=>{visible.current=false}},[active]);
  useEffect(()=>()=>{operation.current?.abort();operation.current=null;resume.current=null},[]);
@@ -199,7 +227,7 @@ export function LinkedInstancesSettings({active=true}){
    if(!signal.aborted)acceptSetup(received);
   }catch(error){
    if(signal.aborted)return;
-   setSetupState(previous=>missingEndpoint(error)&&!setup?'legacy':previous==='uncertain'?'uncertain':'error');
+   setSetupState(previous=>missingEndpoint(error)&&!setup?'legacy':['uncertain','conflict'].includes(previous)?previous:'error');
   }
  }
  function load(){return run('Loading linked instances…',async signal=>{
@@ -213,16 +241,29 @@ export function LinkedInstancesSettings({active=true}){
   await Promise.all([readSetup(signal),listRead]);
  });}
  function saveSetup(body){
+  if(!supportedSetup||revisionUnavailable)return;
   if(visible.current)setupHeading.current?.focus();
-  return run('Saving linking settings…',async signal=>{
+  const changingPeer=Object.hasOwn(body,'peerListener');
+  const canStartPeer=body.enabled&&(body.peerListener??(peerCapable&&setup.peerListener))&&setup.listener!=='configured';
+  const canStopPeer=peerCapable&&setup.listener==='peer-only'&&(!body.enabled||body.peerListener===false);
+  const label=canStartPeer&&setup.listener!=='peer-only'?'Opening the connection for linking…':canStopPeer?'Closing the connection for linking…':'Saving linking settings…';
+  return run(label,async signal=>{
    try{
-    const received=await linkedInstancesRequest('setup-save',body,signal);
+    const requestBody=isSetupRevision(setup.revision)?{...body,expectedRevision:setup.revision}:body;
+    const received=await linkedInstancesRequest('setup-save',requestBody,signal);
     if(signal.aborted)return;
     if(received.enabled!==body.enabled||received.discovery.lan!==body.lan||received.discovery.tailscale!==body.tailscale)throw Error();
+    if(peerCapable&&(!hasPeerListener(received)||!changingPeer&&received.peerListener!==setup.peerListener))throw Error();
+    if(peerCapable&&(canStartPeer||canStopPeer)&&received.status==='pending')throw Error();
     acceptSetup(received);setMode(null);setTarget(null);setOffer(null);setConfirm(null);setDiscoveryEpoch(value=>value+1);
-   }catch{
+   }catch(error){
     if(signal.aborted)return;
+    if(isConflict(error,'link_setup_conflict')){
+     setSetupState('conflict');setMode(null);setTarget(null);setOffer(null);
+     return false;
+    }
     setSetupState('uncertain');
+    if(peerCapable){setMode(null);setTarget(null);setOffer(null);}
     throw Object.assign(Error(),{displayText:'Could not confirm that linking settings were saved. Refresh setup before making another change.'});
    }
    try{await refresh(signal);}
@@ -357,7 +398,11 @@ export function LinkedInstancesSettings({active=true}){
    <p role="status">{setupState&&setupStatus}</p>
    {supportedSetup&&<>
     {setup.blockers.length>0&&<ul>{[...new Set(setup.blockers)].map(code=><li key={code}>{Object.hasOwn(setupBlockers,code)?setupBlockers[code]:'This Amplifier reported a setup requirement it cannot explain here.'}</li>)}</ul>}
-    <LinkSetupOptions key={JSON.stringify([setup.enabled,setup.discovery])} setup={setup} disabled={disabled} onSave={saveSetup}/>
+    {peerCapable&&setup.listener==='peer-only'&&setup.status==='active'&&<p>Other Amplifiers can connect for invitations and status checks only.</p>}
+    {peerCapable&&list&&<p className="a-caption" data-private="true">This Amplifier’s instance ID: <code>{list.instanceId.slice(0,8)}</code></p>}
+    {revisionUnavailable&&<p>Amplifier couldn’t read the saved linking settings. Refresh setup before making changes.</p>}
+    <LinkSetupOptions key={JSON.stringify([setup.enabled,setup.discovery,peerCapable?setup.peerListener:null,setup.revision])}
+     setup={setup} disabled={disabled||revisionUnavailable} onSave={saveSetup}/>
    </>}
    <button type="button" className="a-soft" aria-disabled={disabled} onClick={()=>{if(!disabled)load()}}>Refresh setup</button>
   </section>}

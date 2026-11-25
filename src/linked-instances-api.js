@@ -17,10 +17,16 @@ const httpsOrigin=value=>{
  try{const url=new URL(value);return typeof value==='string'&&url.protocol==='https:'&&url.origin===value;}
  catch{return false}
 };
+export const hasPeerListener=value=>typeof value?.peerListener==='boolean'&&['peer-only','configured','none'].includes(value.listener);
+export const isSetupRevision=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 const setup=value=>['off','unavailable','pending','active'].includes(value.status)&&
  typeof value.enabled==='boolean'&&discovery(value.discovery)&&
  Array.isArray(value.origins)&&value.origins.every(httpsOrigin)&&
- Array.isArray(value.blockers)&&value.blockers.every(identity)&&expiry(value.lanExpiresAt);
+ Array.isArray(value.blockers)&&value.blockers.every(identity)&&expiry(value.lanExpiresAt)&&
+ (!hasPeerListener(value)||value.listener!=='peer-only'||
+  value.enabled&&value.peerListener&&value.status==='active'&&value.origins.length>0)&&
+ (!hasPeerListener(value)||value.listener!=='none'||value.status!=='active')&&
+ (!Object.hasOwn(value,'revision')||value.revision===null||isSetupRevision(value.revision));
 const label=value=>typeof value==='string'&&value.trim().length>0&&value.length<=256;
 const hexId=value=>typeof value==='string'&&/^[a-f0-9]{32}$/.test(value);
 const listing=(value,statuses,field,isItem,key)=>{
@@ -43,7 +49,8 @@ const valid={
  revoke:value=>linkRecord(value)&&value.revoked,
  status:(value,body)=>value.instanceId===body.instanceId&&['online','offline'].includes(value.availability),
  setup,
- 'setup-save':setup,
+ 'setup-save':(value,body)=>setup(value)&&(!Object.hasOwn(body,'expectedRevision')||isSetupRevision(value.revision))&&
+  (!Object.hasOwn(body,'peerListener')||hasPeerListener(value)&&value.peerListener===body.peerListener),
  'lan-browse':value=>candidates(value,['ok','empty','unavailable'],'lan'),
  'lan-discoverable':(value,body)=>expiry(value.expiresAt)&&(value.status==='ok'
   ?(body.enabled?value.expiresAt!==null:value.expiresAt===null)

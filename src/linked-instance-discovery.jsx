@@ -9,7 +9,10 @@ const messages={
 function QueryStatus({query,kind}){
  const count=(query?.devices||query?.instances)?.length;
  const text=query?.loading?{lan:'Looking for nearby Amplifiers…',devices:'Listing Tailscale devices…',find:'Checking the selected device…'}[kind]:
-  query?.status==='ok'?(kind==='devices'?`${count} ${count===1?'device':'devices'} listed.`:`${count} ${count===1?'Amplifier':'Amplifiers'} found.`):messages[kind][query?.status];
+  query?.status==='ok'?(kind==='devices'?`${count} ${count===1?'device':'devices'} listed.`:`${count} ${count===1?'Amplifier':'Amplifiers'} found.`):
+  kind==='find'&&query?.status==='unavailable'&&query.reason==='tailscale_profile_required'
+   ?'Discovery isn’t set up for this Tailscale device. You can still use an invitation.'
+   :messages[kind][query?.status];
  return <div role="status">{text}</div>;
 }
 function Choices({items,identity,selected,onSelect,description,label,disabled}){
@@ -56,7 +59,19 @@ export function LinkedInstanceDiscovery({lan,tailscale,links,disabled,onRemember
  // Conflicting hints do not identify a route or a peer the owner can verify.
  const seen=new Set(),ambiguous=new Set();
  for(const {instanceId} of hints){if(seen.has(instanceId))ambiguous.add(instanceId);seen.add(instanceId)}
- const candidates=hints.filter(item=>!ambiguous.has(item.instanceId));
+ const selectable=hints.filter(item=>!ambiguous.has(item.instanceId));
+ const labels=new Map();
+ for(const item of selectable){
+  const key=item.label.trim().toLowerCase();
+  const group=labels.get(key)||[];group.push(item);labels.set(key,group);
+ }
+ const candidates=selectable.map(item=>{
+  const sameName=labels.get(item.label.trim().toLowerCase());
+  if(sameName.length===1)return item;
+  const short=item.instanceId.slice(0,8);
+  const suffix=sameName.filter(other=>other.instanceId.startsWith(short)).length===1?short:item.instanceId;
+  return {...item,label:`${item.label} · ${suffix}`};
+ });
  const candidate=candidates.find(item=>item.candidateId===selected);
  const grants=candidate?links.filter(link=>!link.revoked&&link.direction==='outgoing'&&link.instanceId===candidate.instanceId):[];
  const results=hints.length>0&&<div className="a-link-found" data-private="true">
