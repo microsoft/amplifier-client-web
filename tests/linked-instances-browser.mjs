@@ -7,9 +7,10 @@ import {createServer,transformWithEsbuild} from 'vite';
 import {chromium,expect} from '@playwright/test';
 
 const fixture=`
- import React,{useState} from 'react';
+ import React,{useRef,useState} from 'react';
  import {createRoot} from 'react-dom/client';
  import {SettingsExperience} from '/src/settings-experience.jsx';
+ import {createLinkJoinRecovery} from '/src/link-join-recovery.js';
  import {LinkCodeEntry} from '/src/link-code-entry.jsx';
  import '/src/reference.css';
  import '/src/settings-experience.css';
@@ -18,6 +19,11 @@ const fixture=`
   const [value,setValue]=useState('');
   const [view,setView]=useState(location.search==='?mobile'?{panel:'settings',settingsSection:'index',settingsExpanded:[]}:
    {panel:'settings',settingsExpanded:['external-agents']});
+  const [connected,setConnected]=useState(true),[client,setClient]=useState({hostInstanceId:location.hostname,historyScope:'owner-a'});
+  const recovery=useRef(null);
+  if(!recovery.current)recovery.current=createLinkJoinRecovery();
+  window.fixtureSettings={setConnected,setClient,invalidate:()=>recovery.current.invalidate()};
+  recovery.current.observe(client);
   const act=async(action,args)=>{
    if(action==='view.update')setView(old=>({...old,...args.patch}));
    else if(action==='externalAgents.list')return {accepted:true,result:{agents:[]}};
@@ -26,9 +32,10 @@ const fixture=`
   };
   if(location.search==='?short')return <main style={{padding:8}}><LinkCodeEntry value={value} onChange={setValue} alphabet="23456789ABCDEFGHJKMNPQRSTUVWXYZ"/></main>;
   if(view.panel!=='settings')return <button onClick={()=>setView(old=>({...old,panel:'settings'}))}>Open settings</button>;
-  const state={view,client:{hostInstanceId:location.hostname},setup:{providers:[]},settings:{},attention:{items:[]},workspaces:[],sessions:[]};
+  if(!connected)return <p>Reconnecting fixture</p>;
+  const state={view,client,setup:{providers:[]},settings:{},attention:{items:[]},workspaces:[],sessions:[]};
   return <div className="a-overlay a-settings-overlay a-settings-redesign-overlay"><section className="a-dialog wide">
-   <SettingsExperience state={state} act={act} dispatch={act} open/>
+   <SettingsExperience state={state} linkJoinRecovery={recovery.current} act={act} dispatch={act} open/>
   </section></div>;
  }
  createRoot(document.getElementById('amp-one')).render(<Fixture/>);`;
@@ -44,7 +51,7 @@ const offerId='1'.repeat(32),joinerId='2'.repeat(32),grantId='3'.repeat(32);
 const extraGrant='4'.repeat(32),reverseGrant='5'.repeat(32),unrelatedGrant='6'.repeat(32);
 const calls=[];
 let server,browser,failure,linked=false,revoked=false,offline=false,expired=false;
-let joinReceipt=null,joinStep=0,joinRefusal=null;
+let joinReceipt=null,joinStep=0,joinRefusal=null,recoverLifecycleJoin=false;
 let ambiguous=false,legacyRows=false;
 const deviceOnline='synthetic-device-online',deviceOffline='synthetic-device-offline',candidateId='8'.repeat(32);
 const candidate={candidateId,instanceId:offerId,label:'Office Amplifier',route:'lan'};
@@ -194,7 +201,7 @@ try{
    if(action==='join'&&side==='B'){
     assert.match(body.commandId,/^[0-9a-f]{32}$/);
     if(joinRefusal&&body.code===joinRefusal.code)return error(joinRefusal.error,joinRefusal.status);
-    if(body.code===unconfirmedCode)return error('internal_error',500);
+    if(body.code===unconfirmedCode)return recoverLifecycleJoin?send(outgoing()):error('internal_error',500);
     if(body.code===healthyCode){linked=true;return route.fulfill({status:200,json:{accepted:true,result:outgoing()}});}
     assert.equal(body.code,code);
     if(!joinReceipt){joinReceipt=body;linked=true;}
@@ -441,6 +448,57 @@ try{
  assert.equal(joinCalls().length,afterUnconfirmed+1);
  assert.equal(calls.findLast(c=>c.action==='join').body.code,healthyCode);
  report.cases.push('An untyped first-attempt refusal remains pending. Closing Settings forgets its private retry without replay; a fresh healthy manual Join still succeeds.');
+
+ const lifecycle=await context.newPage();attachErrors(lifecycle);
+ await install(lifecycle,bURL.origin,'B');await open(lifecycle,bURL);
+ const lifeButton=name=>lifecycle.getByRole('button',{name,exact:true});
+ async function lifeJoin(){
+  await lifeButton('Join with invitation').click();
+  await lifecycle.getByRole('textbox',{name:'Amplifier invitation'}).fill(unconfirmedCode);
+  await lifeButton('Join').click();
+  await expect(lifeButton('Retry same request')).toBeEnabled();
+ }
+ await lifeJoin();
+ const beforeRemount=joinCalls().length;
+ const originalJoin=joinCalls().at(-1).body;
+ assert.equal(await lifecycle.evaluate(({code,commandId})=>[localStorage,sessionStorage].some(storage=>
+  Object.values(storage).some(value=>value.includes(code)||value.includes(commandId))),originalJoin),false);
+ await lifecycle.evaluate(()=>window.fixtureSettings.setConnected(false));
+ await expect(lifecycle.getByText('Reconnecting fixture')).toBeVisible();
+ await lifecycle.evaluate(()=>window.fixtureSettings.setConnected(true));
+ await expect(lifeButton('Retry same request')).toBeEnabled();
+ await lifecycle.evaluate(()=>window.fixtureSettings.setClient({hostInstanceId:location.hostname}));
+ await expect(lifecycle.getByText('Reconnecting to linking settings…')).toBeVisible();
+ await expect(lifeButton('Retry same request')).toHaveCount(0);
+ await lifecycle.evaluate(()=>window.fixtureSettings.setClient({hostInstanceId:location.hostname,historyScope:'owner-a'}));
+ await expect(lifeButton('Retry same request')).toBeEnabled();
+ assert.equal(joinCalls().length,beforeRemount);
+ recoverLifecycleJoin=true;
+ await lifeButton('Retry same request').click();
+ await expect(lifecycle.getByText('Amplifier verified the invitation and linked the instance.')).toBeVisible();
+ assert.equal(joinCalls().length,beforeRemount+1);
+ assert.ok(joinCalls().at(-1).wire===joinCalls().at(-2).wire);
+ recoverLifecycleJoin=false;
+ for(const changed of [{kind:'owner',scope:'owner-b'},{kind:'host',scope:'owner-a'},{kind:'auth',scope:'owner-a'}]){
+  await lifeJoin();
+  const beforeFence=joinCalls().length;
+  await lifecycle.evaluate(({kind,scope})=>{
+   if(kind==='auth')window.fixtureSettings.invalidate();
+   window.fixtureSettings.setClient({hostInstanceId:kind==='host'?'replacement-host':location.hostname,historyScope:scope});
+  },changed);
+  // Also pass through the real display-level remount before looking for any
+  // retained command, even when metadata on the new authenticated view match.
+  await lifecycle.evaluate(()=>window.fixtureSettings.setConnected(false));
+  await expect(lifecycle.getByText('Reconnecting fixture')).toBeVisible();
+  await lifecycle.evaluate(()=>window.fixtureSettings.setConnected(true));
+  await expect(lifeButton('Join with invitation')).toBeEnabled();
+  await expect(lifeButton('Retry same request')).toHaveCount(0);
+  await lifecycle.evaluate(()=>window.fixtureSettings.setClient({hostInstanceId:location.hostname,historyScope:'owner-a'}));
+  await expect(lifeButton('Join with invitation')).toBeEnabled();
+  await expect(lifeButton('Retry same request')).toHaveCount(0);
+  assert.equal(joinCalls().length,beforeFence);
+ }
+ report.cases.push('Pending Join survives a same-owner Settings remount and waits through a missing authority frame. Only explicit Retry sends the byte-identical request; a replacement owner, host or auth epoch discards it.');
 
  const touch=await browser.newContext({viewport:{width:320,height:780},hasTouch:true,isMobile:true,permissions:['clipboard-read','clipboard-write']});
  const setupPage=await touch.newPage();attachErrors(setupPage);

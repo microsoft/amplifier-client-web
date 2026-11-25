@@ -153,13 +153,14 @@ function LinkSetupOptions({setup,disabled,onSave}){
  </>;
 }
 
-export function LinkedInstancesSettings({active=true}){
+export function LinkedInstancesSettings({active=true,joinRecovery}){
  const [list,setList]=useState(null),[notSupported,setNotSupported]=useState(false),[busy,setBusy]=useState(''),
   [mode,setMode]=useState(null),[result,setResult]=useState(null),[origin,setOrigin]=useState(''),[offer,setOffer]=useState(null),
   [copyNote,setCopyNote]=useState(''),[checks,setChecks]=useState({}),[confirm,setConfirm]=useState(null);
  const operation=useRef(null),visible=useRef(active),joinButton=useRef(null),setupHeading=useRef(null);
  const targetDescription=useId();
- const resume=useRef(null),[pending,setPending]=useState(null);
+ const resume=useRef(null),[localPending,setPending]=useState(null),inflightJoin=useRef(null);
+ const pending=joinRecovery?.read()?'join':localPending;
  const [setup,setSetup]=useState(null),[setupState,setSetupState]=useState(null),[target,setTarget]=useState(null),
   [discoverableUntil,setDiscoverableUntil]=useState(null),[discoveryEpoch,setDiscoveryEpoch]=useState(0);
  const supportedSetup=setupState==='ready',legacy=setupState==='legacy';
@@ -187,9 +188,9 @@ export function LinkedInstancesSettings({active=true}){
   'Could not confirm linking setup. Use Refresh setup to check again.';
 
  useLayoutEffect(()=>{visible.current=active;return()=>{visible.current=false}},[active]);
- useEffect(()=>()=>{operation.current?.abort();operation.current=null;resume.current=null},[]);
+ useLayoutEffect(()=>()=>{inflightJoin.current?.interrupt();operation.current?.abort();operation.current=null;resume.current=null},[]);
  useEffect(()=>{
-  if(active&&!resume.current)load();
+  if(active&&!resume.current&&(!joinRecovery?.read()||!list))load();
   if(!active&&target&&!resume.current){setTarget(null);setMode(null);}
  },[active]);
  useEffect(()=>{
@@ -203,7 +204,7 @@ export function LinkedInstancesSettings({active=true}){
   return()=>clearTimeout(timer);
  },[discoverableUntil]);
  async function run(label,work){
-  if(operation.current)return false;
+  if(operation.current||joinRecovery&&!joinRecovery.available())return false;
   const controller=new AbortController();operation.current=controller;setBusy(label);setResult(null);
   try{const completed=await work(controller.signal);return completed!==false&&!controller.signal.aborted;}
   catch(error){
@@ -276,6 +277,11 @@ export function LinkedInstancesSettings({active=true}){
  }
  async function createOrChange(command,signal,retrying){
   const {route,body}=command;
+  const recovery=route==='join'?joinRecovery:null;
+  if(recovery){
+   recovery.start(command);
+   inflightJoin.current={interrupt:()=>recovery.unknown(command)};
+  }
   let response;
   try{response=await linkedInstancesRequest(route,body,signal);}
   catch(error){
@@ -283,10 +289,12 @@ export function LinkedInstancesSettings({active=true}){
    const selectedRefusal=route==='join'&&body.expectedInstanceId&&!retrying&&!error.unconfirmed&&
     error.accepted===false&&error.status===502&&error.code==='link_verification_failed';
    if(!selectedRefusal&&isUnconfirmed(route,error,retrying)){
-    resume.current=command;setPending(route);
+    if(recovery)recovery.unknown(command);
+    else {resume.current=command;setPending(route);}
     if(route==='join')return false;
     error.displayText='The result is not confirmed. Retry the same request before starting another change.';
    }else{
+    recovery?.settle(command);
     resume.current=null;setPending(null);
     // The duplicate refusal does not identify a verified peer row.
     if(route==='join'&&isConflict(error,'link_already_linked')){
@@ -299,8 +307,9 @@ export function LinkedInstancesSettings({active=true}){
     }
    }
    throw error;
-  }
+  }finally{inflightJoin.current=null;}
   if(signal.aborted)return;
+  recovery?.settle(command);
   resume.current=null;setPending(null);
   if(route==='offer'){
    setOffer(response);setCopyNote('');
@@ -317,11 +326,11 @@ export function LinkedInstancesSettings({active=true}){
   catch{if(!signal.aborted)setResult({error:true,text:text+' Could not refresh the list. Use Refresh links.'});}
  }
  function change(route,args){
-  if(resume.current)return Promise.resolve(false);
+  if(resume.current||joinRecovery?.read())return Promise.resolve(false);
   return run(changeLabels[route],signal=>createOrChange({route,body:{commandId:crypto.randomUUID().replaceAll('-',''),...args}},signal,false));
  }
  function retry(){
-  const command=resume.current;
+  const command=joinRecovery?.read()||resume.current;
   if(command)return run('Retrying the same request…',signal=>createOrChange(command,signal,true));
  }
  function check(link){
