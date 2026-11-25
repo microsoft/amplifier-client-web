@@ -9,7 +9,8 @@ import {shellScope,sameScope} from '../src/shell/resources.js';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const output=process.env.AMPLIFIER_TEST_ARTIFACTS||'/tmp/transcript-suggestion-boot';
-const positional=process.argv.slice(2).filter(arg=>arg!=='--activation-only');
+const canvasTransitionOnly=process.argv.includes('--settings-canvas-only');
+const positional=process.argv.slice(2).filter(arg=>!['--activation-only','--settings-canvas-only'].includes(arg));
 const artifact=positional[0]?await readClientArtifact(positional[0],positional[1]):null;
 const activationOutcomes=new Map();
 const acknowledgementModes=new Map();
@@ -73,6 +74,7 @@ try{
   }
   const result=ownerShell.response(route.request());if(result!==undefined)return route.fulfill({json:result});
   if(url.pathname==='/api/state')return route.fulfill({json:snapshot(owner)});
+  if(canvasTransitionOnly&&url.pathname==='/api/ui-use/v1/state')return route.fulfill({json:{targets:[],target:'unavailable',preferences:{target:'unavailable',selection:'standard'},computer:{detail:'Synthetic unavailable desktop.'}}});
   if(url.pathname==='/api/actions'&&route.request().method()==='GET'){
    if(holdCatalog){heldCatalog=route;return}
    return route.fulfill({json:catalogResponse()});
@@ -108,6 +110,7 @@ try{
     if(ack==='truncated')return route.fulfill({contentType:'application/json',body:'{"accepted":true,"result":'});
    }
    const saved=attemptResults.get(body.args.requestId),result={...saved,requestId:body.args.requestId,sessionId:body.args.sessionId};
+   if(!saved)return route.fulfill({json:{accepted:true,result:{...result,status:'expired',sourceKey:null,configRevision:null,suggestion:null,expiresAt:null}}});
    if(saved?.status==='pending'&&activationOutcomes.has(body.args.sessionId)){
     result.status=body.action==='session.suggestion.cancel'?'cancelled':activationOutcomes.get(body.args.sessionId);
     if(result.status!=='pending')Object.assign(saved,result);
@@ -122,6 +125,18 @@ try{
    state.revision++;
   }
   if(body.action==='canvas.visibility'){state.canvas={...state.canvas,open:body.args.open};state.revision++}
+  if(canvasTransitionOnly&&body.action==='canvas.show'){
+   state.canvas={id:'fixture-settings-canvas',kind:'settings',title:'Settings',open:true};
+   state.canvasArtifacts=[{...state.canvas,sessionId:state.selectedSessionId,workspaceId:state.selectedWorkspaceId,tabOpen:true}];
+   state.canvasWorkspace={views:[{id:'primary',resourceId:state.canvas.id,renderer:'builtin.canvas.settings'}]};
+   state.view={...state.view,panel:null,settingsCanvas:true};state.revision++;
+  }
+  if(canvasTransitionOnly&&body.action==='canvas.tabClose'){
+   // Actual e5b8 after-close witness: an ordinary non-Settings Canvas remains
+   // open and the raw settingsCanvas intent flag is stale, with no Settings DOM.
+   state.canvas={id:'fixture-ordinary-canvas',open:true};state.canvasArtifacts=[];state.canvasWorkspace={views:[]};
+   state.view={...state.view,panel:null};state.revision++;
+  }
   if(body.action==='session.select'){
    if(holdSelection){heldSelections.push({route,body});return}
    selectChat(body.args.id);
@@ -155,7 +170,28 @@ try{
  assert.equal(await page.evaluate(()=>window.amplifier.getState().selectedSessionId),null);
  assert.equal(await page.evaluate(()=>window.amplifier.getState().view?.panel??null),null,'Normal chat boot is not masked by a settings panel');
  assert.deepEqual(suggestionActions(),[]);assert.deepEqual(writes(),[]);
- if(process.argv.includes('--activation-only')){
+ if(canvasTransitionOnly){
+  state.sessions=[{id:'canvas-chat',title:'Already-On Canvas transition',sessionKind:'root',workspace:'/fixture',workspaceId:'project',status:'idle',historyManaged:true,historyLoaded:true,messages:[{id:'canvas-answer',role:'assistant',text:'An already completed public reply.'}],workers:[]}];
+  state.selectedSessionId='canvas-chat';state.view={...state.view,panel:'chat-computer',settingsCanvas:false,draft:'',draftDocument:null};state.revision++;
+  await page.evaluate(next=>window.emitFixtureState(next),snapshot());
+  const openControls=page.getByRole('button',{name:'Open controls in canvas',exact:true});
+  await expect(openControls).toBeVisible();assert.deepEqual(suggestionActions(),[],'Already-On modal has no prior attempt');
+  await openControls.click();
+  await expect(page.locator('[data-part="canvas"]')).toBeVisible();
+  await expect(page.getByRole('button',{name:'Close tab Settings',exact:true}).first()).toBeVisible();
+  await page.clock.fastForward(500);
+  report.canvasBeforeClose={actions:suggestionActions().map(row=>({action:row.action,args:row.args})),modelCalls};
+  assert.deepEqual(suggestionActions(),[],'Modal -> Canvas must never allocate, request or cancel a suggestion');
+  await page.getByRole('button',{name:'Close tab Settings',exact:true}).first().click();
+  await expect(page.getByRole('button',{name:'Use suggested message'})).toBeVisible();
+  await expect.poll(()=>suggestionActions().filter(row=>row.action==='session.suggestion.request').length).toBe(1);
+  await page.clock.fastForward(1000);
+  assert.equal(modelCalls,1);assert.equal(suggestionActions().filter(row=>row.action==='session.suggestion.cancel').length,0);
+  assert.equal(suggestionActions().filter(row=>row.action==='session.suggestion.request').length,1);
+  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
+  report.canvasTransition={alreadyOn:true,ordinaryButton:true,ordinaryTabClose:true,zeroWhileOwned:true,firstRequestAfterClose:true,modelCalls,synthetic:true};report.status='PASS';
+  console.log('PASS: already-On same-chat ordinary modal-to-Settings-Canvas has zero attempts until ordinary tab close, then one request.');
+ }else if(process.argv.includes('--activation-only')){
   const {checkSuggestionActivation}=await import('./suggestion-activation-journey.mjs');
   report.activation=await checkSuggestionActivation({page,expect,assert,state,calls,snapshot,activationOutcomes,output,acknowledgementModes,configureFixture:patch=>{if(patch.config)suggestionConfig={...suggestionConfig,...patch.config};if('rejectSetup'in patch)rejectSetup=patch.rejectSetup;if('rejectPreference'in patch)rejectPreference=patch.rejectPreference;if('failedSettingsReads'in patch)failedSettingsReads=patch.failedSettingsReads;if(patch.nextSetupChange)nextSetupChange=patch.nextSetupChange}});
   assert.deepEqual(errors,[]);assert.deepEqual(external,[]);report.status='PASS';

@@ -30,6 +30,18 @@ export function suggestionScope(state){
 export const plainSuggestionTab=event=>event.key==='Tab'&&!event.shiftKey&&!event.ctrlKey&&!event.metaKey&&!event.altKey&&!event.isComposing&&event.keyCode!==229;
 export const suggestionOutboxPending=(entries,scope,sessionId)=>entries.some(row=>!row.closed&&row.scope===scope&&row.sessionId===(sessionId??null));
 
+// Shared state can clear a modal before the private dirty-settings guard moves
+// to Canvas (or approves closing). Neither surface relinquishes suggestion
+// eligibility until both the requested state and the guarded route have left.
+// Use the same projection for render and latest-state transport checks.
+export function suggestionSettingsState(state,guardedRoute){
+ const view=state?.view||{},canvas=state?.canvas;
+ return {...state,view:{...view,panel:view.panel||(guardedRoute==='settings-canvas'?null:guardedRoute),
+  // The raw intent flag can outlive tabClose; only current Canvas identity or
+  // the private guarded route proves that the Settings surface still owns UI.
+  settingsCanvas:!!(guardedRoute==='settings-canvas'||canvas?.kind==='settings'&&canvas.open&&!view.canvasDraft?.library)}};
+}
+
 export function suggestionEligible(state,{ignoreDeparture=false,ignoreDraft=false}={}){
  const session=state?.sessions?.find(row=>row.id===state.selectedSessionId),view=state?.view||{};
  const document=view.draftDocument,draftSafe=document==null||suggestionDraftEmpty({...view,draft:''});
