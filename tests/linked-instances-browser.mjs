@@ -16,7 +16,8 @@ const fixture=`
  import '/src/settings-mobile.css';
  function Fixture(){
   const [value,setValue]=useState('');
-  const [view,setView]=useState({panel:'settings',settingsExpanded:['external-agents']});
+  const [view,setView]=useState(location.search==='?mobile'?{panel:'settings',settingsSection:'index',settingsExpanded:[]}:
+   {panel:'settings',settingsExpanded:['external-agents']});
   const act=async(action,args)=>{
    if(action==='view.update')setView(old=>({...old,...args.patch}));
    else if(action==='externalAgents.list')return {accepted:true,result:{agents:[]}};
@@ -33,7 +34,7 @@ const fixture=`
  createRoot(document.getElementById('amp-one')).render(<Fixture/>);`;
 const html='<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><main id="amp-one"></main><script type="module" src="/link-fixture.jsx"></script>';
 const out=process.env.AMPLIFIER_TEST_ARTIFACTS||'output/linked-instances';
-const report={scope:'mounted Settings; two synthetic same-origin host adapters; real Chromium clipboard and keyboard; decoder capability simulated',cases:[],pageErrors:[]};
+const report={scope:'mounted Settings with synthetic same-origin host adapters; Chromium clipboard and keyboard; decoder capability simulated',cases:[],pageErrors:[]};
 const code='amp-link-v1.'+Buffer.from('synthetic-invitation-for-a-only').toString('base64url');
 const unconfirmedCode='amp-link-v1.'+Buffer.from('synthetic-unconfirmed-invitation').toString('base64url');
 const healthyCode='amp-link-v1.'+Buffer.from('synthetic-healthy-invitation').toString('base64url');
@@ -45,6 +46,9 @@ const calls=[];
 let server,browser,failure,linked=false,revoked=false,offline=false,expired=false;
 let joinReceipt=null,joinStep=0,joinRefusal=null;
 let ambiguous=false,legacyRows=false;
+const deviceOnline='synthetic-device-online',deviceOffline='synthetic-device-offline',candidateId='8'.repeat(32);
+const candidate={candidateId,instanceId:offerId,label:'Office Amplifier',route:'lan'};
+let saved={enabled:false,lan:false,tailscale:false},runtime=null,setupBlocked=false,loseSave=false,lease=null,discoveryJoin=0,browseDelay=null,discoveryLinked=false;
 try{
  await mkdir(out,{recursive:true});
  server=await createServer({configFile:false,root:fileURLToPath(new URL('../',import.meta.url)),
@@ -62,7 +66,7 @@ try{
   args:process.env.CHROMIUM_SINGLE_PROCESS==='1'?['--single-process','--no-zygote']:[]});
  const aURL=new URL('link-fixture',server.resolvedUrls.local[0]),bURL=new URL(aURL);bURL.hostname='localhost';
  const context=await browser.newContext({viewport:{width:1280,height:850},permissions:['clipboard-read','clipboard-write']});
- const attachErrors=page=>page.on('pageerror',error=>report.pageErrors.push(error.message));
+ const attachErrors=page=>page.on('pageerror',error=>report.pageErrors.push(error.name));
  const a=await context.newPage(),b=await context.newPage(),old=await context.newPage();
  for(const p of [a,b,old])attachErrors(p);
  const incoming=()=>({grantId,instanceId:joinerId,direction:'incoming',scope:'status',origin:null,revoked});
@@ -77,6 +81,57 @@ try{
    assert.equal(req.method(),'POST');
    calls.push({side,action,body,wire:req.postData()});
    if(side==='old')return error('not_found',404);
+   if(side==='setup'){
+    const runtimeDiscovery={lan:runtime?.lan===true,tailscale:runtime?.tailscale===true};
+    const runtimeOrigins=runtime?.enabled&&!setupBlocked?[peerOrigin,'https://second.example.test']:[];
+    const setup=()=>({status:setupBlocked?'unavailable':runtime?.enabled&&JSON.stringify(runtime)===JSON.stringify(saved)?'active':saved.enabled||runtime?.enabled?'pending':'off',
+     enabled:saved.enabled,discovery:{lan:saved.lan,tailscale:saved.tailscale},origins:runtimeOrigins,
+     blockers:setupBlocked?['https_origin_required']:[],lanExpiresAt:lease});
+    if(action==='setup'){assert.deepEqual(body,{});return send(setup());}
+    if(action==='setup-save'){
+     assert.deepEqual(Object.keys(body).sort(),['enabled','lan','tailscale']);
+     assert.ok(Object.values(body).every(flag=>typeof flag==='boolean'));
+     saved=body;
+     if(loseSave){loseSave=false;return route.abort('connectionreset');}
+     return send(setup());
+    }
+    if(action==='list'){
+     if(!runtime?.enabled)return error('link_unsupported',403);
+     return send({instanceId:joinerId,origins:runtimeOrigins.slice().reverse(),discovery:runtimeDiscovery,links:discoveryLinked?[outgoing()]:[]});
+    }
+    if(action==='offer'){assert.equal(body.origin,peerOrigin);return send({code,expiresAt:Date.now()/1000+600,qrPngBase64:png});}
+    if(action==='lan-discoverable'){
+     assert.deepEqual(Object.keys(body),['enabled']);assert.equal(typeof body.enabled,'boolean');
+     lease=body.enabled?Date.now()/1000+300:null;
+     return send({status:'ok',expiresAt:lease});
+    }
+    if(action==='lan-browse'){
+     assert.deepEqual(body,{});
+     if(browseDelay)await browseDelay;
+     return send({status:'ok',instances:[candidate]}).catch(()=>{});
+    }
+    if(action==='tailscale-devices'){
+     assert.deepEqual(body,{});
+     return send({status:'ok',devices:[{deviceId:deviceOnline,label:'Office device',online:true},
+      {deviceId:deviceOffline,label:'Spare device',online:false}]});
+    }
+    if(action==='tailscale-find'){
+     assert.deepEqual(Object.keys(body),['deviceId']);
+     if(body.deviceId===deviceOffline)return send({status:'offline',instances:[]});
+     assert.equal(body.deviceId,deviceOnline);
+     return send({status:'ok',instances:[{...candidate,route:'tailscale'}]});
+    }
+    if(action==='join'){
+     assert.equal(body.expectedInstanceId,offerId);
+     if(body.code===healthyCode)return error('link_verification_failed',502);
+     if(discoveryJoin++===0)return send({...outgoing(),instanceId:'9'.repeat(32)});
+     discoveryLinked=true;return send(outgoing());
+    }
+    if(action==='route-remember'){assert.deepEqual(body,{candidateId,grantId});return send({grantId,instanceId:offerId,route:'tailscale'});}
+    if(action==='status'){assert.deepEqual(body,{instanceId:offerId});return send({instanceId:offerId,availability:'online',route:'tailscale'});}
+    assert.fail('Unexpected setup fixture action: '+action);
+   }
+   if(action==='setup')return error('not_found',404);
    if(action==='list'){
     const links=linked?[side==='A'?incoming():outgoing()]:[];
     if(side==='B'&&legacyRows){
@@ -130,9 +185,10 @@ try{
  await open(old,aURL);
  await expect(old.getByText('Linking is not available on this Amplifier.')).toBeVisible();
  await expect(old.getByRole('button',{name:'Create invitation'})).toHaveCount(0);
- assert.deepEqual(calls.filter(c=>c.side==='old').map(c=>c.action),['list']);
+ assert.deepEqual(calls.filter(c=>c.side==='old').map(c=>c.action).sort(),['list','setup']);
  report.cases.push('Older host exposes no create or join controls.');
  await open(a,aURL);
+ await expect(a.getByText('This version supports invitations but not in-app linking setup.')).toBeVisible();
  await a.bringToFront();
  await a.getByRole('button',{name:'Create invitation'}).click();
  await a.getByRole('button',{name:'Create',exact:true}).click();
@@ -286,7 +342,9 @@ try{
  await expect(extra.getByText(`Revoke status access for ${peerOrigin} (link ${extraGrant})?`)).toBeVisible();
  await expect(primary.getByRole('button',{name:'Confirm revoke'})).toHaveCount(0);
  await extra.getByRole('button',{name:'Cancel',exact:true}).click();
- assert.deepEqual(calls.slice(beforeAmbiguous).map(c=>c.action),['status','list','status']);
+ const ambiguousCalls=calls.slice(beforeAmbiguous).map(c=>c.action);
+ assert.deepEqual(ambiguousCalls.filter(action=>action!=='setup'),['status','list','status']);
+ assert.equal(ambiguousCalls.filter(action=>action==='setup').length,1);
  legacyRows=false;ambiguous=false;
  await b.getByRole('button',{name:'Refresh links'}).click();
  await expect(rows).toHaveCount(1);
@@ -338,6 +396,106 @@ try{
  report.cases.push('An untyped first-attempt refusal remains pending. Closing Settings forgets its private retry without replay; a fresh healthy manual Join still succeeds.');
 
  const touch=await browser.newContext({viewport:{width:320,height:780},hasTouch:true,isMobile:true,permissions:['clipboard-read','clipboard-write']});
+ const setupPage=await touch.newPage();attachErrors(setupPage);
+ await install(setupPage,aURL.origin,'setup');
+ const setupCalls=()=>calls.filter(call=>call.side==='setup');
+ const actionNames=(from=0)=>setupCalls().slice(from).map(call=>call.action);
+ const button=name=>setupPage.getByRole('button',{name,exact:true});
+ async function keyActivate(control){
+  await control.focus();await expect(control).toBeFocused();await setupPage.keyboard.press('Enter');
+ }
+ setupPage.setDefaultTimeout(7000);
+ await setupPage.goto(aURL.href+'?mobile');
+ await expect(setupPage.locator('.a-settings-experience')).toHaveAttribute('data-settings-index','true');
+ await setupPage.getByRole('button',{name:/^Linked instances/}).click();
+ await expect(setupPage.getByText('Linking is off on this Amplifier.')).toBeVisible();
+ assert.deepEqual(actionNames().sort(),['list','setup']);
+ await expect(button('Create invitation')).toHaveCount(0);
+ await expect(setupPage.getByRole('textbox',{name:'Pairing code'})).toHaveCount(0);
+ const setupSection=setupPage.getByRole('region',{name:'Linking setup'});
+ await keyActivate(setupSection.getByText('Discovery options',{exact:true}));
+ for(const name of ['Allow nearby discovery','Allow Tailscale discovery']){
+  const box=setupSection.getByRole('checkbox',{name});await box.focus();await setupPage.keyboard.press('Space');await expect(box).toBeChecked();
+ }
+ const beforeEnable=setupCalls().length;
+ loseSave=true;await keyActivate(button('Enable linking'));
+ await expect(setupPage.getByRole('alert')).toContainText('Could not confirm that linking settings were saved.');
+ assert.deepEqual(actionNames(beforeEnable),['setup-save']);
+ await keyActivate(button('Refresh setup'));
+ await expect(setupPage.getByText(/settings are saved.*No restart was started here/)).toBeVisible();
+ await expect(button('Find nearby Amplifiers')).toHaveCount(0);
+ await expect(button('Create invitation')).toHaveCount(0);
+ setupBlocked=true;await keyActivate(button('Refresh setup'));
+ await expect(setupPage.getByText('Linking is not ready on this Amplifier.')).toBeVisible();
+ await expect(setupPage.getByText('No secure invitation address is available on this Amplifier.')).toBeVisible();
+ setupBlocked=false;runtime={...saved};await keyActivate(button('Refresh setup'));
+ await expect(setupPage.getByText('Linking is ready on this Amplifier.')).toBeVisible();
+ assert.ok(actionNames().every(name=>['list','setup','setup-save'].includes(name)));
+ report.cases.push('At 320px, keyboard can stage and enable linking. Lost save requires readback without replay; pending and blocked do not become ready or restart.');
+ await keyActivate(button('Create invitation'));
+ await expect(setupPage.getByRole('combobox')).toHaveCount(0);
+ await keyActivate(button('Create'));
+ await expect(setupPage.getByRole('textbox',{name:'Created invitation'})).toBeVisible();
+ await keyActivate(button('Done'));await keyActivate(button('Create invitation'));
+ const beforeAdvertise=setupCalls().length;
+ await keyActivate(button('Make this Amplifier discoverable'));
+ await expect(setupPage.getByText(/temporarily visible on its local network/)).toBeVisible();
+ await keyActivate(button('Refresh setup'));
+ await expect(button('Stop being discoverable')).toBeEnabled();
+ loseSave=true;await keyActivate(button('Turn off linking'));
+ await expect(setupPage.getByRole('alert')).toContainText('Could not confirm that linking settings were saved.');
+ await expect(setupSection.getByRole('heading',{name:'Linking setup'})).toBeFocused();
+ await keyActivate(button('Stop being discoverable'));
+ await expect(setupPage.getByText('Discoverability stopped.')).toBeVisible();
+ await keyActivate(button('Refresh setup'));
+ await expect(setupPage.getByText(/settings are saved.*No restart was started here/)).toBeVisible();
+ await expect(button('Create invitation')).toBeEnabled();
+ await keyActivate(button('Enable linking'));
+ await expect(setupPage.getByText('Linking is ready on this Amplifier.')).toBeVisible();
+ await expect(button('Make this Amplifier discoverable')).toBeEnabled();
+ assert.deepEqual(actionNames(beforeAdvertise).sort(),['lan-discoverable','lan-discoverable','list','list','list','setup','setup','setup-save','setup-save']);
+ assert.deepEqual(setupCalls().filter(call=>call.action==='lan-discoverable').map(call=>call.body.enabled),[true,false]);
+ report.cases.push('Uses the host-preferred secure address without an address picker. Explicit visibility lease survives an unconfirmed setup save with Stop still available; pending setup preserves applied manual invitation capability.');
+ let releaseBrowse;
+ browseDelay=new Promise(resolve=>{releaseBrowse=resolve});
+ const beforeBrowse=setupCalls().length;
+ await keyActivate(button('Find nearby Amplifiers'));
+ await expect(setupPage.getByText('Looking for nearby Amplifiers…')).toBeVisible();
+ await keyActivate(button('Browse Tailscale devices'));
+ await expect(setupPage.getByText('No device checked yet.')).toBeVisible();
+ releaseBrowse();browseDelay=null;
+ assert.deepEqual(actionNames(beforeBrowse),['lan-browse','tailscale-devices']);
+ await expect(button('Office Amplifier')).toHaveCount(0);
+ await keyActivate(setupPage.getByRole('button',{name:/Spare device/}));
+ await expect(setupPage.getByText('This device was offline. No Amplifier was checked.')).toBeVisible();
+ await keyActivate(button('Office device'));
+ await expect(setupPage.getByRole('status').filter({hasText:'1 Amplifier found.'})).toBeVisible();
+ await keyActivate(button('Go to device results'));
+ await expect(setupPage.getByRole('heading',{name:'Amplifiers on Office device'})).toBeFocused();
+ await expect(button('Office Amplifier')).toBeVisible();
+ assert.deepEqual(setupCalls().filter(call=>call.action==='tailscale-find').map(call=>call.body.deviceId),[deviceOffline,deviceOnline]);
+ assert.ok(await setupPage.getByRole('region',{name:'Manage linked instances'}).evaluate(el=>el.scrollWidth<=el.clientWidth));
+ await keyActivate(button('Office Amplifier'));await keyActivate(button('Join this Amplifier'));
+ const discoveredInput=setupPage.getByRole('textbox',{name:'Amplifier invitation'});
+ await expect(discoveredInput).toBeFocused();
+ await expect(discoveredInput).toHaveAccessibleDescription('Use an invitation from Office Amplifier.');
+ assert.ok(!actionNames().includes('join'));
+ await discoveredInput.fill(healthyCode);await keyActivate(button('Join'));
+ await expect(setupPage.getByRole('alert')).toContainText('could not be verified for the selected Amplifier');
+ await expect(button('Retry same request')).toHaveCount(0);
+ await discoveredInput.fill(code);await keyActivate(button('Join'));
+ await expect(setupPage.getByRole('alert')).toContainText('The link may already have been created');
+ await keyActivate(button('Retry same request'));
+ await expect(setupPage.getByText('This Amplifier can check its status')).toBeVisible();
+ const chosen=setupCalls().filter(call=>call.action==='join');
+ assert.equal(chosen.length,3);assert.ok(chosen[1].wire===chosen[2].wire);
+ await keyActivate(button('Browse Tailscale devices'));await keyActivate(button('Office device'));
+ await keyActivate(button('Office Amplifier'));await keyActivate(button('Use this connection'));
+ await expect(setupPage.getByText(/Connection saved/)).toBeVisible();
+ await keyActivate(button('Check availability'));
+ await keyActivate(setupPage.getByText('Connection details',{exact:true}));
+ await expect(setupPage.getByText('Used at last check: Tailscale')).toBeVisible();
+ report.cases.push('Explicit nearby browse, stale result ignored after switching modes, one Tailscale lookup per chosen device, offline is not checked, selected identity required, exact retry and verified connection reuse.');
  const short=await touch.newPage();attachErrors(short);
  await short.goto(aURL.href+'?short');
  const input=short.getByRole('textbox',{name:'Pairing code'}),cells=short.locator('[data-code-cell]');
@@ -355,10 +513,10 @@ try{
  report.cases.push('Unpublished short-code component: one textbox, four plus four cells at 320px, native whole paste at partial offset, arrows, backspace, touch replacement, lookalike rejection.');
  assert.deepEqual(report.pageErrors,[]);
  report.passed=true;console.log('PASS: '+report.cases.join('\nPASS: '));
-}catch(error){failure=error;report.failure=String(error.stack||error);throw error}
+}catch(error){failure=error;report.failure='Browser assertion failed; diagnostic detail is intentionally excluded from the retained report.';throw error}
 finally{
  const cleanup=await Promise.allSettled([browser?.close(),server?.close()]);
- report.cleanupErrors=cleanup.filter(item=>item.status==='rejected').map(item=>String(item.reason));
+ report.cleanupErrors=cleanup.filter(item=>item.status==='rejected').map(()=> 'Fixture resource cleanup failed');
  await writeFile(out+'/report.json',JSON.stringify(report,null,2)+'\n');
  if(!failure&&report.cleanupErrors.length)throw Error(report.cleanupErrors.join('\n'));
 }
