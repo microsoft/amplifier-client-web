@@ -35,6 +35,14 @@ npm run dev
 Open the local address printed by Vite. API and WebSocket requests are proxied to
 the development host. This client does not install or start the agent backend.
 
+## Switching between chats
+
+The browser can keep one previously displayed message page in memory on its live
+connection. On returning to that chat, the host can confirm the saved page is
+still current and send only the changed surroundings. A changed page arrives
+normally. A fresh connection starts with a complete snapshot. This optimization
+stores no chat text in browser storage and does not change loading older messages.
+
 ## Suggested messages
 
 On a host that supports app-level suggestions, Settings → Chat & input has one
