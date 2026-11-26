@@ -12,8 +12,8 @@ import {createPortal} from 'react-dom';
 import {SetupJourney,AssistedSettingsButton} from './setup-journey';
 import {ShellSlot,useShellContext} from './shell/runtime';
 import React,{useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react';
-import {SlidersHorizontal,Palette,AudioLines,Bell,Network,Layers,Plug,Download,Activity,Archive,Settings,ArrowLeft,X,Link2} from 'lucide-react';
-import {settingsSections,settingsLocation,settingsUnread,settingsTitle,settingsParent} from './settings-navigation';
+import {SlidersHorizontal,Palette,AudioLines,Bell,Network,Layers,Plug,Download,Activity,Archive,Settings,ArrowLeft,X,Link2,KeyRound} from 'lucide-react';
+import {settingsSections,settingsSectionsFor,settingsLocation,settingsUnread,settingsTitle,settingsParent} from './settings-navigation';
 import {AIConnections} from './ai-connections';
 import {PrivacySettings,AdvancedSettings} from './settings-everyday';
 import {SuggestionSettings,SuggestionAdvancedSettings} from './suggestion-model-settings.jsx';
@@ -31,13 +31,13 @@ import {WorkerRetentionSettings} from './worker-retention';
 import {DesktopReadiness} from './desktop-readiness';
 import {WorkspaceSettings} from './workspace-setup';
 import {StarterSettings} from './workspace-starters';
-import {VoiceSettings,InstallAppSettings} from './settings-personal';
+import {VoiceSettings,InstallAppSettings,RemoteSignInSettings} from './settings-personal';
 import {SettingsLayoutContext,useSettingsCompact,useSettingsHistory,useSettingsViewport} from './settings-layout';
 import {settingsTrail,settingsBaseNavigation,mergeSettingsNavigation} from './settings-mobile';
 import {SettingsDraftProvider,useSettingsDrafts} from './settings-drafts';
 import {InstanceBrandingSettings} from './instance-branding.jsx';
 
-const icons={ai:Network,'external-agents':Plug,'linked-instances':Link2,privacy:Archive,workspaces:Layers,overview:SlidersHorizontal,appearance:Palette,voice:AudioLines,notifications:Bell,models:Network,bundles:Layers,'smart-tools':Plug,updates:Download,diagnostics:Activity,history:Archive,advanced:Settings};
+const icons={ai:Network,'external-agents':Plug,'linked-instances':Link2,'remote-sign-in':KeyRound,privacy:Archive,workspaces:Layers,overview:SlidersHorizontal,appearance:Palette,voice:AudioLines,notifications:Bell,models:Network,bundles:Layers,'smart-tools':Plug,updates:Download,diagnostics:Activity,history:Archive,advanced:Settings};
 export function SettingsExperience({state,suggestionsSupported,session,act,dispatch,open,close=()=>act('view.update',{patch:{panel:null}}),navigationRef,appearance,instanceAccent}){
  useEffect(()=>{const legacy=state.view?.settingsExpanded?.find(page=>['conversation','runtime','outputs','publishing','loaded-modules','share-bundle','recall'].includes(page));if(legacy)act('view.update',{patch:{panel:'settings',settingsExpanded:[legacy]}})},[]);
  const shell=useShellContext();
@@ -54,7 +54,8 @@ export function SettingsExperience({state,suggestionsSupported,session,act,dispa
   const isCurrent=()=>!!owner&&confirmed.current===owner&&(!meta.suggestionIsCurrent||meta.suggestionIsCurrent());
   return isCurrent()?run(name,args,{...meta,suggestionIsCurrent:isCurrent}):Promise.resolve({accepted:false});
  },[owner,run]);
- const availableSections=keepSuggestionEditors?settingsSections:settingsSections.map(section=>section.id==='chat-input'?{...section,pages:section.pages.filter(([id])=>id!=='suggestion-advanced')}:section);
+ // The section for the sign-in password exists only while this host reports it for this browser.
+ const availableSections=settingsSectionsFor(state,keepSuggestionEditors?settingsSections:settingsSections.map(section=>section.id==='chat-input'?{...section,pages:section.pages.filter(([id])=>id!=='suggestion-advanced')}:section));
  const sections=availableSections.map(section=>section.id==='advanced'?{...section,pages:[...section.pages,...extensions.map(item=>['shell:'+item.id,shell.data.packages[item.package]?.manifest?.label||item.id])]}:section);
  const {page,section}=settingsLocation(state.view,sections),heading=useRef(null),body=useRef(null),root=useRef(null),[footer,setFooter]=useState(null),[headerTarget,setHeaderTarget]=useState(null);
  useLayoutEffect(()=>{setHeaderTarget(root.current?.closest('.a-dialog')?.querySelector('[data-settings-help]')||null)},[]);
@@ -78,6 +79,8 @@ export function SettingsExperience({state,suggestionsSupported,session,act,dispa
  // in component memory, never in shared view state, when changing sections.
  const editors=useRef(new Map());
  const family=page=>['ai-connections','overview'].includes(page)?'ai-connections':page==='appearance'?'appearance':['smart-tools','tool-connections'].includes(page)?'smart-tools':['app-bundles','add-bundles','loaded-modules','share-bundle','registries'].includes(page)?'bundles':['notifications','diagnostics','history','permissions','automation','repair','reset'].includes(page)?'maintenance':page;
+ // A page that is no longer offered must not stay mounted as a retained editor.
+ if(!sections.some(section=>section.id==='remote-sign-in'))editors.current.delete('remote-sign-in');
  const active=family(page);if(!index)editors.current.set(active,page);
  // One retained editor serves both entry points. Never mount two independent
  // recovery owners for the same operation when switching settings pages.
@@ -115,6 +118,7 @@ export function SettingsExperience({state,suggestionsSupported,session,act,dispa
  else if(page==='updates')content=<UpdateSettings {...props}/>;
  else if(page==='ready-conversations')content=state.runtime?.retention?<WorkerRetentionSettings {...props}/>:<p>This host does not expose conversation readiness settings.</p>;
  else if(page==='install-app')content=<InstallAppSettings/>;
+ else if(page==='remote-sign-in')content=<RemoteSignInSettings/>;
  else if(page==='desktop')content=<DesktopReadiness {...props} globalOnly/>;
  else content=<MaintenanceSettings {...props}/>;
  return content;

@@ -29,6 +29,7 @@
 #amp-one .a-settings-mobile-actions .a-catalog-selection-summary small{display:block;font-size:12px;color:var(--a-muted);margin-top:4px}
 #amp-one .a-settings-experience[data-compact=true] button,#amp-one .a-settings-experience[data-compact=true] summary{min-height:48px;touch-action:manipulation;font-size:14px}
 #amp-one .a-settings-experience[data-compact=true] button.a-icon{min-width:44px;width:auto;min-height:48px;padding:10px;flex-shrink:0}
+#amp-one .a-settings-experience[data-compact=true] .a-remote-sign-in .a-primary{min-height:48px;touch-action:manipulation}
 #amp-one .a-settings-experience[data-compact=true] input:not([type=checkbox]):not([type=radio]),#amp-one .a-settings-experience[data-compact=true] select,#amp-one .a-settings-experience[data-compact=true] textarea{font-size:16px;min-height:48px}
 #amp-one .a-settings-experience[data-compact=true] .a-form-grid{grid-template-columns:1fr}
 #amp-one .a-settings-experience[data-compact=true] label{font-size:14px}
