@@ -20,7 +20,7 @@ const saved={panel:'settings',settingsSection:'setup',settingsExpanded:[page]};
 const ids=sections=>sections.map(section=>section.id);
 const texts=[
  'Sign in to this Amplifier from a browser on another device, also when you are not at this PC.',
- 'Set a password on this PC. The password page shows the address to open on the other device, if one is set up.',
+ 'Set a password on this PC. The password page shows the address to open on the other device, if this Amplifier has one.',
  'The password page opens in a new tab. You can set the password only on this PC, not from another device.',
 ];
 const control='<a class="a-primary" href="/connect/sign-in" target="_blank" rel="noopener noreferrer" aria-describedby="remote-sign-in-note">Set or change the password</a>';

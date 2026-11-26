@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 const title='Sign-in from other devices',control='Set or change the password';
 const texts={
  intro:'Sign in to this Amplifier from a browser on another device, also when you are not at this PC.',
- paragraph:'Set a password on this PC. The password page shows the address to open on the other device, if one is set up.',
+ paragraph:'Set a password on this PC. The password page shows the address to open on the other device, if this Amplifier has one.',
  caption:'The password page opens in a new tab. You can set the password only on this PC, not from another device.',
 };
 const evidence=process.env.AMPLIFIER_TEST_ARTIFACTS;
@@ -104,7 +104,9 @@ async function withFlag(scene){
  const facts=await link.evaluate(node=>{
   const round=value=>Math.round(value*10)/10,box=node.getBoundingClientRect(),area=node.closest('.a-settings-content').getBoundingClientRect(),style=getComputedStyle(node);
   const top=document.elementFromPoint(box.left+box.width/2,box.top+box.height/2);
+  const described=document.querySelectorAll('[id="'+node.getAttribute('aria-describedby')+'"]');
   return {text:node.innerText,href:node.getAttribute('href'),target:node.getAttribute('target'),rel:node.getAttribute('rel'),className:node.className,
+   description:described.length===1?described[0].innerText:null,
    box:{left:round(box.left),top:round(box.top),right:round(box.right),bottom:round(box.bottom),width:round(box.width),height:round(box.height)},
    contentArea:{left:round(area.left),top:round(area.top),right:round(area.right),bottom:round(area.bottom)},
    viewport:{width:innerWidth,height:innerHeight},documentScrollWidth:document.documentElement.scrollWidth,
@@ -117,6 +119,9 @@ async function withFlag(scene){
  say('Control box: '+JSON.stringify(facts.box));say('Content area: '+JSON.stringify(facts.contentArea)+'   viewport: '+JSON.stringify(facts.viewport)+'   document scroll width: '+facts.documentScrollWidth);
  say('Control style: '+JSON.stringify(facts.style));
  assert.equal(facts.style.textDecorationLine,'none','The control looks like the page action, not like a text link');
+ // A screen reader says the caption after the link's name: the reference must find exactly that one text.
+ assert.equal(facts.description,texts.caption,'The description of the control is the caption that names the new tab');
+ say('Description of the control for a screen reader: '+facts.description);
  assert.ok(facts.box.left>=facts.contentArea.left&&facts.box.right<=facts.contentArea.right&&facts.box.top>=facts.contentArea.top&&facts.box.bottom<=facts.contentArea.bottom,'The control is inside the content area');
  assert.ok(facts.box.left>=0&&facts.box.right<=facts.viewport.width&&facts.box.bottom<=facts.viewport.height,'The control is inside the viewport');
  assert.ok(facts.box.width>0&&facts.box.height>=(scene.width<960?48:32),'The control has a usable size');
