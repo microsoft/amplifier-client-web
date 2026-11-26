@@ -12,8 +12,8 @@ import assert from 'node:assert/strict';
 const title='Sign-in from other devices',control='Set or change the password';
 const texts={
  intro:'Sign in to this Amplifier from a browser on another device, also when you are not at this PC.',
- paragraph:'Set a password on this PC. On the other device, open the address of this PC and type the password.',
- caption:'The password page opens in a new tab. Only a browser that signed in on this PC can set the password.',
+ paragraph:'Set a password on this PC. The password page shows the address to open on the other device, if one is set up.',
+ caption:'The password page opens in a new tab. You can set the password only on this PC, not from another device.',
 };
 const evidence=process.env.AMPLIFIER_TEST_ARTIFACTS;
 const lines=[],screenshots=[],pageErrors=[],routeErrors=[];
@@ -116,6 +116,7 @@ async function withFlag(scene){
  assert.equal(facts.text,control);assert.equal(facts.href,'/connect/sign-in');assert.equal(facts.target,'_blank');assert.equal(facts.rel,'noopener noreferrer');
  say('Control box: '+JSON.stringify(facts.box));say('Content area: '+JSON.stringify(facts.contentArea)+'   viewport: '+JSON.stringify(facts.viewport)+'   document scroll width: '+facts.documentScrollWidth);
  say('Control style: '+JSON.stringify(facts.style));
+ assert.equal(facts.style.textDecorationLine,'none','The control looks like the page action, not like a text link');
  assert.ok(facts.box.left>=facts.contentArea.left&&facts.box.right<=facts.contentArea.right&&facts.box.top>=facts.contentArea.top&&facts.box.bottom<=facts.contentArea.bottom,'The control is inside the content area');
  assert.ok(facts.box.left>=0&&facts.box.right<=facts.viewport.width&&facts.box.bottom<=facts.viewport.height,'The control is inside the viewport');
  assert.ok(facts.box.width>0&&facts.box.height>=(scene.width<960?48:32),'The control has a usable size');
