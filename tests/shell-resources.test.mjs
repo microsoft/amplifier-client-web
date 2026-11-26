@@ -22,6 +22,22 @@ test('resource assembly preserves context, exact coverage and independent custom
  assert.equal(result.chat.sidebarNavigation.recentView.query,'private');assert.equal(result.button,undefined);assert.deepEqual(result.custom,{ownField:42,generation:3});
 });
 
+test('compact and legacy Recent pages expose the same rows to live and retained readers',()=>{
+ for(const compact of [false,true]){
+  const env=envelope(),page={items:[{id:'one'}]};
+  const entry=env.instances.chat;
+  entry.resources.recentNavigation={revision:1,value:{recentNavigation:page,...(compact?{}:{recentShortcuts:structuredClone(page.items)})}};
+  const wanted={...demand,resources:['recentNavigation']};
+  let snapshot=resourceSnapshots(bootstrap,env,wanted).chat;
+  assert.equal(snapshot.recentShortcuts,snapshot.recentNavigation.items);
+  entry.pending.recentNavigation={status:'pending'};
+  snapshot=resourceSnapshots(bootstrap,env,wanted).chat;
+  assert.equal(snapshot.recentShortcuts,snapshot.recentNavigation.items);
+  assert.equal(snapshot.recentShortcuts[0].navigationActivityRetained,true);
+  assert.equal(page.items[0].navigationActivityRetained,undefined);
+ }
+});
+
 test('workspace aggregate age belongs to its resource rather than newer context',()=>{
  const value=envelope();value.instances.chat.resources.context.value.view.navAge='24h';
  value.instances.chat.resources.workspaceShortcuts={revision:1,value:{workspaceShortcuts:[{chatCount:25}],navigationAge:'all'}};

@@ -70,7 +70,7 @@ function readingActivity(fields){
   items:reading.pinnedNavigation.items.map(item=>item.kind==='session'?{...item,row:mark(item.row)}:item)};
  if(reading.recentNavigation)reading.recentNavigation={...reading.recentNavigation,
   items:reading.recentNavigation.items.map(mark)};
- if(reading.recentShortcuts)reading.recentShortcuts=reading.recentShortcuts.map(mark);
+ if(reading.recentNavigation)reading.recentShortcuts=reading.recentNavigation.items;
  for(const name of Object.keys(statusKinds))if(reading[name])reading[name]={...reading[name],items:reading[name].items.map(mark)};
  return reading;
 }
@@ -108,6 +108,7 @@ export function resourceSnapshots(bootstrap,envelope,demand,previous={}){
    for(const name of demand.resources){
     const resource=resources[name];if(!resource)continue;
     const {sidebarNavigation,navigationAge,...fields}=resource.value;
+    if(name==='recentNavigation'&&fields.recentNavigation)fields.recentShortcuts=fields.recentNavigation.items;
     if(navigationAge!==undefined)snapshot.navigationResourceAges[name]=navigationAge;
     // A present page can also be the server's retained reading copy while its
     // query is pending/retrying. Membership coverage is not activity freshness.

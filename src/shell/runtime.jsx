@@ -97,7 +97,7 @@ export function useShell(state,dispatch,clientId,displayState=state,connection={
   if(inflight.current)return inflight.current.promise;
   const kind=needsBootstrap?'bootstrap':reason;
   const requestScope={clientId,demandId:requested.id,resources:requested.resources,scope:requested.scope,reason:kind};
-  const query=new URLSearchParams({bundled:'1',clientId,demandId:String(requested.id),navigationResources:JSON.stringify(requested.resources),scope:JSON.stringify(requested.scope)});
+  const query=new URLSearchParams({bundled:'1',compact:'1',clientId,demandId:String(requested.id),navigationResources:JSON.stringify(requested.resources),scope:JSON.stringify(requested.scope)});
   if(recovery)query.set('recovery','1');
   diagnostics.current.record(kind,{demandId:requested.id,resources:requested.resources});
   const job={id:requested.id,bootstrapKey,hostInstanceId,readingEpoch:current.readingEpoch,controller:new AbortController()};
