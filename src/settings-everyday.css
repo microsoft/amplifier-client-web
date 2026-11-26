@@ -105,7 +105,7 @@
 #amp-one .a-device-code{display:flex;gap:10px;align-items:center;margin:8px 0}
 #amp-one .a-device-code input{margin:0;font:600 24px var(--a-font-code);letter-spacing:2px;min-width:0}
 #amp-one .a-device-code button{flex-shrink:0;min-height:44px}
-#amp-one .a-device-signin .a-primary{display:inline-flex;align-items:center;gap:8px;text-decoration:none}
+#amp-one :is(.a-device-signin,.a-remote-sign-in) .a-primary{display:inline-flex;align-items:center;gap:8px;text-decoration:none}
 #amp-one .a-device-step{margin:24px 0 12px}
 #amp-one .a-device-signin>.a-caption{margin:10px 0 18px}
 #amp-one .a-signin-success{display:flex;align-items:center;gap:8px;color:var(--a-green);margin-bottom:14px}

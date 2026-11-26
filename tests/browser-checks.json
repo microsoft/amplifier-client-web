@@ -35,6 +35,11 @@
       }
     },
     {
+      "id": "remote-sign-in-settings",
+      "command": ["node", "tests/remote-sign-in-settings-browser.mjs"],
+      "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/remote-sign-in-settings"}
+    },
+    {
       "id": "worktree-move",
       "command": ["node", "tests/worktree-move-browser.mjs"],
       "env": {"AMPLIFIER_TEST_ARTIFACTS": "{root}/output/browser-checks/worktree-move"}

@@ -22,6 +22,16 @@ export const advancedGroups=[
  {title:'Tools',pages:['tool-connections']},
  {title:'Performance & support',pages:['ready-conversations','repair','reset','automation','install-app']},
 ];
+// Sign-in from other devices is a host page (/connect/sign-in) that only some
+// browsers can use. The host reports that with state.client.passwordSignIn===true.
+// The section is deliberately not in settingsSections: without the report every
+// resolver below treats its page as an unknown page.
+export const remoteSignInSection={id:'remote-sign-in',title:'Sign-in from other devices',scope:'Browsers on other devices',pages:[['remote-sign-in','Sign-in from other devices']]};
+export function settingsSectionsFor(state,sections=settingsSections){
+ if(state?.client?.passwordSignIn!==true)return sections;
+ const next=sections.findIndex(section=>section.id==='linked-instances')+1;
+ return [...sections.slice(0,next),remoteSignInSection,...sections.slice(next)];
+}
 const legacySections={setup:['overview','ai-connections','advanced','appearance','voice','providers','routing','defaults','conversation','install-app','runtime'],capabilities:['smart-tools','tool-connections','app-bundles','add-bundles','loaded-modules','registries','share-bundle'],maintenance:['privacy','ready-conversations','updates','diagnostics','history','recall','outputs','publishing','permissions','notifications','automation','repair','reset']};
 export function settingsLocation(view={},sections=settingsSections){
  const pages=new Set(sections.flatMap(section=>section.pages.map(([page])=>page)));
