@@ -455,3 +455,12 @@ test('native receipt source verification keeps the native store identity and his
  assert.notEqual(deliverySourceScope({...frame,client:{historyScope:'other-account'}},source),deliverySourceScope(frame,source));
  assert.equal(deliverySourceScope(frame,source,'external-room'),null);
 });
+
+test('a stopped submission stays in history when later messages arrive',()=>{
+ const scope='source',sessionId='chat';
+ const messages=[{id:'earlier',createdAt:1},{id:'accepted',createdAt:3,text:'Resume',inputId:'other',delivery:{status:'accepted'}},{id:'imported',createdAt:0}];
+ const failed={id:'draft',sessionId,scope,commandId:'original',createdAt:2,text:'Resume',status:'failed'};
+ const projected=outboxMessages(messages,[failed],sessionId,scope);
+ assert.deepEqual(projected.map(row=>row.id),['earlier','draft','accepted','imported']);
+ assert.equal(projected[1].localDelivery,failed);
+});

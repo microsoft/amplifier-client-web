@@ -7,7 +7,14 @@ export function outboxMatches(entry,scope){return typeof scope==='string'&&!!sco
 export function outboxMessages(messages,entries,sessionId,scope){
  const pending=entries.filter(row=>row.sessionId===(sessionId??null)&&outboxMatches(row,scope));
  const confirmed=messages.map(message=>{const entry=pending.find(row=>row.commandId===message.inputId);return entry&&!['accepted','queued_for_update','held'].includes(message.delivery?.status)?{...message,localDelivery:{...entry,...(['failed','sending','queued'].includes(message.delivery?.status)?{status:message.delivery.status}:{})}}:message});
- return [...confirmed,...pending.filter(row=>!row.closed&&!messages.some(message=>message.inputId===row.commandId)).map(row=>({id:row.id,inputId:row.commandId,role:'user',text:row.text,recipientAgentId:row.recipientAgentId,recipientAgentLabel:row.recipientAgentLabel,via:row.via,createdAt:row.createdAt,attachments:row.attachments,replyTo:row.replyTo,localDelivery:row}))];
+ const unsaved=pending.filter(row=>!row.closed&&!messages.some(message=>message.inputId===row.commandId)).map(row=>({id:row.id,inputId:row.commandId,role:'user',text:row.text,recipientAgentId:row.recipientAgentId,recipientAgentLabel:row.recipientAgentLabel,via:row.via,createdAt:row.createdAt,attachments:row.attachments,replyTo:row.replyTo,localDelivery:row}));
+ // Keep an old failed attempt at the time it was written. Server order is
+ // authoritative, including imported messages with out-of-order timestamps.
+ for(const row of unsaved){
+  const next=row.localDelivery.status==='failed'?confirmed.findIndex(message=>message.createdAt>row.createdAt):-1;
+  confirmed.splice(next<0?confirmed.length:next,0,row);
+ }
+ return confirmed;
 }
 export function ClosedDeliveryItems({entries,sessionId,scope,reopen}){
  const closed=entries.filter(row=>row.closed&&row.sessionId===(sessionId??null)&&outboxMatches(row,scope));
