@@ -10,6 +10,7 @@ const server=await createServer({server:{middlewareMode:true,hmr:false},appType:
 const {useTranscriptSuggestion}=await server.ssrLoadModule('/src/use-transcript-suggestion.jsx');
 const {publishSuggestionModels}=await server.ssrLoadModule('/src/suggestion-model-settings.jsx');
 const {suggestionScope}=await server.ssrLoadModule('/src/transcript-suggestion.js');
+const {SuggestionStatus}=await server.ssrLoadModule('/src/suggestion-status.jsx');
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 test.after(()=>server.close());
 
@@ -319,4 +320,30 @@ test('Settings close activates a committed 21449-character detail tail without r
   h.state.sessions[0].messages[0].textDetail.digest='b'.repeat(64);await h.render();assert.equal(h.ghost,null);
   assert.equal(h.calls.filter(row=>row.action==='session.suggestion.request').length,1,'Same-ID content edit never buys another inference');
  }finally{await h.close();globalThis.fetch=previousFetch}
+});
+test('expired original status on return uses read-only durable restore and never requests another paid attempt',async()=>{
+ let original,restored;const h=await scenario({response:async(action,args)=>{
+  if(action==='session.suggestion.request'){original=args.requestId;return {accepted:true,result:{...args,status:'ready',suggestion:'Unused suggestion',sourceKey:'source',configRevision:'config',retention:'source',expiresAt:null}}}
+  if(action==='session.suggestion.restore'){restored=args.requestId;return {accepted:true,result:{...args,status:'ready',suggestion:'Unused suggestion',sourceKey:'source',configRevision:'config',retention:'source',expiresAt:null,reused:true,generationId:'original-generation'}}}
+  return {accepted:true,result:{...args,status:args.requestId===original?'expired':'ready',suggestion:args.requestId===original?null:'Unused suggestion',sourceKey:'source',configRevision:'config',retention:args.requestId===original?null:'source',expiresAt:null,generationId:args.requestId===original?null:'original-generation'}};
+ }});
+ try{
+  await h.render();assert.ok(h.ghost);h.state.view.panel='settings';await h.render();h.state.view.panel=null;await h.render();
+  assert.ok(h.ghost);assert.notEqual(restored,original);assert.equal(h.state.view.draft,undefined);
+  assert.equal(h.calls.filter(row=>row.action==='session.suggestion.request').length,1);
+  assert.equal(h.calls.filter(row=>row.action==='session.suggestion.cancel').length,0);
+  assert.equal(h.calls.filter(row=>row.action==='session.suggestion.restore').length,1);
+ }finally{await h.close()}
+});
+test('ordinary no-result/expiry/history have no setup action, while confirmed no exchange is neutral and real setup failures remain actionable',async()=>{
+ for(const disposition of [{status:'expired'},{status:'stale'},{status:'unsupported',reason:'transcript_unavailable'},{status:'busy',reason:'input_not_settled'},{status:'empty',reason:'restore_no_match'}]){
+  let root;try{await renderAct(async()=>{root=create(React.createElement(SuggestionStatus,{disposition,onReview(){}}))});assert.equal(root.toJSON(),null,JSON.stringify(disposition))}finally{await renderAct(async()=>root?.unmount())}
+ }
+ for(const [disposition,action]of [[{status:'empty',reason:'no_usable_exchange'},false],[{status:'missing_selection'},true],[{status:'unsupported',reason:'runtime_not_prepared'},true],[{status:'failed'},true]]){
+  let root;try{
+   await renderAct(async()=>{root=create(React.createElement(SuggestionStatus,{disposition,onReview(){}}))});
+   assert.equal(root.root.findAllByType('button').length,action?1:0);
+   if(!action)assert.match(JSON.stringify(root.toJSON()),/No suggestion for this conversation yet/);
+  }finally{await renderAct(async()=>root?.unmount())}
+ }
 });

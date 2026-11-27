@@ -12,6 +12,9 @@ export function useTranscriptSuggestion({state,suggestionsSupported,readState,ac
  if(!controller.current)controller.current=createSuggestionController({readState:()=>live.current.readState(),readStatus:async(args,current)=>{
   const receipt=await live.current.act('session.suggestion.status',args,{feedback:false,suggestionIsCurrent:current,signal:AbortSignal.timeout(5000)});
   return receipt?.accepted===true?receipt.result:null;
+ },readRestore:async(args,current)=>{
+  const receipt=await live.current.act('session.suggestion.restore',args,{feedback:false,suggestionIsCurrent:current,signal:AbortSignal.timeout(5000)});
+  return receipt?.accepted===true?receipt.result:null;
  },canUse:()=>{
   const current=live.current;
   return !document.hidden&&document.hasFocus()&&current.connected&&current.enabled&&suggestionPreference(current.readState())&&current.config?.enabled===true&&!current.blocked&&!current.composing&&!inputPending.current&&current.canUse();
@@ -59,6 +62,7 @@ export function useTranscriptSuggestion({state,suggestionsSupported,readState,ac
     // Exact terminal receipts stop loading and cleanup; malformed or unrelated
     // results are uncertain, not evidence of an empty or successful attempt.
     terminal=received&&result.status!=='pending';
+    if(terminal&&result.status==='expired')await owner.restoreExpired();
     refresh(value=>value+1);
     if(!received){owner.unavailable(args);cancel();refresh(value=>value+1);return}
     if(result.status==='pending'){

@@ -10,14 +10,15 @@ import {shellScope,sameScope} from '../src/shell/resources.js';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const output=process.env.AMPLIFIER_TEST_ARTIFACTS||'/tmp/transcript-suggestion-boot';
 const canvasTransitionOnly=process.argv.includes('--settings-canvas-only');
-const positional=process.argv.slice(2).filter(arg=>!['--activation-only','--settings-canvas-only'].includes(arg));
+const durableOnly=process.argv.includes('--durable-only');
+const positional=process.argv.slice(2).filter(arg=>!['--activation-only','--settings-canvas-only','--durable-only'].includes(arg));
 const artifact=positional[0]?await readClientArtifact(positional[0],positional[1]):null;
 const activationOutcomes=new Map();
 const acknowledgementModes=new Map();
 let failedSettingsReads=0,nextSetupChange=null;
 let state={revision:1,settings:{workspace:'/fixture',suggestedMessages:true,suggestedMessagesRevision:0},runtime:{available:true},view:{setupJourney:'done',scheme:'system',navPinned:true},sessions:[],workspaces:[{id:'project',name:'Fixture',path:'/fixture',available:true}],selectedSessionId:null,selectedWorkspaceId:'project',setup:{providers:[{id:'fixture',module:'provider-fixture',enabled:true,config:{default_model:'fixture-model'}}],providersLoadedAt:1,providersWorkspace:'/fixture'},canvas:{open:false},attention:{items:[],sessions:{}}};
 const catalogMetadata={info:{config_fields:[]},configSchema:{fields:[{id:'reasoning_effort',choices:['low','medium','high'],requires_model:true}]}};
-const suggestionCatalog=['settings.update','providers.suggestionModels','providers.configureSuggestions','session.suggestion.request','session.suggestion.status','session.suggestion.cancel'].map(name=>({name}));
+const suggestionCatalog=['settings.update','providers.suggestionModels','providers.configureSuggestions','session.suggestion.request','session.suggestion.status','session.suggestion.cancel','session.suggestion.restore'].map(name=>({name}));
 let supportsSuggestions=false,historyScope='b'.repeat(64),holdCatalog=false,heldCatalog=null;
 let suggestionConfig={enabled:true,provider:'fixture',model:'fixture-model',effort:'low',revision:'boot-config',prompt:'Default fixture instruction.',defaultPrompt:'Default fixture instruction.'},rejectSetup=false;
 state.modelCatalogs={'global-fixture-key':{phase:'ready',supported:true,provenance:'provider-api',modelsDeferred:true,loadedAt:100,metadata:{info:{},configSchema:{fields:[]}}}};
@@ -36,6 +37,7 @@ const heldPreferences=[];
 const cachedResults=new Map(),attemptResults=new Map(),responseEvidence=[];
 const sourceFor=id=>JSON.stringify(['b'.repeat(64),suggestionConfig.revision,id,state.sessions.find(row=>row.id===id)?.messages]);
 const heldSelections=[];
+let holdRestore=false;const heldRestores=[];
 const selectChat=id=>{state.selectedSessionId=id;const row=state.sessions.find(row=>row.id===id);state.view={...state.view,panel:null,workSurface:'chat',draft:row?.draft||'',draftDocument:null};state.revision++};
 const report={scope:'actual production App with maintained synthetic HTTP/shell/event adapters; no installed host, provider or physical focus acceptance'};
 report.shellScopeConflicts=[];
@@ -102,9 +104,17 @@ try{
   }
   if(body.action.startsWith('session.suggestion.')){
    assert.equal(Object.hasOwn(body.args,'regenerate'),false,'Automatic-only wire never sends a regeneration mode');
+   if(body.action==='session.suggestion.restore'){
+    if(holdRestore)await new Promise(done=>heldRestores.push(done));
+    const saved=cachedResults.get(sourceFor(body.args.sessionId));
+    const hit=saved&&['ready','empty'].includes(saved.status),result=hit?{...saved,requestId:body.args.requestId,sessionId:body.args.sessionId,reused:true}:{...body.args,status:'empty',reason:'restore_no_match',generationId:null,suggestion:null};
+    if(hit)attemptResults.set(body.args.requestId,result);
+    responseEvidence.push({action:body.action,requestId:body.args.requestId,status:result.status,generationId:result.generationId});
+    return route.fulfill({json:{accepted:true,result}});
+   }
    if(body.action==='session.suggestion.request'){
     attempt=body.args;const sourceKey=sourceFor(attempt.sessionId),reused=cachedResults.has(sourceKey);
-    if(!reused){modelCalls++;const status=activationOutcomes.get(attempt.sessionId)||(attempt.sessionId==='empty'?'empty':'ready');cachedResults.set(sourceKey,{status,suggestion:status==='ready'?'Try the next step.':null,sourceKey,configRevision:suggestionConfig.revision,expiresAt:status==='ready'?null:Date.now()+60000,retention:status==='ready'?'source':null})}
+    if(!reused){modelCalls++;const status=activationOutcomes.get(attempt.sessionId)||(attempt.sessionId==='empty'?'empty':'ready');cachedResults.set(sourceKey,{status,suggestion:status==='ready'?'Try the next step.':null,sourceKey,configRevision:suggestionConfig.revision,generationId:'completion-'+modelCalls,expiresAt:status==='ready'?null:Date.now()+60000,retention:status==='ready'?'source':null})}
     attemptResults.set(attempt.requestId,{...cachedResults.get(sourceKey),reused});
     const ack=acknowledgementModes.get(attempt.sessionId);
     if(ack==='lost')return route.abort('connectionreset');
@@ -171,7 +181,52 @@ try{
  assert.equal(await page.evaluate(()=>window.amplifier.getState().selectedSessionId),null);
  assert.equal(await page.evaluate(()=>window.amplifier.getState().view?.panel??null),null,'Normal chat boot is not masked by a settings panel');
  assert.deepEqual(suggestionActions(),[]);assert.deepEqual(writes(),[]);
- if(canvasTransitionOnly){
+ if(durableOnly){
+  const requests=()=>suggestionActions().filter(row=>row.action==='session.suggestion.request');
+  const restores=()=>suggestionActions().filter(row=>row.action==='session.suggestion.restore');
+  const dispatch=(action,args)=>page.evaluate(({action,args})=>window.amplifier.dispatch(action,args),{action,args});
+  const publish=async()=>{state.revision++;await page.evaluate(next=>window.emitFixtureState(next),snapshot())};
+  state.sessions=[{id:'durable-chat',title:'Unused suggestion restoration',sessionKind:'root',workspace:'/fixture',workspaceId:'project',status:'idle',historyManaged:true,historyLoaded:true,messages:[{id:'durable-answer',role:'assistant',text:'A committed visible reply.'}],workers:[]}];
+  state.selectedSessionId='durable-chat';state.view={...state.view,panel:'settings',settingsExpanded:['chat-input'],draft:'',draftDocument:null};await publish();
+  assert.equal(requests().length,0);
+  await dispatch('view.update',{patch:{panel:null}});
+  const ghost=page.getByRole('button',{name:'Use suggested message'}),status=page.locator('[data-part="suggestion-status"]');
+  await expect(ghost).toBeVisible();assert.equal(modelCalls,1);const original=requests()[0].args.requestId;
+  await dispatch('view.update',{patch:{panel:'settings'}});attemptResults.clear();
+  await dispatch('view.update',{patch:{panel:null}});await expect(ghost).toBeVisible();
+  assert.equal(requests().length,1);assert.equal(modelCalls,1);assert.equal(restores().length,1);assert.notEqual(restores()[0].args.requestId,original);
+  assert.equal(await composer.textContent(),'');await expect(status).toHaveCount(0);
+  // Expire the restored receipt before Tab: explicit acceptance must still
+  // perform cache-only revalidation of the same completion, never inference.
+  attemptResults.clear();await composer.focus();await composer.press('Tab');
+  await expect.poll(()=>composer.textContent()).toBe('Try the next step.');
+  assert.equal(restores().length,2);assert.equal(modelCalls,1);assert.equal(requests().length,1);
+  assert.equal(calls.filter(row=>row.action==='conversation.send').length,0);
+  await composer.press('ControlOrMeta+z');await expect(ghost).toBeVisible();
+  // Hold a valid cache read, then let newer user text supersede it.
+  await dispatch('view.update',{patch:{panel:'settings'}});attemptResults.clear();holdRestore=true;
+  await dispatch('view.update',{patch:{panel:null}});await expect.poll(()=>heldRestores.length).toBe(1);
+  await composer.fill('My newer unsent draft');holdRestore=false;heldRestores.shift()();
+  await expect(ghost).toHaveCount(0);await expect(composer).toHaveText('My newer unsent draft');
+  await composer.focus();await composer.press('ControlOrMeta+a');await composer.press('Backspace');
+  await expect.poll(()=>composer.textContent()).toBe('');await expect(ghost).toBeVisible();assert.equal(modelCalls,1);assert.equal(requests().length,1);
+  await dispatch('view.update',{patch:{panel:'settings'}});
+  const beforeReload=modelCalls;await page.reload();await expect(composer).toBeVisible();
+  assert.equal(requests().length,1,'A fresh document with Settings open has no demand');
+  await dispatch('view.update',{patch:{panel:null}});await expect(ghost).toBeVisible();
+  assert.equal(modelCalls,beforeReload,'Fresh browser ownership uses the ordinary host-cache-first request, not another completion');
+  assert.equal(requests().length,2);assert.notEqual(requests().at(-1).args.requestId,original);
+  // Model a host receipt restart/cache eviction; miss is not permission to
+  // start work and does not show an irrelevant setup/expiry action.
+  await dispatch('view.update',{patch:{panel:'settings'}});attemptResults.clear();cachedResults.clear();
+  await dispatch('view.update',{patch:{panel:null}});await expect(ghost).toHaveCount(0);await expect(status).toHaveCount(0);
+  await page.clock.fastForward(1000);assert.equal(requests().length,2);assert.equal(modelCalls,1);
+  // Fresh documents retain their existing cache-first request admission. This
+  // check deliberately stops before creating fresh demand after cache eviction.
+  report.durable={sameOriginalSource:true,expiredReceiptReadOnlyRestore:true,TabAfterRebind:true,lateRestorePreservesDraft:true,freshClientReusesHostCompletion:true,cacheMissNoInferenceRetry:true,scope:'Source App with synthetic cache/binding peers; no actual DB/provider restart qualification'};
+  report.status='PASS';assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
+  console.log('PASS: durable read-only restore, expired acceptance binding, Tab draft-only, newer draft priority and quiet miss without replacement inference.');
+ }else if(canvasTransitionOnly){
   state.sessions=[{id:'canvas-chat',title:'Already-On Canvas transition',sessionKind:'root',workspace:'/fixture',workspaceId:'project',status:'idle',historyManaged:true,historyLoaded:true,messages:[{id:'canvas-answer',role:'assistant',text:'An already completed public reply.'}],workers:[]}];
   state.selectedSessionId='canvas-chat';state.view={...state.view,panel:'chat-computer',settingsCanvas:false,draft:'',draftDocument:null};state.revision++;
   await page.evaluate(next=>window.emitFixtureState(next),snapshot());
@@ -469,6 +524,7 @@ try{
 }catch(error){report.status='FAIL';report.error=error.stack;throw error}
 finally{
  const failedBeforeCleanup=report.status==='FAIL';
+ for(const release of heldRestores)release();
  for(const held of heldPreferences)held.release();
  const cleanup=await Promise.allSettled([
   Promise.resolve().then(()=>browser?.close()),
