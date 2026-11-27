@@ -431,3 +431,18 @@ test('a paused member cannot reopen the group and a late read stays in its origi
  assert.equal(root.toJSON(),'second');
  await act(async()=>root.unmount());
 });
+
+test('an accepted later copy explains an old stopped send without resending it',async()=>{
+ const message={id:'original',role:'user',text:'Resume'};
+ const attempt={commandId:'original',error:'This assignment is stopped. Open Shared tasks and assignment.',status:'failed',text:'Resume',via:'chat',createdAt:1};
+ const later={inputId:'different',role:'user',inputOrigin:'ui',via:'chat',createdAt:2,text:'Resume',delivery:{status:'accepted'}};
+ let root;
+ for(const [patch,matched] of [[{},true],[{inputOrigin:'agent'},false],[{replyTo:{id:'quote'}},false],[{createdAt:0},false],[{delivery:{status:'unknown'}},false]]){
+  const props={message,localDelivery:attempt,delivery:attempt,session:{id:'chat',messages:[{...later,...patch}]}};
+  await act(async()=>{const el=React.createElement(MessageDelivery,props);if(root)root.update(el);else root=create(el)});
+  assert.equal(text(root.root).includes('You sent the same message later.'),matched);
+  assert.equal(text(root.root).includes('Retry'),!matched);
+  assert.equal(text(root.root).includes('Open Shared tasks'),false);
+ }
+ await act(async()=>root.unmount());
+});

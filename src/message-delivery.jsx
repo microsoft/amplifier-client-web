@@ -103,12 +103,23 @@ function DeliveryWarning({message,session,delivery,localDelivery,pausedChat,disp
  if(!steering&&delivery.status==='held')return <span className="a-message-delivery" role="status">{delivery.reason||'Message retained without sending.'}</span>;
  const sending=['sending','queued'].includes(delivery?.status);
  const preparing=session.status==='starting'||session.activity?.phase==='runtime-setup';
+ // A manual recovery in another client has its own input ID. Keep the
+ // original receipt intact and describe only what the saved history proves.
+ if(originalSubmission&&delivery?.status==='failed'&&stoppedDelivery(localDelivery)&&!oneTimeAllowance&&!steering&&
+    typeof localDelivery.text==='string'&&localDelivery.text.trim()&&!localDelivery.replyTo&&!localDelivery.document&&
+    !localDelivery.recipientAgentId&&!localDelivery.attachmentIds?.length&&!localDelivery.attachments?.length&&
+    session.messages?.some(row=>row.role==='user'&&row.inputOrigin==='ui'&&row.inputId&&row.inputId!==inputId&&
+      row.createdAt>localDelivery.createdAt&&row.text===localDelivery.text&&row.via===localDelivery.via&&
+      !row.replyTo&&!row.recipientAgentId&&!row.attachments?.length&&!row.handoffOrigin&&!row.steering&&
+      row.delivery?.status==='accepted')){
+  return <span className="a-message-delivery" role="status">You sent the same message later.</span>;
+ }
  const resume=originalSubmission&&delivery.status==='failed'&&!oneTimeAllowance&&!steering&&(stoppedDelivery(localDelivery)||localDelivery.errorCode==='resume_failed')&&pausedChat;
  const content=<div className="a-dialog-actions a-delivery-content">
-  {steeringContent||<span className="a-message-delivery" role="status">{sending?<><LoaderCircle className="a-progress-spinner"/>{preparing?'Preparing chat…':'Sending…'}</>:<><AlertCircle/>{resume?'Work is paused':delivery.status==='failed'?'Not sent':'Delivery not confirmed'}
+  {steeringContent||<span className="a-message-delivery" role="status">{sending?<><LoaderCircle className="a-progress-spinner"/>{preparing?'Preparing chat…':'Sending…'}</>:<><AlertCircle/>{resume?'Work is paused':delivery.status==='failed'?(message.questionId?'Answer saved · delivery failed':'Not sent'):'Delivery not confirmed'}
    {delivery.status==='failed'&&!oneTimeAllowance?<button type="button" className="a-link" data-action="conversation.send" disabled={pending||blocked} onClick={()=>resume?retry(message,undefined,resume):session.messages?.some(row=>row.inputId===inputId)?resend():retry(message)}><RotateCcw/>{resume?'Resume and send':'Retry'}</button>:<button type="button" className="a-link" data-action="conversation.delivery" disabled={pending||!inputId} onClick={check}><RotateCcw/>{pending?'Checking…':'Check delivery'}</button>}
   </>}</span>}
-  {(!resume||!stoppedDelivery(localDelivery))&&!sending&&(!steering||steeringWarning)&&delivery?.error&&<p role="alert" className="a-delivery-detail">{delivery.error}</p>}
+  {!stoppedDelivery(localDelivery)&&!sending&&(!steering||steeringWarning)&&delivery?.error&&<p role="alert" className="a-delivery-detail">{delivery.error}</p>}
   {oneTimeAllowance&&unresolved&&<p className="a-delivery-detail">To try again, review preparation and send a fresh message.</p>}
   {closeable&&<button type="button" className="a-link" disabled={submitting} title="Keep the original submission in Chat info without resending or confirming delivery." onClick={()=>{if(!submitting)discard?.(message)}}>Close delivery item</button>}
   {report?.message&&<p role="status" className="a-delivery-detail">{report.message}</p>}
