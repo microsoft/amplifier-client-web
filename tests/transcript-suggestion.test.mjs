@@ -6,7 +6,7 @@ import {composerState,insertComposerSuggestion,composerMarkdown,composerDocument
 import {undo,redo} from 'prosemirror-history';
 
 test('suggestions require the host to advertise the complete flow',()=>{
- const names=['settings.update','providers.suggestionModels','providers.configureSuggestions','session.suggestion.request','session.suggestion.status','session.suggestion.cancel'];
+ const names=['settings.update','providers.suggestionModels','providers.configureSuggestions','session.suggestion.request','session.suggestion.status','session.suggestion.cancel','session.suggestion.restore'];
  const catalog=names.map(name=>({name}));
  assert.equal(supportsTranscriptSuggestions([]),false);
  for(const name of names)assert.equal(supportsTranscriptSuggestions(catalog.filter(row=>row.name!==name)),false,name);
@@ -174,6 +174,132 @@ test('source-bound READY survives beyond61seconds only with exact retention mark
  }
  const x=harness(),a=x.request();x.controller.receive(a,{...x.result(a),retention:'source',expiresAt:null});x.controller.suspend();x.status({expiresAt:100000});
  assert.equal(await x.controller.restore(),false,'Source mode may not silently turn into a finite lease');
+});
+function durableHarness({restore,status='expired'}={}){
+ let state=frame(),config='config',sequence=0;
+ const reads=[],controller=createSuggestionController({readState:()=>state,requestId:()=>String(++sequence),readStatus:async args=>{reads.push({action:'status',args});return {...args,status,suggestion:null,sourceKey:null,configRevision:null}},readRestore:async(args,current)=>{reads.push({action:'restore',args});return restore?restore(args,current):{...args,status:'ready',suggestion:'Still unused',sourceKey:'durable-source',configRevision:config,retention:'source',expiresAt:null,reused:true,generationId:'original-generation'}}});
+ const observe=()=>controller.observe(state,config,suggestionEligible(state));
+ observe();const original=controller.nextRequest();
+ controller.receive(original,{...original,status:'ready',suggestion:'Still unused',sourceKey:'durable-source',configRevision:config,retention:'source',expiresAt:null,generationId:'original-generation'});
+ controller.suspend();observe();
+ return {controller,reads,original,observe,state,revision:value=>{config=value;observe()}};
+}
+test('expired exact READY receipt restores from authenticated durable read with a fresh binding, never inference or draft text',async()=>{
+ const h=durableHarness();assert.equal(await h.controller.restore(),true);
+ assert.equal(h.reads.length,2);assert.deepEqual(h.reads[0],{action:'status',args:{sessionId:'s',requestId:h.original.requestId}});
+ assert.deepEqual(h.reads[1],{action:'restore',args:{sessionId:'s',requestId:'2',expectedLastMessageId:'a'}});
+ assert.equal(h.controller.candidate().text,'Still unused');assert.equal(h.state.view.draft,undefined);
+ assert.equal(h.controller.nextRequest(),null,'Restore never clears original source spending');
+});
+test('durable miss, malformed hit and lost status stay quiet and spent without allocating replacement inference',async()=>{
+ for(const outcome of ['miss','wrong-owner','wrong-config','unreused','bad-retention','missing-generation','throw']){
+  const h=durableHarness({restore:async args=>{
+   if(outcome==='throw')throw Error('unavailable');
+   const result={...args,status:'ready',suggestion:'Never blindly trust',sourceKey:'durable-source',configRevision:'config',retention:'source',expiresAt:null,reused:true,generationId:'original'};
+   return {...result,...({miss:{status:'empty',reason:'restore_no_match',generationId:null},'wrong-owner':{sessionId:'other'},'wrong-config':{configRevision:'foreign'},unreused:{reused:false},'bad-retention':{retention:null},'missing-generation':{generationId:null}}[outcome])};
+  }});
+  assert.equal(await h.controller.restore(),false,outcome);assert.equal(h.controller.candidate(),null);assert.equal(h.controller.nextRequest(),null);
+ }
+});
+test('late durable response cannot revive after newer intent, source/account/Stop or principal changes',async()=>{
+ for(const change of ['draft','settings','source','config','stop','principal','dismiss']){
+  let resolve;const h=durableHarness({restore:args=>new Promise(done=>{resolve=()=>done({...args,status:'ready',suggestion:'Late unused',sourceKey:'durable-source',configRevision:'config',retention:'source',expiresAt:null,reused:true,generationId:'original'})})});
+  const pending=h.controller.restore();await new Promise(done=>setImmediate(done));assert.ok(resolve,'Read-only restore must be admitted');
+  if(change==='draft')h.state.view.draft='My newer draft';
+  if(change==='settings')h.state.view.settingsCanvas=true;
+  if(change==='source')h.state.sessions[0].messages[0].text='Changed source';
+  if(change==='config')h.revision('new-account');
+  if(change==='stop')h.state.sessions[0].status='stopped';
+  if(change==='principal')h.state.client.historyScope='other-owner';
+  if(change==='dismiss')h.controller.invalidate();
+  resolve();assert.equal(await pending,false,change);assert.equal(h.controller.candidate(),null);assert.notEqual(h.state.view.draft,'Late unused');
+ }
+});
+test('restored candidate acceptance revalidates the same generation by status or cache-only read, then inserts editable text without sending',async()=>{
+ let state=frame(),sequence=0,restores=0,expired=false;
+ const result=args=>({...args,status:'ready',suggestion:'Unused editable text',sourceKey:'source',configRevision:'r',retention:'source',expiresAt:null,reused:true,generationId:'generation'});
+ const controller=createSuggestionController({readState:()=>state,requestId:()=>String(++sequence),readStatus:async args=>expired?{...args,status:'expired'}:result(args),readRestore:async args=>{restores++;return result(args)}});
+ controller.observe(state,'r',true);const original=controller.nextRequest();controller.receive(original,result(original));
+ controller.suspend();expired=true;assert.equal(await controller.restore(),true);const ghost=controller.candidate();assert.ok(ghost);assert.equal(restores,1);
+ const permit=await ghost.validate();assert.equal(restores,2,'Expired restored binding performs one cache-only revalidation on explicit acceptance');
+ assert.equal(typeof permit,'function');assert.equal(permit(),true);assert.equal(permit(),false);
+ const editor={state:composerState(''),composing:false,focus(){}};editor.dispatch=tr=>{editor.state=editor.state.apply(tr)};
+ assert.equal(insertComposerSuggestion(editor,ghost.text),true);assert.equal(editor.state.doc.textContent,'Unused editable text');
+ assert.equal(state.view.draft,undefined,'Controller never mutates a draft or sends');
+ assert.equal(controller.nextRequest(),null);
+});
+test('cache restore cannot replace known READY text or generation during acceptance',async()=>{
+ for(const field of ['text','generation']){
+  let change=false;const h=durableHarness({restore:async args=>({...args,status:'ready',suggestion:change&&field==='text'?'Different text':'Still unused',sourceKey:'durable-source',configRevision:'config',retention:'source',expiresAt:null,reused:true,generationId:change&&field==='generation'?'different':'original-generation'})});
+  assert.equal(await h.controller.restore(),true);const ghost=h.controller.candidate();change=true;
+  assert.equal(await ghost.validate(),null,field);assert.equal(h.controller.nextRequest(),null);
+ }
+});
+test('a durable miss never erases known text/generation across later exact expired receipt reconciliation',async()=>{
+ for(const field of ['text','generation']){
+  let miss=true;
+  const h=durableHarness({restore:async args=>miss?{...args,status:'empty',reason:'restore_no_match',generationId:null}:{...args,status:'ready',suggestion:field==='text'?'Replacement':'Still unused',sourceKey:'durable-source',configRevision:'config',retention:'source',expiresAt:null,reused:true,generationId:field==='generation'?'replacement-generation':'original-generation'}});
+  assert.equal(await h.controller.restore(),false);miss=false;
+  h.controller.suspend();h.observe();const args=h.controller.resumeRequest();assert.ok(args);
+  h.controller.receive(args,{...args,status:'expired',sourceKey:null,configRevision:null});
+  assert.equal(await h.controller.restoreExpired(),false,field);assert.equal(h.controller.candidate(),null);assert.equal(h.controller.nextRequest(),null);
+ }
+});
+test('finite READY leases never become source-bound, including after a real exact-ID expired status',async()=>{
+ for(const locallyExpired of [false,true]){
+  let time=100,sequence=0;const state=frame(),calls=[];
+  const controller=createSuggestionController({readState:()=>state,now:()=>time,requestId:()=>String(++sequence),readStatus:async args=>{calls.push('status');return {...args,status:'expired'}},readRestore:async args=>{calls.push('restore');return {...args,status:'ready',suggestion:'Finite text',sourceKey:'source',configRevision:'r',retention:'source',expiresAt:null,reused:true,generationId:'g'}}});
+  controller.observe(state,'r',true);const args=controller.nextRequest();
+  controller.receive(args,{...args,status:'ready',suggestion:'Finite text',sourceKey:'source',configRevision:'r',retention:null,expiresAt:200});
+  controller.suspend();if(locallyExpired)time=201;
+  assert.equal(await controller.restore(),false);assert.equal(controller.candidate(),null);assert.equal(calls.includes('restore'),false);
+  controller.suspend();const resumed=controller.resumeRequest();assert.ok(resumed);controller.receive(resumed,{...resumed,status:'expired',sourceKey:null,configRevision:null});
+  assert.equal(await controller.restoreExpired(),false);assert.equal(controller.nextRequest(),null);assert.equal(calls.includes('restore'),false);
+ }
+});
+test('read-only restore reasons remain content-free and quiet through original READY status reconciliation',async()=>{
+ const h=harness(),args=h.request();h.controller.receive(args,h.result(args));h.controller.suspend();
+ h.status({status:'unsupported',suggestion:null,reason:'transcript_unavailable'});
+ assert.equal(await h.controller.restore(),false);
+ assert.deepEqual(h.controller.disposition(),{status:'unsupported',reason:'transcript_unavailable'});
+ assert.equal(suggestionDispositionText(h.controller.disposition()),null);assert.equal(h.controller.nextRequest(),null);
+});
+test('resumed STATUS cannot replace known text/generation or promote a finite READY after a restore miss',async()=>{
+ for(const changed of ['text','generation']){
+  const h=durableHarness({restore:async args=>({...args,status:'empty',reason:'restore_no_match',generationId:null})});
+  assert.equal(await h.controller.restore(),false);h.controller.suspend();h.observe();const args=h.controller.resumeRequest();assert.ok(args);
+  const result={...args,status:'ready',suggestion:changed==='text'?'Replacement text':'Still unused',sourceKey:'durable-source',configRevision:'config',retention:'source',expiresAt:null,generationId:changed==='generation'?'replacement-generation':'original-generation'};
+  assert.equal(h.controller.receive(args,result),false,changed);assert.equal(h.controller.candidate(),null);assert.equal(h.controller.nextRequest(),null);
+ }
+ for(const locallyExpired of [false,true]){
+  let time=100;const state=frame();
+  const controller=createSuggestionController({readState:()=>state,now:()=>time,requestId:()=> 'finite',readStatus:async args=>({...args,status:'expired'})});
+  controller.observe(state,'r',true);const first=controller.nextRequest();
+  controller.receive(first,{...first,status:'ready',suggestion:'Finite text',sourceKey:'source',configRevision:'r',retention:null,expiresAt:200,generationId:'g'});
+  controller.suspend();if(locallyExpired)time=201;assert.equal(await controller.restore(),false);
+  const args=controller.resumeRequest();assert.ok(args);
+  assert.equal(controller.receive(args,{...args,status:'ready',suggestion:'Finite text',sourceKey:'source',configRevision:'r',retention:'source',expiresAt:null,generationId:'g'}),false);
+  assert.equal(controller.candidate(),null);assert.equal(controller.nextRequest(),null);
+ }
+});
+test('foreign or unreadable exact status is not proof of expiry and never admits durable reads',async()=>{
+ for(const patch of [null,{requestId:'foreign',status:'expired'},{status:'expired',configRevision:'foreign'},{status:'expired',sourceKey:'foreign'}]){
+  const state=frame();let restores=0;
+  const result=args=>({...args,status:'ready',suggestion:'Known text',sourceKey:'source',configRevision:'r',retention:'source',expiresAt:null,generationId:'g'});
+  const controller=createSuggestionController({readState:()=>state,requestId:()=> 'id',readStatus:async args=>patch&&{...args,...patch},readRestore:async args=>{restores++;return {...result(args),reused:true}}});
+  controller.observe(state,'r',true);const args=controller.nextRequest();controller.receive(args,result(args));controller.suspend();
+  assert.equal(await controller.restore(),false);assert.equal(restores,0);assert.equal(controller.nextRequest(),null);
+ }
+});
+test('an expired uncertain or withdrawn admission cannot recover a late READY as unused assistance',async()=>{
+ for(const status of ['pending','uncertain','cancelled']){
+  const state=frame();let reads=0;const controller=createSuggestionController({readState:()=>state,requestId:()=> 'original',readRestore:async args=>{reads++;return {...args,status:'ready',suggestion:'Late paid output',sourceKey:'source',configRevision:'r',retention:'source',expiresAt:null,reused:true,generationId:'g'}}});
+  controller.observe(state,'r',true);const original=controller.nextRequest();
+  if(status==='uncertain')controller.unavailable(original);
+  else controller.receive(original,{...original,status,sourceKey:'source',configRevision:'r',expiresAt:10000000000000});
+  controller.suspend();const resumed=controller.resumeRequest();controller.receive(resumed,{...resumed,status:'expired'});
+  assert.equal(await controller.restoreExpired(),false);assert.equal(reads,0,status);assert.equal(controller.candidate(),null);assert.equal(controller.nextRequest(),null);
+ }
 });
 test('automatic-only request allocation has no manual bypass for a spent source',()=>{
  const h=harness(),args=h.request();h.controller.receive(args,{...h.result(args),status:'empty',suggestion:null});

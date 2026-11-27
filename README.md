@@ -89,6 +89,12 @@ message box while the page is visible and focused, including when you visit an
 existing chat. No other chat or background page requests work. A source-bound
 READY response can remain in bounded private memory while its source and settings
 are unchanged; revisits still validate the original attempt without model work.
+Valid unused assistance is retained privately by the host, separately from user
+drafts. If a known exact request receipt expires, the client may perform the
+authenticated cache-only `session.suggestion.restore` read with the current
+conversation/last-message IDs and a new private binding. Only freshly validated
+source/configuration-bound results may return; a miss never authorizes another
+inference. Nothing is inserted, sent or stored as a user draft before acceptance.
 Finite responses obey their original expiry. Failed, empty, cancelled or missing
 attempts do not trigger a client retry loop. Suggestions are automatic; there is no
 creation or regeneration control. Closing Settings after confirmed enable checks
@@ -96,6 +102,9 @@ the already-viewed eligible chat immediately. The composer shows **Loading a
 suggested message…** or a safe unavailable/failure
 explanation with setup review—not a chat-working badge. Returning to a retained
 non-ready attempt reads its exact original ID, without a new inference request.
+Expired/history/ordinary no-result states do not link to unrelated setup. A
+confirmed lack of a usable exchange says “No suggestion for this conversation
+yet”; genuine configuration and provider failures retain their feedback.
 If an admission acknowledgement is lost or malformed, the client withdraws that
 exact possibly-admitted attempt once rather than treating an HTTP abort as
 provider cancellation. Late output cannot restore preview authority; returning

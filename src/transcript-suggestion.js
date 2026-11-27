@@ -1,6 +1,6 @@
 const suggestionActions = [
  'providers.suggestionModels', 'providers.configureSuggestions', 'settings.update',
- 'session.suggestion.request', 'session.suggestion.status', 'session.suggestion.cancel',
+ 'session.suggestion.request', 'session.suggestion.status', 'session.suggestion.cancel', 'session.suggestion.restore',
 ];
 export function supportsTranscriptSuggestions(catalog){
  const names=new Set(catalog.map(row=>row.name));
@@ -94,23 +94,27 @@ const reasonCopies={
  prior_attempt_stale:'The previous suggestion source changed. It will not retry automatically.',
  prior_attempt_unsupported:'The previous attempt used an unsupported connection or model.',
 };
+const publicSuggestionReason=reason=>Object.hasOwn(reasonCopies,reason)||['restore_no_match','transcript_unavailable','input_not_settled','no_usable_exchange'].includes(reason)?reason:null;
 // Never project provider prose, endpoint values or arbitrary diagnostic strings.
 export function suggestionDispositionText(disposition){
  const status=disposition?.status;
+ if(disposition?.reason==='no_usable_exchange')return 'No suggestion for this conversation yet.';
+ if(['expired','stale','history_unavailable','awaiting_response'].includes(status)||['restore_no_match','transcript_unavailable','input_not_settled'].includes(disposition?.reason))return null;
  if(status==='empty'||status==='history_unavailable'||status==='awaiting_response')return null;
  return Object.hasOwn(reasonCopies,disposition?.reason)?reasonCopies[disposition.reason]:({pending:'Loading a suggested message…',disabled:'Suggestions are unavailable on this installation.',setup_loading:'Loading suggestion setup…',setup_unavailable:'Suggestion setup could not be loaded.',missing_selection:'Choose an available AI connection and model in suggestion setup.',unsupported:'This connection or model is not available for suggestions.',failed:'The selected connection could not load a suggestion.',timeout:'The suggestion request timed out. It will not retry automatically.',cancelled:'The suggestion request was cancelled. It will not retry automatically.',expired:'The previous suggestion is no longer available.',stale:'The conversation changed. The previous suggestion is no longer available.',duplicate_source:'A previous attempt exists for this conversation. It will not retry automatically.',busy:'The suggestion service was busy. No automatic retry.',uncertain:'The previous suggestion result could not be confirmed. It will not retry automatically.'})[status]||null;
 }
 // One inference per response source/configuration. Keep bounded private receipts
 // for non-ready attempts too; revisiting reads the original ID, never a new call.
 // Transport is deliberately injected: this controller never sends a draft.
-export function createSuggestionController({readState,canUse=()=>true,readStatus,now=Date.now,requestId=()=>crypto.randomUUID()}){
+export function createSuggestionController({readState,canUse=()=>true,readStatus,readRestore,now=Date.now,requestId=()=>crypto.randomUUID()}){
  let scope=null,current=null,epoch=0,incarnation=0,candidate=null,request=null,restoring=null;
  const spent=new Set(),ready=new Map(),attempts=new Map(),withdrawals=new Map();
  const alive=saved=>saved.expiresAt===null||saved.expiresAt>now();
  const retentionMatches=(saved,result)=>saved.retention===(result.retention??null)&&(saved.expiresAt===null?result.expiresAt===null:result.expiresAt!==null);
  const remember=key=>{spent.add(key);while(spent.size>128)spent.delete(spent.values().next().value)};
  function retain(value){attempts.delete(current.key);attempts.set(current.key,value);while(attempts.size>32)attempts.delete(attempts.keys().next().value)}
- function retainDisposition(saved,status,reason=null){retain({key:current.attemptKey,epoch,expiresAt:saved.expiresAt,args:saved.args,sourceKey:saved.sourceKey,configRevision:saved.configRevision,status,reason:Object.hasOwn(reasonCopies,reason)?reason:null})}
+ function retainDisposition(saved,status,reason=null){retain({...attempts.get(current.key),key:current.attemptKey,epoch,expiresAt:saved.expiresAt,args:saved.args,sourceKey:saved.sourceKey,configRevision:saved.configRevision,
+  ...(saved.text?{text:saved.text,retention:saved.retention,finiteReady:saved.retention!=='source',generationId:saved.generationId}:{}),status,reason:publicSuggestionReason(reason)})}
  function suspend(){epoch++;candidate=null;restoring=null;if(request){remember(request.key);request=null}}
  function dismissSession(sessionId){
   if(!sessionId)return;
@@ -143,6 +147,32 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
  function available(){
   return !!candidate&&current?.eligible&&canUse()&&suggestionEligible(readState())&&suggestionWitness(readState())?.key===current.witness?.key&&candidate.epoch===epoch&&alive(candidate);
  }
+ function exactResult(saved,result){
+  return result?.requestId===saved.args.requestId&&result.sessionId===saved.args.sessionId;
+ }
+ function expiredReceipt(saved,result){
+  return result?.status==='expired'&&exactResult(saved,result)&&(result.sourceKey==null||result.sourceKey===saved.sourceKey)&&
+   (result.configRevision==null||result.configRevision===saved.configRevision);
+ }
+ async function durable(saved,fresh){
+  if(!readRestore||!fresh()||saved.finiteReady||saved.text&&saved.retention!=='source')return null;
+  const args={sessionId:current.witness.sessionId,requestId:requestId(),expectedLastMessageId:current.witness.lastMessageId};
+  const result=await readRestore(args,fresh);
+  if(!fresh()||result?.requestId!==args.requestId||result.sessionId!==args.sessionId||result.reused!==true||typeof result.generationId!=='string'||!result.generationId||
+   result.configRevision!==current.configRevision||typeof result.sourceKey!=='string'||!result.sourceKey||saved.sourceKey&&saved.sourceKey!==result.sourceKey||
+   saved.generationId&&saved.generationId!==result.generationId)return null;
+  if(result.status==='empty')return {empty:true};
+  if(result.status!=='ready'||result.retention!=='source'||result.expiresAt!==null||!suggestionText(result.suggestion)||saved.text&&result.suggestion!==saved.text)return null;
+  return {text:suggestionText(result.suggestion),epoch,retention:'source',expiresAt:null,args:{sessionId:args.sessionId,requestId:args.requestId},restoreArgs:args,
+   sourceKey:result.sourceKey,configRevision:result.configRevision,generationId:result.generationId,validating:false,api:null};
+ }
+ function publishReady(key,value){
+  // Keep immutable completion identity even if its transient binding later
+  // disappears. A miss must not weaken validation on a subsequent visit.
+  retain({...attempts.get(key),key:current.attemptKey,epoch,args:value.args,sourceKey:value.sourceKey,configRevision:value.configRevision,text:value.text,
+   generationId:value.generationId,retention:value.retention,expiresAt:value.expiresAt,finiteReady:value.retention!=='source',status:'ready'});
+  candidate=value;ready.delete(key);ready.set(key,value);while(ready.size>32)ready.delete(ready.keys().next().value);
+ }
  return {
   observe,
   generation:()=>epoch,
@@ -160,7 +190,7 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
   },
   resumeRequest(){
    const saved=attempts.get(current?.key);
-   if(!current?.eligible||!canUse()||!saved||saved.status==='ready'&&ready.has(current.key)||saved.status==='dismissed')return null;
+   if(!current?.eligible||!canUse()||!saved||ready.has(current.key)||saved.status==='dismissed')return null;
    request={...saved,epoch,args:{sessionId:saved.args.sessionId,requestId:saved.args.requestId}};
    return request.args;
   },
@@ -176,13 +206,15 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
    if(!this.requestCurrent(args)||result?.requestId!==args.requestId||result?.sessionId!==args.sessionId)return false;
    if(terminalStatuses.has(result.status)){
     if(result.configRevision!=null&&result.configRevision!==current.configRevision||request.sourceKey&&result.sourceKey!=null&&request.sourceKey!==result.sourceKey)return false;
-    retain({...request,status:result.status,reason:Object.hasOwn(reasonCopies,result.reason)?result.reason:null});ready.delete(current.key);request=null;return true;
+    retain({...request,status:result.status,reason:publicSuggestionReason(result.reason)});ready.delete(current.key);request=null;return true;
    }
    if(result.status!=='pending'&&result.status!=='ready')return false;
    if(result.retention!=null&&result.retention!=='source')return false;
    if(result.configRevision!==current.configRevision||typeof result.sourceKey!=='string'||!result.sourceKey||request.sourceKey&&request.sourceKey!==result.sourceKey)return false;
    request.sourceKey=result.sourceKey;
    const sourceBound=result.status==='ready'&&result.retention==='source'&&result.expiresAt===null;
+   if(result.status==='ready'&&request.text&&(result.suggestion!==request.text||!retentionMatches(request,result)||
+    request.generationId&&result.generationId!==request.generationId))return false;
    if(result.retention==='source'&&!sourceBound||result.status==='ready'&&result.expiresAt===null&&!sourceBound)return false;
    if(result.status==='pending'&&result.expiresAt===null)return false;
    if(result.expiresAt!=null){
@@ -192,32 +224,54 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
    if(!sourceBound&&request.expiresAt<=now())return false;
    if(result.status==='pending'){retain({...request,status:'pending'});return true}
    if(!suggestionText(result.suggestion))return false;
-   retain({...request,status:'ready'});
-   candidate={text:suggestionText(result.suggestion),epoch,retention:result.retention??null,expiresAt:sourceBound?null:request.expiresAt,args:{sessionId:args.sessionId,requestId:args.requestId},sourceKey:result.sourceKey,configRevision:result.configRevision,validating:false,api:null};request=null;
+   retain({...request,status:'ready',text:suggestionText(result.suggestion),retention:result.retention??null,expiresAt:sourceBound?null:request.expiresAt,finiteReady:!sourceBound,configRevision:result.configRevision,generationId:result.generationId});
+   candidate={text:suggestionText(result.suggestion),epoch,retention:result.retention??null,expiresAt:sourceBound?null:request.expiresAt,args:{sessionId:args.sessionId,requestId:args.requestId},sourceKey:result.sourceKey,configRevision:result.configRevision,generationId:result.generationId,validating:false,api:null};request=null;
    ready.delete(current.key);ready.set(current.key,candidate);while(ready.size>32)ready.delete(ready.keys().next().value);return true;
+  },
+  async restoreExpired(){
+   const key=current?.key,saved=attempts.get(key),captured=epoch;
+   const fresh=()=>attempts.get(key)===saved&&current?.key===key&&epoch===captured&&current.eligible&&canUse()&&suggestionEligible(readState())&&suggestionWitness(readState())?.key===current.witness?.key;
+   // An expired ambiguous/pending/withdrawn attempt is not a known unused
+   // completion. Keep its original reconciliation semantics, never revive it.
+   if(saved?.status!=='expired'||!saved.text||saved.retention!=='source'||saved.finiteReady||!fresh()||!readRestore||restoring)return false;
+   const operation={saved,epoch:captured};restoring=operation;
+   try{
+    const result=await durable(saved,fresh);
+    if(!result||!fresh()||result.empty)return false;
+    publishReady(key,result);return true;
+   }catch{return false}finally{if(restoring===operation)restoring=null}
   },
   async restore(){
    const key=current?.key,saved=ready.get(key),captured=epoch;
    const fresh=()=>ready.get(key)===saved&&current?.key===key&&epoch===captured&&current.eligible&&canUse()&&suggestionEligible(readState())&&suggestionWitness(readState())?.key===current.witness.key;
-   if(!saved||!fresh()||!alive(saved)||!readStatus){if(saved&&!alive(saved)){ready.delete(key);retainDisposition(saved,'expired')}return false}
+   if(!saved||!fresh()||!readStatus)return false;
    if(restoring?.saved===saved&&restoring.epoch===captured)return false;
    const operation={saved,epoch:captured};restoring=operation;
    // An explicit visit may inspect a prior ready attempt, never infer again.
    try{
+    // Local expiry never fabricates a server receipt or promotes a finite
+    // lease into durable source retention.
+    if(!alive(saved)){ready.delete(key);retainDisposition(saved,'expired');return false}
     const result=await readStatus(saved.args,fresh);
     if(!fresh())return false;
+    if(expiredReceipt(saved,result)&&saved.retention==='source'&&readRestore){
+     const recovered=await durable(saved,fresh);
+     if(!fresh())return false;
+     if(recovered&&!recovered.empty){publishReady(key,recovered);return true}
+     ready.delete(key);retainDisposition(saved,'expired');return false;
+    }
     if(terminalStatuses.has(result?.status)&&result.requestId===saved.args.requestId&&result.sessionId===saved.args.sessionId&&(result.sourceKey==null||result.sourceKey===saved.sourceKey)&&(result.configRevision==null||result.configRevision===saved.configRevision)){
      retainDisposition(saved,result.status,result.reason);ready.delete(key);return false;
     }
-    if(result?.status!=='ready'||!retentionMatches(saved,result)||result.requestId!==saved.args.requestId||result.sessionId!==saved.args.sessionId||result.sourceKey!==saved.sourceKey||result.configRevision!==saved.configRevision||result.suggestion!==saved.text||result.expiresAt!=null&&!Number.isFinite(result.expiresAt)){retainDisposition(saved,'uncertain');ready.delete(key);return false}
+    if(result?.status!=='ready'||!retentionMatches(saved,result)||result.requestId!==saved.args.requestId||result.sessionId!==saved.args.sessionId||result.sourceKey!==saved.sourceKey||result.configRevision!==saved.configRevision||saved.generationId&&result.generationId!==saved.generationId||result.suggestion!==saved.text||result.expiresAt!=null&&!Number.isFinite(result.expiresAt)){retainDisposition(saved,'uncertain');ready.delete(key);return false}
     const expiresAt=saved.expiresAt===null?null:Math.min(saved.expiresAt,result.expiresAt??saved.expiresAt);
     if(expiresAt!==null&&expiresAt<=now()){ready.delete(key);return false}
-    candidate={...saved,epoch,expiresAt,api:null,validating:false};ready.delete(key);ready.set(key,candidate);return true;
+    publishReady(key,{...saved,epoch,expiresAt,api:null,validating:false});return true;
    }catch{return false}finally{if(restoring===operation)restoring=null}
   },
   candidate(){
    if(!available())return null;
-   const saved=candidate;
+   const saved=candidate,key=current.key;
    if(!saved.api)saved.api={text:saved.text,expiresAt:saved.expiresAt,available:()=>candidate===saved&&available(),
     async validate(){
      if(candidate!==saved||!available()||saved.validating||!readStatus)return null;
@@ -226,9 +280,18 @@ export function createSuggestionController({readState,canUse=()=>true,readStatus
      try{
       // An explicit acceptance gesture buys one read of this exact attempt,
       // never inference, retries, source repair or a replacement candidate.
-      const result=await readStatus(saved.args,current);
+      let result=await readStatus(saved.args,current);
       if(!current())return null;
-      if(result?.status!=='ready'||!retentionMatches(saved,result)||result.requestId!==saved.args.requestId||result.sessionId!==saved.args.sessionId||result.sourceKey!==saved.sourceKey||result.configRevision!==saved.configRevision||result.suggestion!==saved.text){invalidate();return null}
+      if(expiredReceipt(saved,result)&&readRestore){
+       const recovered=await durable(saved,current);
+       if(!current())return null;
+       if(!recovered||recovered.empty){invalidate();return null}
+       // Explicit acceptance may revalidate the same durable completion, never
+       // substitute different text/generation or issue an inference request.
+       Object.assign(saved,{args:recovered.args,restoreArgs:recovered.restoreArgs,generationId:recovered.generationId});publishReady(key,saved);
+       result={...result,...recovered.args,status:'ready',retention:'source',expiresAt:null,suggestion:recovered.text,sourceKey:recovered.sourceKey,configRevision:recovered.configRevision,generationId:recovered.generationId};
+      }
+      if(result?.status!=='ready'||!retentionMatches(saved,result)||result.requestId!==saved.args.requestId||result.sessionId!==saved.args.sessionId||result.sourceKey!==saved.sourceKey||result.configRevision!==saved.configRevision||saved.generationId&&result.generationId!==saved.generationId||result.suggestion!==saved.text){invalidate();return null}
       if(result.expiresAt!=null){
        if(!Number.isFinite(result.expiresAt)){invalidate();return null}
        saved.expiresAt=Math.min(saved.expiresAt,result.expiresAt);
