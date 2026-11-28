@@ -3,7 +3,8 @@ import {ClipboardPaste,Copy} from 'lucide-react';
 import {hostNow} from './api.js';
 import {writeClipboardText} from './clipboard-copy.js';
 import {LinkQrReader} from './link-qr.jsx';
-import {LINK_INVITATION_MAX,linkInvitation,linkedInstancesRequest} from './linked-instances-api.js';
+import {LINK_INVITATION_MAX,hasPeerListener,isSetupRevision,linkInvitation,linkedInstancesRequest,verifiedRouteName} from './linked-instances-api.js';
+import {LinkedInstanceDiscovery} from './linked-instance-discovery.jsx';
 import './linked-instances.css';
 
 // These outcomes attest to the exact enrollment, including on retry. A
@@ -35,6 +36,19 @@ const joinErrors={
  link_capacity:'Too many links are saved on this Amplifier. Review your linked instances before trying again.',
  link_unsupported:'Linking is not available on this Amplifier.',
 };
+const setupBlockers={
+ https_origin_required:'No secure invitation address is available on this Amplifier.',
+ app_tls_required:'This Amplifier needs its own secure connection before it can share an invitation.',
+ app_tls_unavailable:'Amplifier couldn’t start its configured secure connection.',
+ saved_configuration_unavailable:'This Amplifier’s installation cannot save linking settings.',
+ peer_listener_unsupported:'This installation can’t open a separate connection for linking.',
+ peer_interface_unavailable:'Amplifier couldn’t find an eligible network connection for linking.',
+ peer_interface_ambiguous:'Amplifier found more than one possible network connection and couldn’t safely choose one.',
+ peer_identity_unavailable:'Amplifier couldn’t prepare its secure identity for linking.',
+ peer_port_unavailable:'The saved connection for linking is already in use or unavailable.',
+ peer_listener_unavailable:'Amplifier couldn’t open its separate connection for linking.',
+};
+const missingEndpoint=error=>error.status===404||error.status===405;
 function Notice({result}){
  return result&&<p role={result.error?'alert':'status'} className={result.error?'a-danger':undefined}>{result.text}</p>;
 }
@@ -69,10 +83,11 @@ function Offer({offer,copyNote}){
  </div>;
 }
 
-function Join({onJoin,disabled}){
+function Join({onJoin,disabled,describedBy,focusOnMount=false}){
  const id=useId(),input=useRef(null),stamp=useRef(0);
  const [code,setCode]=useState(''),[notice,setNotice]=useState('');
  useLayoutEffect(()=>{if(disabled)stamp.current++;return()=>{stamp.current++}},[disabled]);
+ useLayoutEffect(()=>{if(focusOnMount)input.current?.focus()},[focusOnMount]);
  function edit(value){stamp.current++;setCode(value);setNotice('');}
  function accept(value){
   const invitation=linkInvitation(value);
@@ -91,7 +106,7 @@ function Join({onJoin,disabled}){
  const invitation=linkInvitation(code);
  return <div className="a-link-join" data-private="true">
   <label htmlFor={id}>Amplifier invitation</label>
-  <textarea ref={input} id={id} rows={2} autoComplete="off" autoCapitalize="off" spellCheck={false} maxLength={LINK_INVITATION_MAX}
+  <textarea ref={input} id={id} aria-describedby={describedBy} rows={2} autoComplete="off" autoCapitalize="off" spellCheck={false} maxLength={LINK_INVITATION_MAX}
    disabled={disabled} value={code} onChange={event=>edit(event.target.value)}
    onBlur={()=>{stamp.current++}}
    onPaste={event=>{event.preventDefault();accept(event.clipboardData.getData('text/plain'));}}/>
@@ -104,19 +119,93 @@ function Join({onJoin,disabled}){
  </div>;
 }
 
-export function LinkedInstancesSettings({active=true}){
+function LinkSetupOptions({setup,disabled,onSave}){
+ const [lan,setLan]=useState(setup.discovery.lan),[tailscale,setTailscale]=useState(setup.discovery.tailscale);
+ const dirty=lan!==setup.discovery.lan||tailscale!==setup.discovery.tailscale;
+ const enabled=setup.enabled;
+ const supportsPeer=hasPeerListener(setup)&&isSetupRevision(setup.revision);
+ const canAllowPeer=supportsPeer&&!setup.peerListener&&setup.listener!=='configured';
+ const canRetryPeer=supportsPeer&&setup.peerListener&&enabled&&setup.status==='unavailable'&&setup.listener==='none';
+ return <>
+  {(canAllowPeer||supportsPeer&&setup.peerListener)&&<div className="a-link-peer">
+   <p>Allow other Amplifiers to connect for invitations and status checks only. This does not share this browser, chats, or files, and does not make this Amplifier discoverable.</p>
+   {setup.peerListener&&<p className="a-caption">Turning off linking closes this connection but keeps your permission and saved links. Withdraw permission to prevent this separate connection from opening again.</p>}
+   <div className="a-link-actions">
+    {canAllowPeer&&<button type="button" className="a-primary" disabled={disabled} onClick={()=>onSave({enabled:true,lan,tailscale,peerListener:true})}>Allow linking from other devices</button>}
+    {canRetryPeer&&<button type="button" className="a-soft" disabled={disabled} onClick={()=>onSave({enabled:true,lan:setup.discovery.lan,tailscale:setup.discovery.tailscale})}>Try connection again</button>}
+    {supportsPeer&&setup.peerListener&&<button type="button" className="a-soft" disabled={disabled}
+     onClick={()=>onSave({enabled,lan:setup.discovery.lan,tailscale:setup.discovery.tailscale,peerListener:false})}>Withdraw device connection permission</button>}
+   </div>
+  </div>}
+  <details>
+   <summary>Discovery options</summary>
+   <p>These options allow discovery but don’t make this Amplifier visible or look for other devices by themselves.</p>
+   <label><input type="checkbox" checked={lan} disabled={disabled} onChange={event=>setLan(event.target.checked)}/> Allow nearby discovery</label>
+   <label><input type="checkbox" checked={tailscale} disabled={disabled} onChange={event=>setTailscale(event.target.checked)}/> Allow Tailscale discovery</label>
+  </details>
+  <div className="a-link-actions">
+   {!enabled&&!canAllowPeer&&<button type="button" className="a-primary" disabled={disabled} onClick={()=>onSave({enabled:true,lan,tailscale})}>Enable linking</button>}
+   {enabled&&<>
+    <button type="button" className="a-soft" disabled={disabled||!dirty} onClick={()=>onSave({enabled:true,lan,tailscale})}>Save discovery options</button>
+    <button type="button" className="a-soft" disabled={disabled} onClick={()=>onSave({enabled:false,lan:setup.discovery.lan,tailscale:setup.discovery.tailscale})}>Turn off linking</button>
+   </>}
+  </div>
+ </>;
+}
+
+export function LinkedInstancesSettings({active=true,joinRecovery}){
  const [list,setList]=useState(null),[notSupported,setNotSupported]=useState(false),[busy,setBusy]=useState(''),
   [mode,setMode]=useState(null),[result,setResult]=useState(null),[origin,setOrigin]=useState(''),[offer,setOffer]=useState(null),
   [copyNote,setCopyNote]=useState(''),[checks,setChecks]=useState({}),[confirm,setConfirm]=useState(null);
- const operation=useRef(null),visible=useRef(active);
- const resume=useRef(null),[pending,setPending]=useState(null);
- const selectedOrigin=list?.origins.includes(origin)?origin:list?.origins.length===1?list.origins[0]:'';
+ const operation=useRef(null),visible=useRef(active),joinButton=useRef(null),setupHeading=useRef(null);
+ const targetDescription=useId();
+ const resume=useRef(null),[localPending,setPending]=useState(null),inflightJoin=useRef(null);
+ const pending=joinRecovery?.read()?'join':localPending;
+ const [setup,setSetup]=useState(null),[setupState,setSetupState]=useState(null),[target,setTarget]=useState(null),
+  [discoverableUntil,setDiscoverableUntil]=useState(null),[discoveryEpoch,setDiscoveryEpoch]=useState(0);
+ const supportedSetup=setupState==='ready',legacy=setupState==='legacy';
+ const peerCapable=hasPeerListener(setup);
+ const revisionUnavailable=setup?.revision===null||peerCapable&&!isSetupRevision(setup.revision);
+ const ready=supportedSetup&&setup.status==='active';
+ const origins=list?.origins||[];
+ const lan=ready&&origins.length>0&&list.discovery?.lan===true,tailscale=ready&&origins.length>0&&list.discovery?.tailscale===true;
+ // Peer endpoints come only from positive, matching host observations. Do not
+ // offer a previously seen endpoint after an uncertain activation or shutdown.
+ const currentOrigins=ready?setup.origins.filter(value=>origins.includes(value)):[];
+ const offerOrigins=peerCapable?currentOrigins.slice(0,1):ready?currentOrigins.slice(0,1):origins;
+ const selectedOrigin=ready||offerOrigins.length===1?offerOrigins[0]||'':offerOrigins.includes(origin)?origin:'';
+ const allowJoin=peerCapable?currentOrigins.length>0:legacy||origins.length>0;
+ const allowCheck=!peerCapable||currentOrigins.length>0;
+ const targetAllowed=target?.route==='lan'?lan:target?.route==='tailscale'?tailscale:true;
+ const disabled=!!busy||!!pending;
+ const setupStatus=supportedSetup?({
+  active:'Linking is ready on this Amplifier.',
+  pending:peerCapable&&setup.peerListener&&setup.listener!=='configured'
+   ?'The connection for linking is not confirmed yet. Use Refresh setup to check again.'
+   :'Linking settings are saved. Restart this Amplifier to apply them. No restart was started here.',
+  off:'Linking is off on this Amplifier.',
+  unavailable:'Linking is not ready on this Amplifier.',
+ })[setup.status]:setupState==='conflict'?'Linking settings changed. Refresh setup to review the current settings before saving again.':
+  'Could not confirm linking setup. Use Refresh setup to check again.';
 
  useLayoutEffect(()=>{visible.current=active;return()=>{visible.current=false}},[active]);
- useEffect(()=>()=>{operation.current?.abort();operation.current=null;resume.current=null},[]);
- useEffect(()=>{if(active&&!list)load()},[active]);
+ useLayoutEffect(()=>()=>{inflightJoin.current?.interrupt();operation.current?.abort();operation.current=null;resume.current=null},[]);
+ useEffect(()=>{
+  if(active&&!resume.current&&(!joinRecovery?.read()||!list))load();
+  if(!active&&target&&!resume.current){setTarget(null);setMode(null);}
+ },[active]);
+ useEffect(()=>{
+  if(typeof discoverableUntil!=='number')return;
+  let timer;
+  const schedule=()=>{timer=setTimeout(()=>{
+   if(hostNow()>=discoverableUntil)setDiscoverableUntil(null);
+   else schedule();
+  },Math.min(1000,Math.max(0,(discoverableUntil-hostNow())*1000)));};
+  schedule();
+  return()=>clearTimeout(timer);
+ },[discoverableUntil]);
  async function run(label,work){
-  if(operation.current)return false;
+  if(operation.current||joinRecovery&&!joinRecovery.available())return false;
   const controller=new AbortController();operation.current=controller;setBusy(label);setResult(null);
   try{const completed=await work(controller.signal);return completed!==false&&!controller.signal.aborted;}
   catch(error){
@@ -130,38 +219,98 @@ export function LinkedInstancesSettings({active=true}){
   const received=await linkedInstancesRequest('list',{},signal);
   if(!signal.aborted){setList(received);setNotSupported(false);}
  }
- function load(){return run('Loading linked instances…',async signal=>{
-  try{await refresh(signal);}
-  catch(error){
+ function acceptSetup(received){
+  setSetup(received);setSetupState('ready');
+  setDiscoverableUntil(received.lanExpiresAt>hostNow()?received.lanExpiresAt:null);
+ }
+ async function readSetup(signal){
+  try{
+   const received=await linkedInstancesRequest('setup',{},signal);
+   if(!signal.aborted)acceptSetup(received);
+  }catch(error){
    if(signal.aborted)return;
-    if(error.status===404||error.status===405||error.code==='link_unsupported'){setNotSupported(true);setList(null);return;}
-   throw Object.assign(error,{displayText:error.status===401||error.status===403?'Sign in as the owner of this Amplifier to manage linking.':'Could not load linked instances. Try Refresh links.'});
+   setSetupState(previous=>missingEndpoint(error)&&!setup?'legacy':['uncertain','conflict'].includes(previous)?previous:'error');
   }
+ }
+ function load(){return run('Loading linked instances…',async signal=>{
+  const listRead=refresh(signal).catch(error=>{
+   if(signal.aborted)return;
+   if(missingEndpoint(error)||error.code==='link_unsupported'){setNotSupported(true);setList(null);return;}
+   if(error.status===401||error.status===403){
+    setList(null);setNotSupported(false);setResult({error:true,text:'Sign in as the owner of this Amplifier to manage linking.'});
+   }else {setList(null);setResult({error:true,text:'Could not load linked instances. Try Refresh links.'});}
+  });
+  await Promise.all([readSetup(signal),listRead]);
  });}
+ function saveSetup(body){
+  if(!supportedSetup||revisionUnavailable)return;
+  if(visible.current)setupHeading.current?.focus();
+  const changingPeer=Object.hasOwn(body,'peerListener');
+  const canStartPeer=body.enabled&&(body.peerListener??(peerCapable&&setup.peerListener))&&setup.listener!=='configured';
+  const canStopPeer=peerCapable&&setup.listener==='peer-only'&&(!body.enabled||body.peerListener===false);
+  const label=canStartPeer&&setup.listener!=='peer-only'?'Opening the connection for linking…':canStopPeer?'Closing the connection for linking…':'Saving linking settings…';
+  return run(label,async signal=>{
+   try{
+    const requestBody=isSetupRevision(setup.revision)?{...body,expectedRevision:setup.revision}:body;
+    const received=await linkedInstancesRequest('setup-save',requestBody,signal);
+    if(signal.aborted)return;
+    if(received.enabled!==body.enabled||received.discovery.lan!==body.lan||received.discovery.tailscale!==body.tailscale)throw Error();
+    if(peerCapable&&(!hasPeerListener(received)||!changingPeer&&received.peerListener!==setup.peerListener))throw Error();
+    if(peerCapable&&(canStartPeer||canStopPeer)&&received.status==='pending')throw Error();
+    acceptSetup(received);setMode(null);setTarget(null);setOffer(null);setConfirm(null);setDiscoveryEpoch(value=>value+1);
+   }catch(error){
+    if(signal.aborted)return;
+    if(isConflict(error,'link_setup_conflict')){
+     setSetupState('conflict');setMode(null);setTarget(null);setOffer(null);
+     return false;
+    }
+    setSetupState('uncertain');
+    if(peerCapable){setMode(null);setTarget(null);setOffer(null);}
+    throw Object.assign(Error(),{displayText:'Could not confirm that linking settings were saved. Refresh setup before making another change.'});
+   }
+   try{await refresh(signal);}
+   catch(error){
+    if(signal.aborted)return;
+    setList(null);
+    if(!missingEndpoint(error)&&error.code!=='link_unsupported')setResult({error:true,text:'Settings were saved, but the links list could not be refreshed.'});
+   }
+  });
+ }
  async function createOrChange(command,signal,retrying){
   const {route,body}=command;
+  const recovery=route==='join'?joinRecovery:null;
+  if(recovery){
+   recovery.start(command);
+   inflightJoin.current={interrupt:()=>recovery.unknown(command)};
+  }
   let response;
   try{response=await linkedInstancesRequest(route,body,signal);}
   catch(error){
    if(signal.aborted)throw error;
-   if(isUnconfirmed(route,error,retrying)){
-    resume.current=command;setPending(route);
+   const selectedRefusal=route==='join'&&body.expectedInstanceId&&!retrying&&!error.unconfirmed&&
+    error.accepted===false&&error.status===502&&error.code==='link_verification_failed';
+   if(!selectedRefusal&&isUnconfirmed(route,error,retrying)){
+    if(recovery)recovery.unknown(command);
+    else {resume.current=command;setPending(route);}
     if(route==='join')return false;
     error.displayText='The result is not confirmed. Retry the same request before starting another change.';
    }else{
+    recovery?.settle(command);
     resume.current=null;setPending(null);
     // The duplicate refusal does not identify a verified peer row.
     if(route==='join'&&isConflict(error,'link_already_linked')){
-     setMode(null);
+     setMode(null);setTarget(null);
      error.displayText=repeatedLinkNotice;
     }else{
-     error.displayText=(route==='join'&&joinErrors[error.code])||linkingErrors[error.code]||
+     error.displayText=selectedRefusal?'This invitation could not be verified for the selected Amplifier. Use an invitation from that instance.':
+      (route==='join'&&joinErrors[error.code])||linkingErrors[error.code]||
       (route==='revoke'?'The link was not revoked. Refresh links and try again.':'Could not create an invitation for this address.');
     }
    }
    throw error;
-  }
+  }finally{inflightJoin.current=null;}
   if(signal.aborted)return;
+  recovery?.settle(command);
   resume.current=null;setPending(null);
   if(route==='offer'){
    setOffer(response);setCopyNote('');
@@ -171,104 +320,170 @@ export function LinkedInstancesSettings({active=true}){
    }
    return;
   }
-  setMode(null);setOffer(null);setConfirm(null);
+  setMode(null);setTarget(null);setOffer(null);setConfirm(null);setDiscoveryEpoch(value=>value+1);
   setChecks(previous=>{const next={...previous};delete next[response.instanceId];return next});
   const text=route==='join'?'Amplifier verified the invitation and linked the instance.':'Amplifier revoked the link.';
   try{await refresh(signal);if(!signal.aborted)setResult({text});}
   catch{if(!signal.aborted)setResult({error:true,text:text+' Could not refresh the list. Use Refresh links.'});}
  }
  function change(route,args){
-  if(resume.current)return Promise.resolve(false);
+  if(resume.current||joinRecovery?.read())return Promise.resolve(false);
   return run(changeLabels[route],signal=>createOrChange({route,body:{commandId:crypto.randomUUID().replaceAll('-',''),...args}},signal,false));
  }
  function retry(){
-  const command=resume.current;
+  const command=joinRecovery?.read()||resume.current;
   if(command)return run('Retrying the same request…',signal=>createOrChange(command,signal,true));
  }
  function check(link){
   return run('Checking availability…',async signal=>{
    try{
     const status=await linkedInstancesRequest('status',{instanceId:link.instanceId},signal);
-    if(!signal.aborted)setChecks(previous=>({...previous,[link.instanceId]:status.availability==='online'?'Online at last check':'Offline at last check'}));
+    if(!signal.aborted)setChecks(previous=>({...previous,[link.instanceId]:{
+     text:status.availability==='online'?'Online at last check':'Offline at last check',
+     route:status.availability==='online'?verifiedRouteName(status.route):null,grantId:link.grantId,
+    }}));
    }catch(error){
     if(!signal.aborted){
      if(error.code==='link_revoked'){
       // A remote denial is a status observation, not a local revoke
       // receipt. The server may still list the saved outgoing grant.
-      setChecks(previous=>({...previous,[link.instanceId]:'Access was revoked or no longer authorized at last check'}));
+      setChecks(previous=>({...previous,[link.instanceId]:{text:'Access was revoked or no longer authorized at last check'}}));
       try{await refresh(signal);}catch{}
       throw Object.assign(Error(),{displayText:'Amplifier reported that access was revoked.'});
      }
     if(isConflict(error,'link_ambiguous')){
      // Status identifies the instance, not a particular grant or the host
      // that saw duplicates. Leave every grant unchanged.
-     setChecks(previous=>({...previous,[link.instanceId]:ambiguousAvailability}));
+     setChecks(previous=>({...previous,[link.instanceId]:{text:ambiguousAvailability}}));
      throw Object.assign(Error(),{displayText:`Could not check ${linkName(link)}. More than one link is active in this direction. Refresh links before reviewing which entries are extra.`});
     }
-     setChecks(previous=>({...previous,[link.instanceId]:error.code==='link_unavailable'?'Unreachable at last check':'Could not check availability'}));
+     setChecks(previous=>({...previous,[link.instanceId]:{text:error.code==='link_unavailable'?'Unreachable at last check':'Could not check availability'}}));
      throw Object.assign(Error(),{displayText:linkingErrors[error.code]||'Availability was not confirmed. Check the connection and try again.'});
     }
    }
   });
  }
- const toggle=next=>{setMode(mode===next?null:next);setOffer(null);setResult(null);setConfirm(null);};
+ function remember(candidate,link){
+  return run('Verifying this connection…',async signal=>{
+   setChecks(previous=>{const next={...previous};delete next[link.instanceId];return next});
+   try{
+    const saved=await linkedInstancesRequest('route-remember',{candidateId:candidate.candidateId,grantId:link.grantId},signal);
+    if(signal.aborted)return;
+    if(saved.instanceId!==link.instanceId||saved.grantId!==link.grantId||saved.route!==candidate.route)throw Error();
+    setResult({text:'Connection saved. Check availability in the linked entry to see which connection Amplifier uses.'});
+   }catch(error){
+    if(!signal.aborted)setResult({error:true,text:error.code==='link_not_found'?'This discovery result expired. Find the Amplifier again.':
+     'Could not confirm this connection was saved. You can still check the linked Amplifier.'});
+   }
+  });
+ }
+ function share(enabled){
+  return run(enabled?'Making this Amplifier discoverable…':'Stopping discoverability…',async signal=>{
+   try{
+    const receipt=await linkedInstancesRequest('lan-discoverable',{enabled},signal);
+    if(signal.aborted)return;
+    if(receipt.status!=='ok'||enabled&&receipt.expiresAt<=hostNow())throw Error();
+    setDiscoverableUntil(receipt.expiresAt);
+    setResult({text:enabled?'Discoverability started. An invitation is still required.':'Discoverability stopped.'});
+   }catch{
+    if(signal.aborted)return;
+    setDiscoverableUntil(undefined);
+    setResult({error:true,text:'Could not confirm the change to discoverability. Refresh setup before trying again.'});
+   }
+  });
+ }
+ const toggle=next=>{setMode(mode===next&&!target?null:next);setTarget(null);setOffer(null);setResult(null);setConfirm(null);};
+ const invite=candidate=>{setTarget(candidate);setMode('join');setOffer(null);setResult(null);setConfirm(null);};
  // Retain exact unconfirmed command identity when switching Settings sections,
  // but unmount invitation fields and camera whenever this page is not visible.
  if(!active)return null;
  return <section className="a-settings-section a-linked-instances" aria-label="Manage linked instances">
-  <p>Link two Amplifiers to let one check whether the other is online. Links do not give access to chats, files, or controls.</p>
+  <p>Link two Amplifiers to let one check whether the other is online. Each invitation grants access in one direction only. Links do not give access to chats, files, or controls.</p>
   {busy&&<p role="status">{busy}</p>}
   <Notice result={result}/>
   {pending==='join'&&<Notice result={{error:true,text:pendingJoinNotice}}/>}
   {pending&&<button type="button" className="a-soft" disabled={!!busy} onClick={retry}>Retry same request</button>}
-  {notSupported&&<p role="status">Linking is not available on this Amplifier.</p>}
+  {!legacy&&<section className="a-link-setup" aria-label="Linking setup">
+   <h4 tabIndex={-1} ref={setupHeading}>Linking setup</h4>
+   <p role="status">{setupState&&setupStatus}</p>
+   {supportedSetup&&<>
+    {setup.blockers.length>0&&<ul>{[...new Set(setup.blockers)].map(code=><li key={code}>{Object.hasOwn(setupBlockers,code)?setupBlockers[code]:'This Amplifier reported a setup requirement it cannot explain here.'}</li>)}</ul>}
+    {peerCapable&&setup.listener==='peer-only'&&setup.status==='active'&&<p>Other Amplifiers can connect for invitations and status checks only.</p>}
+    {peerCapable&&list&&<p className="a-caption" data-private="true">This Amplifier’s instance ID: <code>{list.instanceId.slice(0,8)}</code></p>}
+    {revisionUnavailable&&<p>Amplifier couldn’t read the saved linking settings. Refresh setup before making changes.</p>}
+    <LinkSetupOptions key={JSON.stringify([setup.enabled,setup.discovery,peerCapable?setup.peerListener:null,setup.revision])}
+     setup={setup} disabled={disabled||revisionUnavailable} onSave={saveSetup}/>
+   </>}
+   <button type="button" className="a-soft" aria-disabled={disabled} onClick={()=>{if(!disabled)load()}}>Refresh setup</button>
+  </section>}
+  {legacy&&list&&<p className="a-caption">This version supports invitations but not in-app linking setup.</p>}
+  {legacy&&notSupported&&<p role="status">Linking is not available on this Amplifier.</p>}
+  {!lan&&typeof discoverableUntil==='number'&&<div className="a-link-actions">
+   <p role="status">This Amplifier was last reported as temporarily visible nearby.</p>
+   <button type="button" className="a-soft" disabled={disabled} onClick={()=>share(false)}>Stop being discoverable</button>
+  </div>}
+  {(lan||tailscale)&&<LinkedInstanceDiscovery key={JSON.stringify([lan,tailscale,discoveryEpoch])} lan={lan} tailscale={tailscale} links={list.links}
+   disabled={disabled} onRemember={remember} onInvite={invite}
+   sharing={discoverableUntil===undefined?undefined:discoverableUntil!==null} onSharing={share}/>}
   {list&&<>
    {pending==='join'&&list.links.length>0&&<p className="a-caption">Links from the last refresh</p>}
    {list.links.length===0?(pending!=='join'&&<p>No links in the last loaded list.</p>):<ul className="a-link-list">
     {list.links.map(link=>{
      const matching=list.links.filter(other=>!other.revoked&&other.instanceId===link.instanceId&&other.direction===link.direction);
      const duplicate=!link.revoked&&matching.length>1;
-     const availability=checks[link.instanceId];
+     const observation=checks[link.instanceId],availability=observation?.text;
      return <li key={link.grantId}>
      <div><strong>{linkName(link)}</strong>
       <p>{link.revoked?'Revoked':link.direction==='incoming'?'Can check this Amplifier’s status':'This Amplifier can check its status'}</p>
       {duplicate&&<p className="a-caption">Link ID: <code>{link.grantId}</code></p>}
       {!link.revoked&&link.direction==='outgoing'&&<>
        <p>{availability||'Availability not checked'}</p>
+       {!duplicate&&observation?.grantId===link.grantId&&observation.route&&<details>
+        <summary>Connection details</summary><p>Used at last check: {observation.route}</p>
+       </details>}
        {availability===ambiguousAvailability&&matching[0]===link&&<p className="a-caption">{duplicate
         ?'Compare these entries by Link ID. Revoke only the links you’ve identified as extra.'
         :'Only one matching link is listed here. Ask the other owner to review the entries for this Amplifier labeled “Can check this Amplifier’s status”.'}</p>}
       </>}
      </div>
      {!link.revoked&&<div className="a-link-actions">
-      {link.direction==='outgoing'&&<button type="button" className="a-soft" disabled={!!busy||pending} onClick={()=>check(link)}>Check availability</button>}
-      <button type="button" className="a-soft a-danger" disabled={!!busy||pending} onClick={()=>setConfirm(link.grantId)}>Revoke link</button>
+      {link.direction==='outgoing'&&<button type="button" className="a-soft" disabled={disabled||!allowCheck} onClick={()=>check(link)}>Check availability</button>}
+      <button type="button" className="a-soft a-danger" disabled={disabled} onClick={()=>setConfirm(link.grantId)}>Revoke link</button>
      </div>}
      {!link.revoked&&confirm===link.grantId&&<div>
       <p>Revoke status access for {linkName(link)}{duplicate&&<> (link <code>{link.grantId}</code>)</>}?</p>
       <div className="a-link-actions">
-       <button type="button" className="a-soft a-danger" disabled={!!busy||pending} onClick={()=>change('revoke',{grantId:link.grantId})}>Confirm revoke</button>
-       <button type="button" className="a-soft" disabled={!!busy||pending} onClick={()=>setConfirm(null)}>Cancel</button>
+       <button type="button" className="a-soft a-danger" disabled={disabled} onClick={()=>change('revoke',{grantId:link.grantId})}>Confirm revoke</button>
+       <button type="button" className="a-soft" disabled={disabled} onClick={()=>setConfirm(null)}>Cancel</button>
       </div>
      </div>}
     </li>;
     })}
    </ul>}
    <div className="a-link-actions">
-    <button type="button" className="a-primary" aria-expanded={mode==='offer'} disabled={!!busy||pending||!list.origins.length} onClick={()=>toggle('offer')}>Create invitation</button>
-    <button type="button" className="a-soft" aria-expanded={mode==='join'} disabled={!!busy||pending} onClick={()=>toggle('join')}>Join with invitation</button>
+    <button type="button" className="a-primary" aria-expanded={mode==='offer'} disabled={disabled||!offerOrigins.length} onClick={()=>toggle('offer')}>Create invitation</button>
+    <button type="button" ref={joinButton} className="a-soft" aria-expanded={mode==='join'&&!target} disabled={disabled||!allowJoin} onClick={()=>toggle('join')}>Join with invitation</button>
     <button type="button" className="a-soft" disabled={!!busy||pending} onClick={load}>Refresh links</button>
    </div>
-   {!list.origins.length&&<p className="a-caption">Creating an invitation requires a secure address configured for this Amplifier. You can still join with an invitation.</p>}
+   {!origins.length&&<p className="a-caption">{legacy
+    ?'Creating an invitation requires a secure address configured for this Amplifier. You can still join with an invitation.'
+    :peerCapable?'Turn on linking to create or join with an invitation. You can still revoke saved links.'
+    :'This Amplifier needs a secure address before you can create or join with an invitation.'}</p>}
    {mode==='offer'&&<div className="a-link-offer">
-    {!offer&&<><label>Share this Amplifier’s address <select value={selectedOrigin} disabled={!!busy||pending} onChange={event=>setOrigin(event.target.value)}>
+    {!offer&&<>{offerOrigins.length>1&&<label>Share this Amplifier’s address <select value={selectedOrigin} disabled={disabled} onChange={event=>setOrigin(event.target.value)}>
      <option value="" disabled>Select an address</option>
-     {list.origins.map(value=><option key={value} value={value}>{value}</option>)}
-    </select></label>
-    <button type="button" className="a-primary" disabled={!selectedOrigin||!!busy||pending} onClick={()=>change('offer',{origin:selectedOrigin})}>Create</button></>}
-    {offer&&<><Offer offer={offer} copyNote={copyNote}/><div className="a-link-actions"><button type="button" className="a-soft" onClick={()=>setOffer(null)} disabled={!!busy||pending}>Done</button></div></>}
+     {offerOrigins.map(value=><option key={value} value={value}>{value}</option>)}
+    </select></label>}
+    <button type="button" className="a-primary" disabled={!selectedOrigin||disabled} onClick={()=>change('offer',{origin:selectedOrigin})}>Create</button></>}
+    {offer&&<><Offer offer={offer} copyNote={copyNote}/><div className="a-link-actions"><button type="button" className="a-soft" onClick={()=>setOffer(null)} disabled={disabled}>Done</button></div></>}
    </div>}
-   {mode==='join'&&<Join disabled={!!busy||pending} onJoin={code=>change('join',{code})}/>}
+   {mode==='join'&&<div className="a-link-join">
+    {target&&<p id={targetDescription} data-private="true">Use an invitation from <strong>{target.label}</strong>.</p>}
+    {target&&!targetAllowed&&!pending&&<p role="status">This discovery choice is no longer available. Find the Amplifier again or join with an invitation.</p>}
+    <Join key={target?.candidateId||'manual'} describedBy={target?targetDescription:undefined} focusOnMount={!!target&&!pending} disabled={disabled||!allowJoin||!targetAllowed}
+     onJoin={code=>change('join',target?{code,expectedInstanceId:target.instanceId}:{code})}/>
+    {target&&<button type="button" className="a-soft" disabled={disabled} onClick={()=>{toggle(null);joinButton.current?.focus()}}>Cancel joining</button>}
+   </div>}
   </>}
   {!list&&<button type="button" className="a-soft" disabled={!!busy} onClick={load}>Refresh links</button>}
  </section>;

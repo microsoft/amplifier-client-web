@@ -98,6 +98,7 @@ import {createViewReporter} from './view-reporter';
 import {createConversationNavigation,isNavigationAction,usesNavigationQueue} from './conversation-navigation';
 import {createDestinationHistory,destinationCommand,destinationKey} from './destination-history.js';
 import {onAuthenticationChange} from './api';
+import {createLinkJoinRecovery} from './link-join-recovery';
 import {messageTextForCopy} from './message-copy';
 import {deliverConversationExport} from './conversation-export.js';
 import {VoiceClient} from './voice';
@@ -156,7 +157,9 @@ function App(){
  const [destinationTrail,setDestinationTrail]=useState(null),destinationHistory=useRef(null);
  if(!destinationHistory.current)destinationHistory.current=createDestinationHistory({changed:setDestinationTrail});
  const deliveryAuthentication=useRef(0);
- useEffect(()=>onAuthenticationChange(scope=>{suggestionFence.current?.reset();clearSuggestionModels();actionCatalog.clear();deliveryAuthentication.current++;destinationHistory.current.invalidate(scope);clearAppearanceCatalogs();setBootAttempt(value=>value+1)}),[]);
+ const linkJoinRecovery=useRef(null);
+ if(!linkJoinRecovery.current)linkJoinRecovery.current=createLinkJoinRecovery();
+ useEffect(()=>onAuthenticationChange(scope=>{linkJoinRecovery.current.invalidate();suggestionFence.current?.reset();clearSuggestionModels();actionCatalog.clear();deliveryAuthentication.current++;destinationHistory.current.invalidate(scope);clearAppearanceCatalogs();setBootAttempt(value=>value+1)}),[]);
  const [state,setState]=useState(null),[hostCatalog,setHostCatalog]=useState(null),[error,setError]=useState(''),[connected,setConnected]=useState(false),[busy,setBusy]=useState(false),[bootAttempt,setBootAttempt]=useState(0),[draft,setDraft]=useState(''),[workerDraft,setWorkerDraft]=useState(''),[agentAction,setAgentAction]=useState('view.update'),[agentArgs,setAgentArgs]=useState('{"patch":{"mode":"chat"}}'),[voice,setVoice]=useState({status:'idle'}),[uploading,setUploading]=useState(false);
  const [appearancePreferenceStatus,setAppearancePreferenceStatus]=useState({status:'idle'});
  // One client-document owner survives modal/Canvas Settings mount changes.
@@ -227,6 +230,7 @@ function App(){
  const acceptState=useCallback((next,historyOptions={})=>{
   if(!next||typeof next!=='object')return;
   if(serverState.current && next.client?.hostInstanceId===serverState.current.client?.hostInstanceId && next.revision<serverState.current.revision)return;
+  linkJoinRecovery.current.observe(next.client);
   const unchangedPresentation=!historyOptions.baseline&&next.view?.panel!=='agent'&&onlyStateRevisionChanged(serverState.current,next);
   if(!latest.current){for(const effect of next.deviceCommands||[])if(effect.id)seenEffects.current.add(effect.id);for(const m of notificationEvents(next))lastNotify.current.add(m.id)}
   else effectHandler.current(next.deviceCommands);
@@ -311,6 +315,11 @@ function App(){
   const workspaceGuard=workspaceSettingsNavigation.current;
   if(!meta.workspaceSettingsConfirmed&&workspaceGuard?.hasUnsaved()&&(meta.historyVisit||meta.recentPlace||workspaceGuard.leaving(action,args)))
    return workspaceGuard.confirmClose().then(accepted=>accepted?dispatch(action,args,{...meta,workspaceSettingsConfirmed:true}):{accepted:false,error:'Workspace settings changes were kept.'});
+  if(action==='canvas.tabClose'){
+   const view=latest.current;
+   const isSettings=row=>row?.kind==='settings'&&row.id===args.id;
+   if(isSettings(view?.canvas)||view?.canvasArtifacts?.some(isSettings))linkJoinRecovery.current.clear();
+  }
   if(!meta.chatLink&&(['session.select','session.draft','workspace.select','session.create'].includes(action)||action==='shell.command'&&['session.select','session.draft','workspace.select','session.create'].includes(args.action)))chatLinkReceiver.current?.dismiss();
   if(action==='call.resumeAudio')voiceClient.current?.callAudio.resumePlayback(); // Preserve a click's user activation.
   if(action==='call.start')args={attemptId:crypto.randomUUID(),...args};
@@ -1113,7 +1122,7 @@ function App(){
  const settingsAct=(name,args={},meta={})=>act(name,name==='view.update'&&canvasSettingsVisible&&args.patch?.panel==='settings'?{...args,patch:{...args.patch,panel:null,settingsCanvas:true}}:args,meta);
  const suggestionOwner=suggestionScope(state);
  const suggestionsSupported=useMemo(()=>suggestionOwner&&suggestionOwner===hostCatalog?.scope?supportsTranscriptSuggestions(hostCatalog.rows):null,[hostCatalog,suggestionOwner]);
- const settingsSurface=<SettingsExperience suggestionsSupported={suggestionsSupported} state={settingsState} session={settingsSession} act={settingsAct} dispatch={dispatch} open={open} close={()=>canvasSettingsVisible?act('canvas.tabClose',{id:state.canvas.id}):dismissPanel()} navigationRef={settingsNavigation} instanceAccent={instanceAccent.rendered} appearance={<AppearanceSettings state={state} appearance={appearance} act={dispatch} editor={appearanceEditor} previewOwner={appearancePreviewOwner} preferenceStatus={appearancePreferenceStatus} onPreferenceChange={updateAppearancePreference} onPreferenceSelect={selectAppearanceProfile}/>}/>;
+ const settingsSurface=<SettingsExperience linkJoinRecovery={linkJoinRecovery.current} suggestionsSupported={suggestionsSupported} state={settingsState} session={settingsSession} act={settingsAct} dispatch={dispatch} open={open} close={()=>canvasSettingsVisible?act('canvas.tabClose',{id:state.canvas.id}):dismissPanel()} navigationRef={settingsNavigation} instanceAccent={instanceAccent.rendered} appearance={<AppearanceSettings state={state} appearance={appearance} act={dispatch} editor={appearanceEditor} previewOwner={appearancePreviewOwner} preferenceStatus={appearancePreferenceStatus} onPreferenceChange={updateAppearancePreference} onPreferenceSelect={selectAppearanceProfile}/>}/>;
  const browsing=workSurface(state)!=='chat';
  // Navigation/work-surface departure is handled by the suggestion owner so it
  // may retain READY privately. Actual history loading and safety blockers clear it.

@@ -38,7 +38,7 @@ import {SettingsDraftProvider,useSettingsDrafts} from './settings-drafts';
 import {InstanceBrandingSettings} from './instance-branding.jsx';
 
 const icons={ai:Network,'external-agents':Plug,'linked-instances':Link2,privacy:Archive,workspaces:Layers,overview:SlidersHorizontal,appearance:Palette,voice:AudioLines,notifications:Bell,models:Network,bundles:Layers,'smart-tools':Plug,updates:Download,diagnostics:Activity,history:Archive,advanced:Settings};
-export function SettingsExperience({state,suggestionsSupported,session,act,dispatch,open,close=()=>act('view.update',{patch:{panel:null}}),navigationRef,appearance,instanceAccent}){
+export function SettingsExperience({state,suggestionsSupported,session,act,dispatch,open,close=()=>act('view.update',{patch:{panel:null}}),navigationRef,appearance,instanceAccent,linkJoinRecovery}){
  useEffect(()=>{const legacy=state.view?.settingsExpanded?.find(page=>['conversation','runtime','outputs','publishing','loaded-modules','share-bundle','recall'].includes(page));if(legacy)act('view.update',{patch:{panel:'settings',settingsExpanded:[legacy]}})},[]);
  const shell=useShellContext();
  const extensions=(shell?.data?.resolvedInstances||[]).filter(item=>item.slot==='settings.section');
@@ -61,7 +61,7 @@ export function SettingsExperience({state,suggestionsSupported,session,act,dispa
  const compact=useSettingsCompact(root),trail=settingsTrail(state.view,state,sections),route=trail.at(-1),index=compact&&route.key==='index',detail=compact&&trail.length>(settingsParent(page,sections)?3:2);
  useSettingsViewport(root,compact);
  const drafts=useSettingsDrafts({ownerRef:root,scope:JSON.stringify([state.client?.hostInstanceId,session?.id,!!state.view?.settingsCanvas])});
- const navigation=useSettingsHistory({compact,trail,view:state.view||{},act,close,body,navigationRef,confirmClose:drafts.confirmClose,hasUnsaved:drafts.hasUnsaved});
+ const navigation=useSettingsHistory({compact,trail,view:state.view||{},act,close:()=>{linkJoinRecovery?.clear();return close();},body,navigationRef,confirmClose:drafts.confirmClose,hasUnsaved:drafts.hasUnsaved});
  const navigate=(page,reset=false)=>{navigation.rememberScroll();return act('view.update',{patch:{...mergeSettingsNavigation(state.view||{},settingsBaseNavigation(page,sections)),...(reset?{settingsRootVisit:crypto.randomUUID()}:{})}});};
  useLayoutEffect(()=>{if(!state.view?.settingsRootVisit)return;if(body.current)body.current.scrollTop=0;for(const item of root.current?.querySelectorAll('.a-settings-page-content:not([hidden]) details[open]')||[])item.open=false;},[state.view?.settingsRootVisit]);
  useEffect(()=>{
@@ -101,7 +101,12 @@ export function SettingsExperience({state,suggestionsSupported,session,act,dispa
  else if(page==='suggestion-advanced')content=suggestionEditor(SuggestionAdvancedSettings);
  else if(page==='model-capacity')content=<ModelCapacitySettings act={dispatch||act} navigate={navigate}/>;
  else if(page==='external-agents')content=<ExternalAgentSettings act={dispatch||act} navigate={navigate}/>;
- else if(page==='linked-instances')content=<LinkedInstancesSettings active={active===page&&!index} key={JSON.stringify([state.client?.hostInstanceId,state.client?.historyScope])}/>;
+ else if(page==='linked-instances'){
+  const activeLinkPage=active===page&&!index,recovery=linkJoinRecovery?.access(state.client);
+  content=!recovery&&linkJoinRecovery?.requiresIdentity()
+   ?activeLinkPage&&<p role="status">Reconnecting to linking settings…</p>
+   :<LinkedInstancesSettings active={activeLinkPage} joinRecovery={recovery} key={JSON.stringify([state.client?.hostInstanceId,state.client?.historyScope,recovery?.epoch])}/>;
+ }
  else if(page==='advanced')content=<AdvancedSettings suggestionsSupported={suggestionsSupported} {...props} sections={sections} navigate={navigate}/>;
  else if(page==='appearance')content=<ShellSlot name="settings.appearance">{appearance}</ShellSlot>;
  else if(page==='instance-branding')content=<InstanceBrandingSettings {...props} act={dispatch||act} instanceAccent={instanceAccent}/>;

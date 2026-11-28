@@ -7,6 +7,7 @@ import {createPendingView} from '../src/pending-view.js';
 import {createConversationNavigation} from '../src/conversation-navigation.js';
 import {createDestinationHistory} from '../src/destination-history.js';
 import {notificationEvents} from '../src/notifications.js';
+import {createLinkJoinRecovery} from '../src/link-join-recovery.js';
 
 // Exercise the actual acceptance and command-fence boundary, without mounting
 // unrelated UI. The built-browser check separately measures DOM/render effects.
@@ -15,7 +16,7 @@ const boundary=source.slice(source.indexOf(' const acceptState=useCallback('),so
 function harness(){
  const painted=[],observed=[],notified=[],timers=new Map(),requests=[],effects=[],listeners=new Map();
  const context={useCallback:fn=>fn,useEffect:fn=>effects.push(fn),onlyStateRevisionChanged,document:{hidden:false,addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:name=>listeners.delete(name)},
-  serverState:{current:null},latest:{current:null},effectHandler:{current:()=>{}},
+  serverState:{current:null},latest:{current:null},effectHandler:{current:()=>{}},linkJoinRecovery:{current:createLinkJoinRecovery()},
   seenEffects:{current:new Set()},notificationEvents,lastNotify:{current:new Set()},
   notifySnapshot:{current:state=>notified.push(state)},
   messagesPane:{current:null},historyScrollAnchor:{current:null},stickToBottom:{current:true},
@@ -75,6 +76,22 @@ test('fresh/reconnected baselines render, reject late old revisions, and cannot 
  const restarted={...baseline(),revision:1,client:{hostInstanceId:'host-b',historyScope:'scope-a'}};h.acceptState(restarted,{baseline:true});await waiting;
  assert.equal(h.painted.at(-1),restarted);assert.equal(h.stateWaiters.current.size,0);
  const next=advance(restarted);assert.equal(next.revision,2);h.acceptState(next);assert.equal(h.latest.current,next);
+});
+
+test('accepted presentation frames fence the in-memory exact Join by host and owner',()=>{
+ const h=harness(),first=baseline(),recovery=h.linkJoinRecovery.current;
+ const command={route:'join',body:{commandId:'synthetic'}};
+ h.acceptState(first);
+ const lease=recovery.access(first.client);lease.start(command);lease.unknown(command);
+ const noScope={...first,revision:11,client:{hostInstanceId:'host-a'}};
+ h.acceptState(noScope,{baseline:true});assert.equal(recovery.access(noScope.client),null);
+ assert.equal(lease.read(),null);assert.equal(lease.available(),false);
+ h.acceptState(first);assert.equal(lease.read(),null,'A stale frame cannot restore the command');
+ h.acceptState({...first,revision:12},{baseline:true});assert.equal(lease.read(),command);
+ h.acceptState({...first,revision:13,client:{hostInstanceId:'host-a',historyScope:'scope-b'}});
+ h.acceptState({...first,revision:14});
+ assert.equal(recovery.access(first.client).read(),null,'Returning to an old owner never reads a destroyed command');
+ lease.unknown(command);assert.equal(recovery.access(first.client).read(),null);
 });
 
 test('removed, newly undefined, nested and host fields are material; diagnostic panel displays revision',()=>{
