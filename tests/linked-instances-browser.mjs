@@ -116,9 +116,14 @@ try{
       discovery:{lan:listenerSaved.lan,tailscale:listenerSaved.tailscale},
       blockers:listener==='none'&&listenerSaved.enabled?[listenerBlock||'https_origin_required']:[]});
     }
-    if(effective==='none')return error('link_unsupported',403);
     if(action==='list')return send({instanceId:configured?offerId:joinerId,origins:currentOrigins,
-     links:configured?[]:[{...incoming(),instanceId:offerId,revoked:listenerRevoked}],discovery:{lan:flags.lan,tailscale:flags.tailscale}});
+     links:configured?[]:[{...incoming(),instanceId:offerId,revoked:listenerRevoked},outgoing()],
+     discovery:{lan:effective!=='none'&&flags.lan,tailscale:effective!=='none'&&flags.tailscale}});
+    if(action==='revoke'&&!configured){
+     assert.equal(body.grantId,grantId);listenerRevoked=true;
+     return send({...incoming(),instanceId:offerId,revoked:true});
+    }
+    if(effective==='none')return error('link_unsupported',403);
     if(action==='offer'){
      assert.equal(body.origin,currentOrigins[0]);
      return send({code,expiresAt:Date.now()/1000+600,qrPngBase64:png});
@@ -127,10 +132,6 @@ try{
     if(action==='join'){
      assert.equal(body.expectedInstanceId,secondInstance);
      return send({...outgoing(),instanceId:secondInstance});
-    }
-    if(action==='revoke'&&!configured){
-     assert.equal(body.grantId,grantId);listenerRevoked=true;
-     return send({...incoming(),instanceId:offerId,revoked:true});
     }
     assert.fail('Unexpected listener fixture action: '+action);
    }
@@ -609,7 +610,7 @@ try{
  const localSetup=local.getByRole('region',{name:'Linking setup'});
  await expect(localSetup.getByText('Linking is off on this Amplifier.')).toBeVisible();
  assert.deepEqual(listenerCalls().map(call=>call.action).sort(),['list','setup']);
- await expect(localButton('Create invitation')).toHaveCount(0);
+ await expect(localButton('Create invitation')).toBeDisabled();
  await expect(localSetup.getByText(/does not share this browser, chats, or files/)).toBeVisible();
  let releaseListener;
  listenerDelay=new Promise(resolve=>{releaseListener=resolve});
@@ -623,7 +624,7 @@ try{
  await expect(localSetup.getByText('Linking is not ready on this Amplifier.')).toBeVisible();
  await expect(localSetup.getByText(/saved connection for linking is already in use/)).toBeVisible();
  await expect(local.getByText(/restart/i)).toHaveCount(0);
- await expect(localButton('Create invitation')).toHaveCount(0);
+ await expect(localButton('Create invitation')).toBeDisabled();
  // The next attempt succeeds on the host but the browser doesn't get its reply.
  listenerBlock=null;listenerReceiptLost=true;
  await localButton('Try connection again').click();
@@ -661,7 +662,7 @@ try{
  const staleRevision=revision();
  await localButton('Turn off linking').click();
  await expect(localSetup.getByText('Linking is off on this Amplifier.')).toBeVisible();
- await expect(localButton('Create invitation')).toHaveCount(0);
+ await expect(localButton('Create invitation')).toBeDisabled();
  assert.equal(listenerRevoked,false);
  assert.deepEqual(listenerSaves()[2].body,{enabled:false,lan:true,tailscale:false,expectedRevision:staleRevision});
  const beforeStaleSave=listenerCalls().length;
@@ -678,16 +679,23 @@ try{
  await expect(staleView.getByText('Linking is off on this Amplifier.')).toBeVisible();
  assert.deepEqual(listenerCalls().slice(beforeStaleSave+1).map(call=>call.action).sort(),['list','setup']);
  report.cases.push('A discovery save drafted in a stale tab cannot undo the other tab’s confirmed disable. Conflict requires explicit readback and never replays.');
- await localButton('Enable linking').click();
- await expect(local.getByText('Can check this Amplifier’s status')).toBeVisible();
- await localButton('Revoke link').click();await localButton('Confirm revoke').click();
+ await expect(localButton('Check availability')).toBeDisabled();
+ await expect(localButton('Join with invitation')).toBeDisabled();
+ const incomingRow=local.getByRole('listitem').filter({hasText:'Can check this Amplifier’s status'});
+ const beforeOfflineRevoke=listenerCalls().length;
+ await incomingRow.getByRole('button',{name:'Revoke link'}).click();
+ await incomingRow.getByRole('button',{name:'Confirm revoke'}).click();
  await expect(local.getByText('Revoked',{exact:true})).toBeVisible();
+ assert.deepEqual(listenerCalls().slice(beforeOfflineRevoke).map(call=>call.action),['revoke','list']);
+ assert.equal(listener,'none');
+ await localButton('Enable linking').click();
+ await expect(localSetup.getByText('Linking is ready on this Amplifier.')).toBeVisible();
  await localButton('Withdraw device connection permission').click();
  await expect(localButton('Allow linking from other devices')).toBeVisible();
- await expect(localButton('Create invitation')).toHaveCount(0);
+ await expect(localButton('Create invitation')).toBeDisabled();
  assert.deepEqual(listenerSaves().map(call=>call.body.peerListener),[true,undefined,undefined,undefined,undefined,false]);
  assert.equal(listenerCalls().filter(call=>call.action==='revoke').length,1);
- report.cases.push('Plain localhost opt-in, pending action with no polling, typed unavailable, lost receipt requires explicit readback, active peer-only invitation and QR, same-name installation selection, disable preserves grants, separate revoke and consent withdrawal.');
+ report.cases.push('Plain localhost opt-in, pending action with no polling, typed unavailable, lost receipt requires explicit readback, active peer-only invitation and QR, same-name installation selection, offline local revoke preserves the disabled listener, and separate consent withdrawal.');
  const configured=await touch.newPage();attachErrors(configured);
  await install(configured,aURL.origin,'configured-listener');await open(configured,new URL(aURL.href+'?mobile'));
  await expect(configured.getByText('Linking is ready on this Amplifier.')).toBeVisible();

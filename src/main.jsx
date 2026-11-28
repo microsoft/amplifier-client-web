@@ -315,7 +315,11 @@ function App(){
   const workspaceGuard=workspaceSettingsNavigation.current;
   if(!meta.workspaceSettingsConfirmed&&workspaceGuard?.hasUnsaved()&&(meta.historyVisit||meta.recentPlace||workspaceGuard.leaving(action,args)))
    return workspaceGuard.confirmClose().then(accepted=>accepted?dispatch(action,args,{...meta,workspaceSettingsConfirmed:true}):{accepted:false,error:'Workspace settings changes were kept.'});
-  if(action==='canvas.tabClose'&&latest.current?.canvas?.kind==='settings'&&args.id===latest.current.canvas.id)linkJoinRecovery.current.clear();
+  if(action==='canvas.tabClose'){
+   const view=latest.current;
+   const isSettings=row=>row?.kind==='settings'&&row.id===args.id;
+   if(isSettings(view?.canvas)||view?.canvasArtifacts?.some(isSettings))linkJoinRecovery.current.clear();
+  }
   if(!meta.chatLink&&(['session.select','session.draft','workspace.select','session.create'].includes(action)||action==='shell.command'&&['session.select','session.draft','workspace.select','session.create'].includes(args.action)))chatLinkReceiver.current?.dismiss();
   if(action==='call.resumeAudio')voiceClient.current?.callAudio.resumePlayback(); // Preserve a click's user activation.
   if(action==='call.start')args={attemptId:crypto.randomUUID(),...args};

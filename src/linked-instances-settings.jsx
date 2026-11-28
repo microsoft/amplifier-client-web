@@ -171,10 +171,11 @@ export function LinkedInstancesSettings({active=true,joinRecovery}){
  const lan=ready&&origins.length>0&&list.discovery?.lan===true,tailscale=ready&&origins.length>0&&list.discovery?.tailscale===true;
  // Peer endpoints come only from positive, matching host observations. Do not
  // offer a previously seen endpoint after an uncertain activation or shutdown.
- const currentOrigins=supportedSetup?setup.origins.filter(value=>origins.includes(value)):[];
+ const currentOrigins=ready?setup.origins.filter(value=>origins.includes(value)):[];
  const offerOrigins=peerCapable?currentOrigins.slice(0,1):ready?currentOrigins.slice(0,1):origins;
  const selectedOrigin=ready||offerOrigins.length===1?offerOrigins[0]||'':offerOrigins.includes(origin)?origin:'';
  const allowJoin=peerCapable?currentOrigins.length>0:legacy||origins.length>0;
+ const allowCheck=!peerCapable||currentOrigins.length>0;
  const targetAllowed=target?.route==='lan'?lan:target?.route==='tailscale'?tailscale:true;
  const disabled=!!busy||!!pending;
  const setupStatus=supportedSetup?({
@@ -446,7 +447,7 @@ export function LinkedInstancesSettings({active=true,joinRecovery}){
       </>}
      </div>
      {!link.revoked&&<div className="a-link-actions">
-      {link.direction==='outgoing'&&<button type="button" className="a-soft" disabled={disabled} onClick={()=>check(link)}>Check availability</button>}
+      {link.direction==='outgoing'&&<button type="button" className="a-soft" disabled={disabled||!allowCheck} onClick={()=>check(link)}>Check availability</button>}
       <button type="button" className="a-soft a-danger" disabled={disabled} onClick={()=>setConfirm(link.grantId)}>Revoke link</button>
      </div>}
      {!link.revoked&&confirm===link.grantId&&<div>
@@ -466,6 +467,7 @@ export function LinkedInstancesSettings({active=true,joinRecovery}){
    </div>
    {!origins.length&&<p className="a-caption">{legacy
     ?'Creating an invitation requires a secure address configured for this Amplifier. You can still join with an invitation.'
+    :peerCapable?'Turn on linking to create or join with an invitation. You can still revoke saved links.'
     :'This Amplifier needs a secure address before you can create or join with an invitation.'}</p>}
    {mode==='offer'&&<div className="a-link-offer">
     {!offer&&<>{offerOrigins.length>1&&<label>Share this Amplifier’s address <select value={selectedOrigin} disabled={disabled} onChange={event=>setOrigin(event.target.value)}>
